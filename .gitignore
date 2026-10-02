@@ -1,0 +1,34 @@
+# Environment Variables and Credentials
+.env
+.env.*
+*.env
+server/.env
+client/.env
+!.env.example
+!server/.env.example
+
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build artifacts
+dist/
+dist-ssr/
+client/dist/
+
+# Large binaries (SFU binary can be downloaded via release)
+bin/livekit-server.exe
+bin/*.zip
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

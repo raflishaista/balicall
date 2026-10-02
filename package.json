@@ -1,0 +1,21 @@
+{
+  "name": "balitower-voice-call-base",
+  "version": "1.0.0",
+  "description": "Bali Tower internal voice call environment with embedded AI listener & meeting minutes summarizer",
+  "scripts": {
+    "sfu": ".\\bin\\livekit-server.exe --dev",
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev"
+  },
+  "keywords": [
+    "livekit",
+    "webrtc",
+    "balitower",
+    "attendance",
+    "ai-agent",
+    "voice-call",
+    "gemini"
+  ],
+  "author": "",
+  "license": "ISC"
+}
