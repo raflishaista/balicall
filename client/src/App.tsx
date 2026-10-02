@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useEffectEvent, useRef } from 'react';
+import { apiRequest, meetingPath } from './api';
+import { createSaveQueue } from './saveQueue';
+import { useBackendTranscription } from './useBackendTranscription';
+import { useSpeechTranscription } from './useSpeechTranscription';
+import { Track, ConnectionState } from 'livekit-client';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
   useParticipants,
   useLocalParticipant,
+  useTrackVolume,
+  useConnectionState,
 } from '@livekit/components-react';
 import {
   PhoneCall,
@@ -26,7 +33,10 @@ import {
   Cpu
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:3001/api';
+function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[]) {
+  const byId = new Map([...current, ...incoming].map(entry => [entry.id, entry]));
+  return [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
 
 interface TranscriptEntry {
   id: string;
@@ -52,6 +62,7 @@ interface MeetingSummary {
   attendanceSummary: string[];
   provider?: string;
   note?: string;
+  generatedAt?: string;
 }
 
 const PRESET_PERSONAS = [
@@ -74,6 +85,8 @@ export default function App() {
   
   // Connection state
   const [token, setToken] = useState<string | null>(null);
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [sttProvider, setSttProvider] = useState<'browser' | 'server'>('browser');
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
   // Active call state
@@ -84,6 +97,14 @@ export default function App() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [copied, setCopied] = useState(false);
+  const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
+  const [pendingSaves, setPendingSaves] = useState(0);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null }>({
+    onSaved: ({ entry }) => { if (entry) setTranscripts(previous => mergeTranscripts(previous, [entry])); },
+    onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
+  }));
 
   // Backend Health and LLM status
   const [backendHealth, setBackendHealth] = useState<{
@@ -92,129 +113,120 @@ export default function App() {
     llmModel?: string;
     llmBaseUrl?: string;
     hasLlmKey?: boolean;
+    llmEffectiveProvider?: string;
+    livekitStatus?: string;
+    sttProvider?: 'browser' | 'server';
+    sttConfigured?: boolean;
   } | null>(null);
+  const [healthChecked, setHealthChecked] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/health`)
-      .then(res => res.json())
-      .then(data => setBackendHealth(data))
-      .catch(() => setBackendHealth(null));
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const data = await apiRequest<NonNullable<typeof backendHealth>>('/health', {}, 5000);
+        if (!cancelled) setBackendHealth(data);
+      } catch { if (!cancelled) setBackendHealth(null); }
+      finally { if (!cancelled) setHealthChecked(true); }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 15000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
-  // Timer logic
   useEffect(() => {
     if (view !== 'in-call' || !meetingStartTime) return;
     const interval = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - meetingStartTime) / 1000);
-      const m = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-      const s = String(elapsedSec % 60).padStart(2, '0');
-      setCallDuration(`${m}:${s}`);
+      const elapsed = Math.floor((Date.now() - meetingStartTime) / 1000);
+      setCallDuration(String(Math.floor(elapsed / 60)).padStart(2, '0') + ':' + String(elapsed % 60).padStart(2, '0'));
     }, 1000);
     return () => clearInterval(interval);
   }, [view, meetingStartTime]);
 
-  // Poll transcripts while in-call
   useEffect(() => {
-    if (view !== 'in-call') return;
-    const interval = setInterval(async () => {
+    if (view !== 'in-call' || !meetingId || !token) return;
+    let cancelled = false;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const sync = async () => {
       try {
-        const res = await fetch(`${API_BASE}/meetings/${roomName}/transcript`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.transcripts) {
-            setTranscripts(data.transcripts);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to sync transcripts:', err);
-      }
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [view, roomName]);
+        const data = await apiRequest<{ transcripts: TranscriptEntry[] }>(meetingPath(meetingId, 'transcript'), {
+          headers: { Authorization: 'Bearer ' + token }, signal: abort.signal,
+        });
+        if (!cancelled) { setTranscripts(previous => mergeTranscripts(previous, data.transcripts)); setSyncError(null); }
+      } catch { if (!cancelled) setSyncError('Transkrip belum tersinkron. Periksa koneksi layanan.'); }
+      if (!cancelled) timer = setTimeout(sync, 2000);
+    };
+    void sync();
+    return () => { cancelled = true; abort.abort(); clearTimeout(timer); };
+  }, [view, meetingId, token]);
+
+  useEffect(() => {
+    if (!pendingSaves) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pendingSaves]);
 
   const handleJoin = async () => {
     if (!employeeId.trim() || !employeeName.trim() || !roomName.trim()) {
-      setJoinError('Please complete all required fields.');
-      return;
+      setJoinError('Lengkapi identitas dan nama room.'); return;
     }
-    setJoinError(null);
-    setIsJoining(true);
-
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setJoinError('Mikrofon membutuhkan HTTPS atau localhost. Untuk PC lain, gunakan alamat HTTPS aplikasi.'); return;
+    }
+    setJoinError(null); setCallError(null); setSyncError(null); setIsJoining(true);
     try {
-      const res = await fetch(`${API_BASE}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomName: roomName.trim(),
-          employeeId: employeeId.trim(),
-          employeeName: employeeName.trim(),
-          department,
-        }),
+      const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server' }>('/token', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: roomName.trim(), employeeId: employeeId.trim(), employeeName: employeeName.trim(), department }),
       });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to obtain room token');
-      }
-
-      const data = await res.json();
-      setToken(data.token);
-      setServerUrl(data.url);
-      setMeetingStartTime(Date.now());
-      setView('in-call');
-    } catch (err: any) {
-      setJoinError(err.message || 'Error connecting to server. Make sure server is running.');
-    } finally {
-      setIsJoining(false);
-    }
+      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setView('in-call');
+    } catch (error) { setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
+    finally { setIsJoining(false); }
   };
 
-  const handleEndMeeting = async () => {
-    if (window.confirm('Do you want to end this voice meeting and generate the AI summary?')) {
-      setIsSummarizing(true);
-      try {
-        const res = await fetch(`${API_BASE}/meetings/${roomName}/summarize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcripts }),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || 'Failed to generate summary');
-        }
-
-        const data = await res.json();
-        setSummary(data.summary);
+  const handleEndMeeting = async (generate = true) => {
+    if (!meetingId || !token) return;
+    setIsSummarizing(true); setCallError(null);
+    try {
+      await saveQueue.flush();
+      const options = { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' };
+      const data = generate ? await apiRequest<{ summary: MeetingSummary }>(meetingPath(meetingId, 'summarize'), options, 125000) : null;
+      const left = await apiRequest<{ status: string }>(meetingPath(meetingId, 'leave'), options);
+      if (data) {
+        setSummary(left.status === 'active' ? { ...data.summary, note: [data.summary.note, 'Peserta lain masih berada di meeting. Ringkasan ini memakai transkrip saat permintaan ringkasan dikirim.'].filter(Boolean).join(' ') } : data.summary);
         setView('summary');
-      } catch (err: any) {
-        alert('Notice: ' + err.message);
-        setView('lobby');
-      } finally {
-        setIsSummarizing(false);
-      }
-    }
+      } else { setToken(null); setMeetingId(null); setTranscripts([]); setView('lobby'); }
+    } catch (error) {
+      setCallError(error instanceof Error ? error.message : 'Gagal menyelesaikan meeting. Coba kembali.');
+    } finally { setIsSummarizing(false); }
   };
 
-  const handleAddSpeechLine = async (text: string) => {
-    if (!text.trim()) return;
-    try {
-      const res = await fetch(`${API_BASE}/meetings/${roomName}/transcript`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          speakerId: employeeId,
-          speakerName: employeeName,
-          text: text.trim(),
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTranscripts(prev => [...prev, data.entry]);
-      }
-    } catch (err) {
-      console.error('Failed to post speech line:', err);
-    }
+  const handleAddSpeechLine = (text: string) => {
+    if (!text.trim() || !meetingId || !token) return;
+    const path = meetingPath(meetingId, 'transcript');
+    saveQueue.enqueue(requestId => apiRequest(path, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.trim(), requestId }),
+    }));
+  };
+
+  const handleAddAudio = (audio: Blob, language: string) => {
+    if (!meetingId || !token) return;
+    const path = meetingPath(meetingId, 'audio');
+    saveQueue.enqueue(requestId => apiRequest(path, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
+        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0] }, body: audio,
+    }, 125000));
+  };
+
+  const handlePresence = async (connected: boolean) => {
+    if (!meetingId || !token) return;
+    try { await apiRequest(meetingPath(meetingId, 'presence'), {
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
+    }, 5000); } catch { if (connected) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
 
   const copyMarkdownSummary = () => {
@@ -247,9 +259,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 *Generated by Bali Tower AI Voice Assistant*
     `.trim();
 
-    navigator.clipboard.writeText(md);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(md).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => setCallError('Tidak dapat menyalin ringkasan. Periksa izin clipboard browser.'));
   };
 
   return (
@@ -302,15 +315,15 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               border: '1px solid #334155'
             }}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981' }} />
-              <span>SFU: Active</span>
+              <span>API: Online · SFU: {backendHealth.livekitStatus === 'reachable' ? 'Ready' : 'Offline'}</span>
               <span style={{ color: '#64748b' }}>•</span>
               <Cpu size={14} color="#38bdf8" />
               <span style={{ color: backendHealth.hasLlmKey ? '#38bdf8' : '#fbbf24', fontWeight: 500 }}>
-                {backendHealth.llmProvider === 'office'
+                {backendHealth.llmEffectiveProvider === 'office'
                   ? `Office LLM (${backendHealth.llmModel})`
                   : backendHealth.llmProvider === 'gemini'
                     ? 'Gemini 2.5 Flash'
-                    : 'Smart Demo Engine'}
+                    : 'Demo (AI belum aktif)'}
               </span>
               {!backendHealth.hasLlmKey && (
                 <span style={{ color: '#f59e0b', fontSize: '11px' }}>(No Key)</span>
@@ -328,7 +341,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               color: '#f87171'
             }}>
               <AlertCircle size={14} />
-              <span>Backend Offline (Check server)</span>
+              <span>{healthChecked ? 'Backend Offline (Check server)' : 'Memeriksa layanan...'}</span>
             </div>
           )}
 
@@ -349,6 +362,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         </div>
       </header>
 
+      {(callError || syncError || transcriptSaveError || pendingSaves > 0) && <div role="status" style={{ padding: '12px', color: '#fca5a5' }}>
+        {callError} {syncError} {transcriptSaveError} {pendingSaves > 0 && <span> Antrean: {pendingSaves} belum tersimpan. </span>}
+        {transcriptSaveError && <button onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
+      </div>}
       {/* Main Content Area */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {view === 'lobby' && (
@@ -371,6 +388,12 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView
             token={token}
+            sttProvider={sttProvider}
+            setSttProvider={setSttProvider}
+            sttConfigured={backendHealth?.sttConfigured || false}
+            saveBlocked={Boolean(transcriptSaveError)}
+            onAddAudio={handleAddAudio}
+            onPresence={handlePresence}
             serverUrl={serverUrl}
             roomName={roomName}
             employeeId={employeeId}
@@ -392,6 +415,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onCopy={copyMarkdownSummary}
             onNewCall={() => {
               setToken(null);
+              setMeetingId(null);
+              setCallError(null);
               setTranscripts([]);
               setSummary(null);
               setView('lobby');
@@ -415,11 +440,16 @@ function MicrophoneDiagnostic() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const micRequestRef = useRef(0);
+  const [isRequestingMic, setIsRequestingMic] = useState(false);
 
   const startMicTest = async () => {
+    const request = ++micRequestRef.current;
+    setIsRequestingMic(true);
     setMicError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (request !== micRequestRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
 
       const track = stream.getAudioTracks()[0];
@@ -452,12 +482,16 @@ function MicrophoneDiagnostic() {
       updateVolume();
       setIsCapturing(true);
     } catch (err: any) {
+      if (request !== micRequestRef.current) return;
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
       console.error('Microphone access failed:', err);
       setMicError(err.message || 'Microphone access denied. Please grant permission in your browser.');
-    }
+    } finally { if (request === micRequestRef.current) setIsRequestingMic(false); }
   };
 
   const stopMicTest = () => {
+    micRequestRef.current++;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
@@ -492,6 +526,7 @@ function MicrophoneDiagnostic() {
         </div>
         <button
           type="button"
+          disabled={isRequestingMic}
           onClick={isCapturing ? stopMicTest : startMicTest}
           style={{
             fontSize: '12px',
@@ -504,7 +539,7 @@ function MicrophoneDiagnostic() {
             cursor: 'pointer',
           }}
         >
-          {isCapturing ? 'Stop Mic Test' : 'Test Mic Input'}
+          {isRequestingMic ? 'Meminta izin mikrofon...' : isCapturing ? 'Stop Mic Test' : 'Test Mic Input'}
         </button>
       </div>
 
@@ -588,7 +623,7 @@ function LobbyView({
             Join Voice Conference
           </h2>
           <p style={{ color: '#94a3b8', fontSize: '14px', lineHeight: '1.5' }}>
-            Enter your employee credentials to connect to the meeting. All voice streams are automatically monitored by the embedded AI Meeting Secretary to generate instant summaries and action item logs upon completion.
+            Enter your employee credentials to connect to the meeting. Each participant transcribes their own microphone. Check the transcription status during the call; voice transmission and speech recognition use separate services.
           </p>
         </div>
 
@@ -782,6 +817,7 @@ function LobbyView({
 // 2. IN-CALL VIEW (LIVEKIT CONTAINER)
 // ==========================================
 function InCallView({
+  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
   roomName,
@@ -794,17 +830,25 @@ function InCallView({
   onEndMeeting,
   isSummarizing,
 }: any) {
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   return (
+    <div style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
+    {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
     <LiveKitRoom
       serverUrl={serverUrl}
       token={token}
       connect={true}
+      onError={(error: Error) => setConnectionError('Koneksi suara gagal: ' + error.message)}
+      onConnected={() => setConnectionError(null)}
+      onMediaDeviceFailure={() => setConnectionError('Mikrofon tidak tersedia. Periksa perangkat dan izin browser.')}
       audio={true}
       video={false}
       style={{ display: 'flex', flex: 1, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
       <RoomContent
+        sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
+        saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
         employeeId={employeeId}
         employeeName={employeeName}
@@ -816,10 +860,12 @@ function InCallView({
         isSummarizing={isSummarizing}
       />
     </LiveKitRoom>
+    </div>
   );
 }
 
 function RoomContent({
+  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
   transcripts,
@@ -830,144 +876,40 @@ function RoomContent({
   isSummarizing,
 }: any) {
   const participants = useParticipants();
-  const { localParticipant } = useLocalParticipant();
+  const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
+  const connectionState = useConnectionState();
+  const connected = connectionState === ConnectionState.Connected;
+  const isMuted = !isMicrophoneEnabled;
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
+  const presence = useEffectEvent((value: boolean) => onPresence(value));
+  useEffect(() => {
+    void presence(connected);
+    if (!connected) return;
+    const timer = setInterval(() => void presence(true), 10000);
+    return () => clearInterval(timer);
+  }, [connected]);
+  const volume = useTrackVolume(microphoneTrack ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone } : undefined);
+  const micVolume = isMuted ? 0 : Math.min(100, Math.round(volume * 100));
   
   const [speechInput, setSpeechInput] = useState('');
-  const [isListeningSpeechApi, setIsListeningSpeechApi] = useState(false);
-  const [interimText, setInterimText] = useState('');
-  const [speechError, setSpeechError] = useState<string | null>(null);
   const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>('id-ID');
-  const [micVolume, setMicVolume] = useState(0);
-
-  const recognitionRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const animFrameRef = useRef<number | null>(null);
-
-  // In-call real-time mic volume level monitor
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(s => {
-        stream = s;
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        audioContextRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(s);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        const data = new Uint8Array(analyser.frequencyBinCount);
-
-        const checkVolume = () => {
-          analyser.getByteFrequencyData(data);
-          let sum = 0;
-          for (let i = 0; i < data.length; i++) sum += data[i];
-          const avg = sum / data.length;
-          setMicVolume(Math.min(100, Math.round((avg / 128) * 100)));
-          animFrameRef.current = requestAnimationFrame(checkVolume);
-        };
-        checkVolume();
-      })
-      .catch(err => {
-        console.warn('In-call mic visualizer error:', err);
-      });
-
-    return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      if (audioContextRef.current) audioContextRef.current.close();
-    };
-  }, []);
-
-  // Initialize Web Speech API for voice-to-text
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = speechLanguage;
-
-      recognition.onstart = () => {
-        setIsListeningSpeechApi(true);
-        setSpeechError(null);
-      };
-
-      recognition.onresult = (event: any) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            const spokenText = event.results[i][0].transcript;
-            if (spokenText && spokenText.trim().length > 0) {
-              onAddSpeechLine(spokenText.trim());
-              setInterimText('');
-            }
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-        setInterimText(interim);
-      };
-
-      recognition.onerror = (err: any) => {
-        console.warn('Speech Recognition error event:', err);
-        if (err.error === 'not-allowed') {
-          setSpeechError('Microphone permission blocked in browser. Please allow microphone access.');
-        } else if (err.error === 'network') {
-          setSpeechError('Speech recognition network error. (Note: Web Speech API requires internet access to Google STT).');
-        } else if (err.error !== 'no-speech') {
-          setSpeechError(`Speech error: ${err.error}`);
-        }
-      };
-
-      recognition.onend = () => {
-        // Auto-restart if user still wants it active
-        if (isListeningSpeechApi) {
-          try {
-            recognition.start();
-          } catch (e) {}
-        }
-      };
-
-      recognitionRef.current = recognition;
-
-      // Auto start speech listening
-      try {
-        recognition.start();
-        setIsListeningSpeechApi(true);
-      } catch (e) {}
-    } else {
-      setSpeechError('Web Speech API is not supported in this browser. Please use Google Chrome or Edge.');
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
-      }
-    };
-  }, [onAddSpeechLine, speechLanguage]);
-
-  const toggleSpeechRecognition = () => {
-    if (!recognitionRef.current) return;
-    if (isListeningSpeechApi) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-      setIsListeningSpeechApi(false);
-      setInterimText('');
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsListeningSpeechApi(true);
-        setSpeechError(null);
-      } catch (e) {
-        console.error(e);
-      }
-    }
+  const paused = isMuted || !connected || isSummarizing || saveBlocked;
+  const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
+  const backendSpeech = useBackendTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'server',
+    track: microphoneTrack?.track?.mediaStreamTrack, volume, onAudio: onAddAudio });
+  const { isListeningSpeechApi, interimText, speechError, toggleSpeechRecognition, speechEnabled, finishTranscription } =
+    sttProvider === 'server' ? backendSpeech : browserSpeech;
+  const finishMeeting = async (generate: boolean) => {
+    setFinishing(true); setFinishError(null);
+    try { await finishTranscription(); await onEndMeeting(generate); }
+    catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal menyelesaikan transkripsi'); }
+    finally { setFinishing(false); }
   };
 
-  const isMuted = !localParticipant.isMicrophoneEnabled;
-
   const toggleMute = async () => {
-    await localParticipant.setMicrophoneEnabled(isMuted);
+    try { await localParticipant.setMicrophoneEnabled(isMuted); }
+    catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal mengubah mikrofon'); }
   };
 
   return (
@@ -989,7 +931,7 @@ function RoomContent({
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10b981', fontSize: '12px' }}>
               <Radio size={14} className="live-indicator" />
-              <span>Voice Room Active</span>
+              <span>Voice: {connectionState}</span>
             </div>
           </div>
 
@@ -1027,11 +969,12 @@ function RoomContent({
               color: '#a5f3fc'
             }}>
               <Sparkles size={14} color="#06b6d4" />
-              <span>AI Secretary: Recording</span>
+              <span>Transcription: {!connected ? 'Waiting for voice connection' : isMuted ? 'Paused (mic muted)' : saveBlocked ? 'Paused (save failed)' : speechError ? 'Error' : isListeningSpeechApi ? 'Listening' : speechEnabled ? 'Starting' : 'Stopped'}</span>
             </div>
           </div>
         </div>
 
+        {finishError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{finishError}</div>}
         {/* Interim Speech Banner (Displays words live as you speak!) */}
         {interimText && (
           <div style={{
@@ -1164,10 +1107,16 @@ function RoomContent({
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 500 }}>
-              Live Speech Transcriber (Speaks directly to AI):
+              Live Speech Transcriber:
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <select aria-label="Layanan transkripsi" value={sttProvider} disabled={finishing || isSummarizing}
+                onChange={e => setSttProvider(e.target.value)} style={{ color: '#fff', background: '#1e293b' }}>
+                <option value="browser">Browser STT</option>
+                <option value="server" disabled={!sttConfigured}>Backend STT{!sttConfigured ? ' (belum dikonfigurasi)' : ''}</option>
+              </select>
               <select
+                aria-label="Bahasa transkripsi" disabled={finishing || isSummarizing}
                 value={speechLanguage}
                 onChange={e => setSpeechLanguage(e.target.value as any)}
                 style={{
@@ -1185,6 +1134,7 @@ function RoomContent({
 
               <button
                 onClick={toggleSpeechRecognition}
+                disabled={finishing || isSummarizing || !connected || isMuted || saveBlocked}
                 style={{
                   fontSize: '11px',
                   padding: '4px 10px',
@@ -1199,7 +1149,7 @@ function RoomContent({
                 }}
               >
                 <Mic size={12} />
-                <span>{isListeningSpeechApi ? 'Auto Transcribing Active' : 'Start Auto Transcribe'}</span>
+                <span>{isMuted ? 'Aktifkan mikrofon dahulu' : speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Hentikan transkripsi' : 'Mulai transkripsi'}</span>
               </button>
             </div>
           </div>
@@ -1213,6 +1163,7 @@ function RoomContent({
             ].map((preset, idx) => (
               <button
                 key={idx}
+                disabled={finishing || isSummarizing || saveBlocked}
                 onClick={() => onAddSpeechLine(preset)}
                 style={{
                   backgroundColor: '#1e293b',
@@ -1234,6 +1185,7 @@ function RoomContent({
           <div style={{ display: 'flex', gap: '10px' }}>
             <input
               type="text"
+              disabled={finishing || isSummarizing || saveBlocked}
               value={speechInput}
               onChange={e => setSpeechInput(e.target.value)}
               onKeyDown={e => {
@@ -1255,6 +1207,7 @@ function RoomContent({
               }}
             />
             <button
+              disabled={finishing || isSummarizing || saveBlocked}
               onClick={() => {
                 onAddSpeechLine(speechInput);
                 setSpeechInput('');
@@ -1278,6 +1231,8 @@ function RoomContent({
           </div>
         </div>
 
+        <button disabled={finishing || isSummarizing} onClick={() => void finishMeeting(false)}
+          style={{ padding: '8px', color: '#cbd5e1', background: '#1e293b' }}>Keluar tanpa ringkasan</button>
         {/* Bottom Call Control Bar */}
         <div style={{
           padding: '16px 24px',
@@ -1290,6 +1245,7 @@ function RoomContent({
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button
               onClick={toggleMute}
+              disabled={finishing || isSummarizing}
               style={{
                 padding: '10px 18px',
                 borderRadius: '8px',
@@ -1310,8 +1266,8 @@ function RoomContent({
           </div>
 
           <button
-            onClick={onEndMeeting}
-            disabled={isSummarizing}
+            onClick={() => void finishMeeting(true)}
+            disabled={isSummarizing || finishing}
             style={{
               padding: '10px 22px',
               borderRadius: '8px',
@@ -1328,7 +1284,7 @@ function RoomContent({
             }}
           >
             <PhoneOff size={18} />
-            <span>{isSummarizing ? 'Generating AI Minutes...' : 'End Meeting & Get AI Summary'}</span>
+            <span>{isSummarizing || finishing ? 'Menyimpan ucapan & membuat ringkasan...' : 'Keluar & Buat Ringkasan'}</span>
           </button>
         </div>
       </div>
@@ -1513,7 +1469,7 @@ function SummaryView({
             </h2>
             <div style={{ fontSize: '13px', color: '#94a3b8' }}>
               Room: <span style={{ color: '#cbd5e1' }}>#{roomName}</span> • Generated via{' '}
-              <span style={{ color: '#38bdf8', fontWeight: 600 }}>{summary.provider || 'Office LLM'}</span> on {new Date().toLocaleString()}
+              <span style={{ color: '#38bdf8', fontWeight: 600 }}>{summary.provider || 'Office LLM'}</span> on {summary.generatedAt ? new Date(summary.generatedAt).toLocaleString() : '—'}
             </div>
           </div>
 
@@ -1586,6 +1542,13 @@ function SummaryView({
           </div>
         </div>
 
+        <div style={{ marginBottom: '28px' }}>
+          <h3 style={{ fontSize: '16px', color: '#93c5fd' }}>Poin Pembahasan</h3>
+          <ul style={{ padding: '16px 32px', backgroundColor: '#0f172a', borderRadius: '10px', lineHeight: 1.6 }}>
+            {summary.keyDiscussionPoints.map((point, index) => <li key={index}>{point}</li>)}
+          </ul>
+        </div>
+
         {/* Action Items */}
         <div style={{ marginBottom: '28px' }}>
           <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#93c5fd', marginBottom: '12px' }}>
@@ -1607,6 +1570,7 @@ function SummaryView({
                 </tr>
               </thead>
               <tbody>
+                {summary.actionItems.length === 0 && <tr><td colSpan={4} style={{ padding: '12px 16px' }}>Tidak ada tugas tercatat.</td></tr>}
                 {summary.actionItems?.map((item, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid #1e293b', color: '#f1f5f9' }}>
                     <td style={{ padding: '12px 16px', fontWeight: 500 }}>{item.task}</td>
@@ -1646,6 +1610,7 @@ function SummaryView({
               lineHeight: 1.6,
               margin: 0,
             }}>
+              {summary.decisions.length === 0 && <li>Tidak ada keputusan tercatat.</li>}
               {summary.decisions?.map((d, i) => (
                 <li key={i} style={{ marginBottom: '6px' }}>{d}</li>
               ))}
@@ -1654,7 +1619,7 @@ function SummaryView({
 
           <div>
             <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#93c5fd', marginBottom: '10px' }}>
-              Attendees Verified
+              Peserta yang tercatat terhubung
             </h3>
             <div style={{
               backgroundColor: '#0f172a',

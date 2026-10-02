@@ -1,83 +1,121 @@
-# 📡 Bali Tower Voice Call & AI Minutes Environment (Base Prototype)
+# BaliCall — voice call dan notulen meeting
 
-A dedicated, private PC voice calling platform designed for **Bali Tower** internal operations and attendance coordination, featuring an **embedded AI Meeting Secretary** that logs dialogue and generates structured meeting minutes with action items.
+Aplikasi React/Vite untuk panggilan LiveKit, transkripsi mikrofon setiap peserta, dan ringkasan dari Office Qwen atau Gemini.
 
----
+**Audio panggilan, speech-to-text, dan ringkasan adalah tiga layanan terpisah.** Suara yang terdengar di panggilan belum membuktikan layanan STT berjalan. Qwen pada endpoint chat hanya menerima teks.
 
-## ⚙️ AI Baseline Configuration (Office Gateway & Qwen-35B)
+## Menjalankan di Windows
 
-The backend is configured to use the internal Bali Tower AI gateway (`http://10.7.1.21/v1` with `qwen-35b`).
+Gunakan Node.js 24 LTS, minimum 22.18. Dari direktori proyek:
 
-Edit [`server/.env`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/server/.env):
+```powershell
+npm run setup
+npm run sfu       # terminal 1: LiveKit, port 7880
+npm run server    # terminal 2: API, port 3001
+npm run client    # terminal 3: Vite, port 5173
+```
+
+Buka [http://localhost:5173](http://localhost:5173). `start.bat` menjalankan setup dan ketiga layanan. Setup dapat dijalankan dari direktori lain, mengunduh LiveKit v1.13.7 dari rilis resmi, memverifikasi SHA-256, dan berhenti jika instalasi gagal.
+
+Untuk hanya menyiapkan konfigurasi/dependensi tanpa mengunduh SFU:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipLiveKitDownload
+```
+
+Pengujian dan build:
+
+```powershell
+npm test
+npm --prefix client run build
+npm --prefix client run lint
+```
+
+Setelah build, backend juga dapat menyajikan frontend dari `client/dist`: jalankan backend lalu buka [http://localhost:3001](http://localhost:3001). Ini memakai API dengan origin yang sama dan tidak membutuhkan Vite untuk menjalankan aplikasi.
+
+## Konfigurasi STT
+
+Edit `server/.env`, yang dibuat dari `server/.env.example`. Kunci hanya diletakkan di server, bukan variabel `VITE_*`.
+
+### Browser STT
+
 ```env
-# LLM Provider Configuration
-LLM_PROVIDER=office
+STT_PROVIDER=browser
+```
 
-# Office Gateway (Qwen-35b)
-LLM_KEY=your_office_api_key_here
-# or LLM_API_KEY=your_office_api_key_here
+Pilih Bahasa Indonesia atau English di panggilan. Browser harus mendukung Web Speech API dan memiliki izin mikrofon. Beberapa browser memakai layanan pengenalan online, sehingga layanan tersebut harus bisa diakses dari jaringan kantor. [Rujukan SpeechRecognition](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition).
+
+Transkripsi mulai saat koneksi suara siap dan mikrofon aktif. Render timer/polling tidak membuat recognizer baru. Mute/disconnect menghentikan pengambilan suara. Jika error jaringan/izin muncul, perbaiki penyebabnya lalu tekan tombol transkripsi untuk mencoba kembali.
+
+### Backend STT
+
+Jika kantor menyediakan layanan yang kompatibel dengan `POST /audio/transcriptions`, konfigurasi base URL hingga `/v1` dan **nama model STT yang benar dari layanan tersebut**:
+
+```env
+STT_PROVIDER=server
+STT_BASE_URL=http://HOST-STT-KANTOR:8000/v1
+STT_MODEL=NAMA-MODEL-STT
+STT_API_KEY=
+STT_TIMEOUT_MS=20000
+```
+
+Nilai host/model di atas adalah placeholder. Jangan menyalin alamat gateway Qwen tanpa memastikan gateway itu menyediakan STT. API key boleh kosong jika layanan internal tidak memerlukannya.
+
+Browser merekam track mikrofon LiveKit yang sedang digunakan, menjadi file lengkap setiap sekitar 8 detik. Segmen yang tidak terdeteksi memiliki sinyal suara dilewati. File dikirim melalui API aplikasi ke layanan STT; browser tidak menerima kunci penyedia. Format yang didukung: WebM/Opus, Ogg/Opus, atau MP4 sesuai dukungan browser. Layanan STT harus dapat membaca format yang dipilih browser. Hasil tampil setelah segmen dikirim dan diproses, bukan setiap kata secara langsung.
+
+Kontrak upstream: multipart `file`, `model`, `language` (`id`/`en`), `response_format=json`; respons `{ "text": "hasil transkripsi" }`. [Rujukan kontrak audio transcription](https://platform.openai.com/docs/api-reference/audio/createTranscription).
+
+Jalur ini sudah diuji menggunakan layanan simulasi. Keakuratan model dan pengenalan mikrofon sungguhan memerlukan layanan STT yang sebenarnya.
+
+## Konfigurasi ringkasan
+
+Office gateway:
+
+```env
+LLM_PROVIDER=office
 LLM_BASE_URL=http://10.7.1.21/v1
 LLM_MODEL=qwen-35b
-TEXT_MODEL=qwen-35b
+LLM_KEY=ISI_KUNCI_DI_FILE_LOKAL
+LLM_TIMEOUT_MS=30000
 ```
 
-*Note: If `LLM_KEY` is not filled yet, the server automatically uses a built-in Smart Demo Engine so you can test the entire workflow without crashes.*
+Alternatif: `LLM_PROVIDER=gemini` dengan `GEMINI_API_KEY`. Untuk pratinjau tanpa AI: `LLM_PROVIDER=demo`.
 
----
+Jika penyedia yang dipilih belum memiliki kunci, UI menampilkan **Demo (AI belum aktif)**. Demo hanya menampilkan transkrip, tanpa mengarang keputusan atau penugasan. Jika penyedia yang sudah dikonfigurasi gagal/timeout atau mengembalikan JSON dengan schema salah, API mengembalikan error yang dapat dicoba ulang. Kegagalan tersebut tidak diganti diam-diam dengan ringkasan demo.
 
-## 🎙️ Why Wasn't It "Listening to Your Voice"? (How to Test)
+## Meeting, penyimpanan, dan keluar panggilan
 
-There are two separate layers in voice call systems:
+- Nama room adalah nama yang terlihat pengguna. Backend membuat ID sesi dan nama room LiveKit unik. Peserta pada nama room yang sama bergabung ke sesi aktif yang sama.
+- Token LiveKit juga dipakai sebagai Bearer token untuk mengakses transkrip, audio, kehadiran, ringkasan, dan keluar dari sesi yang sesuai. Identitas pembicara diambil dari token.
+- Transkrip dan ringkasan tersimpan di `server/data/meetings.json` dengan penulisan atomik. Restart backend mempertahankan data. `MEETING_DATA_FILE` dapat menunjuk file lain dengan path absolut. Hanya satu proses backend boleh menulis file tersebut.
+- Kehadiran dicatat setelah frontend melaporkan koneksi LiveKit berhasil, lalu diperbarui setiap 10 detik. Ini belum memverifikasi identitas karyawan melalui SSO.
+- Penyimpanan teks/audio berurutan. Retry mempertahankan ID permintaan agar respons jaringan yang hilang tidak menduplikasi kalimat. Jika tetap gagal, antrean dipertahankan dan tombol **Coba simpan lagi** tampil.
+- **Keluar & Buat Ringkasan** menyelesaikan pengambilan ucapan lokal, menunggu antrean tersimpan, meminta ringkasan dari data server, lalu mencatat pengguna keluar. Kegagalan mempertahankan layar panggilan; transkripsi dapat diaktifkan lagi untuk melanjutkan.
+- Peserta lain tetap dapat berbicara ketika seseorang keluar. Ringkasan orang yang keluar adalah snapshot, bukan penutupan room bersama. Sesi selesai setelah peserta terakhir keluar. Sesi tanpa heartbeat selama 45 detik diarsipkan ketika ada permintaan bergabung berikutnya.
+- Antrean yang belum diterima server berada dalam memori tab. Ada peringatan sebelum menutup tab jika antrean masih berisi data. Jangan menutup/reload tab sampai antrean kosong. Data yang sudah diterima server tetap di disk.
 
-### 1. WebRTC Voice Transmission (Hearing other people)
-* **How it works:** When you speak, LiveKit streams your microphone audio to **other participants** in the room.
-* **Why you don't hear yourself on a single tab:** WebRTC intentionally mutes your own local voice so your speakers don't create an infinite screeching audio feedback loop.
-* **How to test audio transmission:** Open `http://localhost:5173` in **two separate browser windows** (Window 1 as *Rafli*, Window 2 as *Budi*). Speak into the mic in Window 1, and you will hear your voice coming out of the speakers of Window 2!
+API meeting sekarang memakai `/api/meetings/:meetingId/...`, bukan nama room. Endpoint `/api/token` mengembalikan `meetingId` dan `token`; permintaan berikutnya memakai `Authorization: Bearer TOKEN`. Integrasi client lama perlu disesuaikan.
 
-### 2. Speech-to-Text (AI Transcription)
-* **Do you need a LiveKit API key?** **No.** The local SFU server (`bin/livekit-server.exe --dev`) uses the default dev keys (`devkey` and `secret`), which are already built-in.
-* **Why words weren't appearing:**
-  1. **Microphone Permissions:** Chrome requires explicit permission to access your microphone. If permission was dismissed, the browser blocked audio input.
-  2. **Speech Recognition Toggle:** Live speech recognition previously required manual activation.
-  3. **Browser STT Service:** Chrome's `webkitSpeechRecognition` routes audio through Google's cloud speech recognizer. If on an internal corporate intranet without external Google Speech access, the browser speech API may encounter network blocks.
+## Menggunakan beberapa PC
 
-### 🛠️ What We Added to Fix and Test This:
-1. **Microphone Hardware Diagnostic & Volume Bar:**
-   * In the lobby, click **"Test Mic Input"**.
-   * Speak into your mic — you will see a real-time **green volume meter (0% to 100%)** showing whether the browser is actually receiving decibels from your microphone!
-2. **In-Call Mic Signal Indicator:**
-   * Inside the call, there is a real-time mic meter in the header.
-3. **Live Hearing Banner:**
-   * Words you speak are shown live as you talk: `Hearing your voice: "..."`.
-4. **Preset Speech Buttons & Manual Input:**
-   * If working in a noisy room or offline, click any of the preset operational phrases (e.g., *"+ Say: Fiber optic link site 4A is fully restored..."*) or type what you want to say.
+Frontend memakai `/api` secara default. Vite meneruskan `/api` ke backend lokal pada PC server; build produksi dapat disajikan langsung oleh backend di origin yang sama. Bila frontend/API berbeda host, gunakan `client/.env` dengan `VITE_API_BASE_URL` dan set `CORS_ORIGINS` ke origin frontend yang benar.
 
----
+Untuk peserta di PC lain:
 
-## 🚀 Quick Start (Running on Windows)
+1. Sajikan aplikasi melalui **HTTPS** yang dipercaya browser. HTTP lewat IP LAN biasa tidak memberikan secure context untuk mikrofon.
+2. Set `LIVEKIT_URL` ke alamat **WSS** yang dapat dijangkau semua peserta. `127.0.0.1` hanya sesuai pengujian pada PC yang sama.
+3. Backend dapat memakai `LIVEKIT_INTERNAL_URL` terpisah untuk pemeriksaan SFU. Endpoint health menguji `RoomService.listRooms` dengan timeout; hasil reachability tidak mengukur kualitas audio WebRTC.
+4. Konfigurasikan jaringan/port RTC sesuai [panduan deployment LiveKit](https://docs.livekit.io/transport/self-hosting/deployment/). Proxy HTTPS saja belum membuktikan UDP/TCP media berhasil lintas PC.
+5. Gunakan kunci LiveKit sendiri untuk produksi. Backend menolak kunci dev ketika `NODE_ENV=production`.
 
-### On a Fresh Clone / New PC:
-Simply double-click [`start.bat`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/start.bat).
-The script is **self-healing** and will automatically:
-1. Verify **Node.js** is installed.
-2. Create `server/.env` from `server/.env.example` if missing.
-3. Automatically download `bin/livekit-server.exe` if not present.
-4. Run `npm install` in both `server/` and `client/` if `node_modules` are missing.
-5. Launch all 3 services in separate windows!
+Endpoint penerbitan token masih untuk identitas demo yang dimasukkan pengguna. Token per meeting membatasi akses sesi, tetapi **tidak menggantikan login karyawan**. Integrasi SSO kantor dan penerbit token terpercaya diperlukan sebelum membuka aplikasi sebagai layanan bersama untuk data kantor.
 
-### Manual Setup via Terminal (Alternative):
-If you prefer running commands manually:
-```powershell
-# 1. Install all dependencies (both server and client)
-npm run install:all
+## Memeriksa masalah suara tanpa teks
 
-# 2. Setup .env and download LiveKit SFU (if needed)
-npm run setup
+1. Di lobby, gunakan **Test Mic Input** dan pastikan level bergerak.
+2. Di panggilan, pastikan Voice menunjukkan connected dan mikrofon aktif. Status Transcription harus Listening.
+3. Browser STT: cek error layanan/izin/jaringan dan bahasa yang dipilih. Backend STT: cek endpoint/model, format audio, dan koneksi dari backend ke layanan STT.
+4. Pastikan antrean penyimpanan kosong dan kalimat final tampil di Live Transcript.
+5. Uji dua peserta dengan identitas berbeda, lalu diam sebentar, mute/unmute, dan berbicara lagi. ID yang sama pada dua jendela ditolak agar tidak saling menggantikan peserta LiveKit.
 
-# 3. Launch services:
-npm run sfu       # Terminal 1: LiveKit SFU (Port 7880)
-npm run server    # Terminal 2: Backend API & Office LLM (Port 3001)
-npm run client    # Terminal 3: PC Web Client (Port 5173)
-```
-
-Then open **`http://localhost:5173`** in your browser.
+[Rencana perbaikan](REPAIR_PLAN.md), [hasil implementasi](REPAIR_RESULTS.md), dan [laporan pemeriksaan awal](PROJECT_REVIEW.md) tersedia di repository.

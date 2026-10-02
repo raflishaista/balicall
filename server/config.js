@@ -1,0 +1,38 @@
+import { fileURLToPath } from 'node:url';
+
+export function loadConfig(env = process.env) {
+  const config = {
+    port: Number(env.PORT || 3001),
+    dataFile: env.MEETING_DATA_FILE || fileURLToPath(new URL('./data/meetings.json', import.meta.url)),
+    clientDist: fileURLToPath(new URL('../client/dist', import.meta.url)),
+    livekitKey: env.LIVEKIT_API_KEY || 'devkey',
+    livekitSecret: env.LIVEKIT_API_SECRET || 'secret',
+    livekitUrl: env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
+    livekitInternalUrl: env.LIVEKIT_INTERNAL_URL || env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
+    corsOrigins: (env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(value => value.trim()).filter(Boolean),
+    llmProvider: (env.LLM_PROVIDER || 'office').toLowerCase(),
+    llmKey: env.LLM_KEY || env.LLM_API_KEY || '',
+    llmBaseUrl: env.LLM_BASE_URL || 'http://10.7.1.21/v1',
+    llmModel: env.LLM_MODEL || env.TEXT_MODEL || 'qwen-35b',
+    geminiKey: env.GEMINI_API_KEY || '',
+    llmTimeoutMs: Number(env.LLM_TIMEOUT_MS || 30000),
+    sttProvider: env.STT_PROVIDER || 'browser',
+    sttBaseUrl: env.STT_BASE_URL || '',
+    sttModel: env.STT_MODEL || '',
+    sttKey: env.STT_API_KEY || '',
+    sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
+  };
+  for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {
+    if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
+  }
+  if (!['office', 'gemini', 'demo'].includes(config.llmProvider)) throw new Error('Unknown LLM_PROVIDER');
+  if (!['browser', 'server'].includes(config.sttProvider)) throw new Error('STT_PROVIDER must be browser or server');
+  if (config.sttProvider === 'server' && (!config.sttBaseUrl || !config.sttModel)) throw new Error('Server STT requires STT_BASE_URL and STT_MODEL');
+  for (const [field, protocols] of [['livekitUrl', ['ws:', 'wss:']], ['llmBaseUrl', ['http:', 'https:']], ['sttBaseUrl', ['http:', 'https:']]]) {
+    if (config[field] && !protocols.includes(new URL(config[field]).protocol)) throw new Error(`Invalid ${field} protocol`);
+  }
+  if (env.NODE_ENV === 'production' && (config.livekitKey === 'devkey' || config.livekitSecret === 'secret')) {
+    throw new Error('Production requires non-development LiveKit credentials');
+  }
+  return config;
+}

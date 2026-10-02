@@ -7,7 +7,8 @@
     "install:all": "npm --prefix server install && npm --prefix client install",
     "sfu": ".\\bin\\livekit-server.exe --dev",
     "server": "npm --prefix server run dev",
-    "client": "npm --prefix client run dev"
+    "client": "npm --prefix client run dev",
+    "test": "npm --prefix client test && npm --prefix server test"
   },
   "keywords": [
     "livekit",
@@ -19,5 +20,8 @@
     "gemini"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "engines": {
+    "node": ">=22.18.0"
+  }
 }

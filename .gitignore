@@ -6,6 +6,10 @@ server/.env
 client/.env
 !.env.example
 !server/.env.example
+!client/.env.example
+
+# Local meeting records and atomic-write temporary files
+server/data/
 
 # Dependencies
 node_modules/
@@ -19,6 +23,8 @@ client/dist/
 # Large binaries (SFU binary can be downloaded via release)
 bin/livekit-server.exe
 bin/*.zip
+bin/livekit.checksums.txt
+bin/livekit-LICENSE.txt
 
 # Logs
 logs/
