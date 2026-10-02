@@ -23,7 +23,11 @@ import {
   Clock,
   AlertCircle,
   Volume2,
-  Cpu
+  Cpu,
+  Wrench,
+  Play,
+  Square,
+  X
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -52,6 +56,14 @@ interface MeetingSummary {
   attendanceSummary: string[];
   provider?: string;
   note?: string;
+}
+
+interface DiagnosticLog {
+  id: string;
+  time: string;
+  type: 'info' | 'success' | 'warn' | 'error' | 'event';
+  message: string;
+  detail?: string;
 }
 
 const PRESET_PERSONAS = [
@@ -84,6 +96,9 @@ export default function App() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Diagnostic Modal state
+  const [isDiagnosticOpen, setIsDiagnosticOpen] = useState(false);
 
   // Backend Health and LLM status
   const [backendHealth, setBackendHealth] = useState<{
@@ -289,7 +304,29 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Diagnostic Button */}
+          <button
+            onClick={() => setIsDiagnosticOpen(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '12px',
+              fontWeight: 500,
+              padding: '6px 14px',
+              borderRadius: '20px',
+              backgroundColor: '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #334155',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            <Wrench size={14} />
+            <span>Speech Diagnostics Lab</span>
+          </button>
+
           {backendHealth ? (
             <div style={{
               display: 'flex',
@@ -363,7 +400,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             setRoomName={setRoomName}
             isJoining={isJoining}
             joinError={joinError}
-            backendHealth={backendHealth}
+            onOpenDiagnostic={() => setIsDiagnosticOpen(true)}
             onJoin={handleJoin}
           />
         )}
@@ -374,12 +411,12 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             serverUrl={serverUrl}
             roomName={roomName}
             employeeId={employeeId}
-            employeeName={employeeName}
             transcripts={transcripts}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             onAddSpeechLine={handleAddSpeechLine}
             onEndMeeting={handleEndMeeting}
+            onOpenDiagnostic={() => setIsDiagnosticOpen(true)}
             isSummarizing={isSummarizing}
           />
         )}
@@ -399,6 +436,573 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           />
         )}
       </main>
+
+      {/* Interactive Speech Diagnostics Lab Modal */}
+      {isDiagnosticOpen && (
+        <SpeechDiagnosticModal onClose={() => setIsDiagnosticOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+// ========================================================
+// 🧪 SPEECH DIAGNOSTICS LAB & VOICE TESTER MODAL
+// ========================================================
+function SpeechDiagnosticModal({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'speech-api' | 'record-playback'>('speech-api');
+  const [testLanguage, setTestLanguage] = useState<'id-ID' | 'en-US'>('id-ID');
+  const [testContinuous, setTestContinuous] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [logs, setLogs] = useState<DiagnosticLog[]>([]);
+  const [finalTranscript, setFinalTranscript] = useState('');
+  const [interimText, setInterimText] = useState('');
+  const [verdict, setVerdict] = useState<string | null>(null);
+
+  // Audio recording test states
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const recognitionRef = useRef<any>(null);
+
+  const addLog = (type: DiagnosticLog['type'], message: string, detail?: string) => {
+    const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + String(Date.now() % 1000).padStart(3, '0');
+    setLogs(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, time, type, message, detail }]);
+  };
+
+  const hasSpeechApi = Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+  const startSpeechApiTest = () => {
+    if (!hasSpeechApi) {
+      addLog('error', 'Web Speech API is not supported in this browser.', 'Use Chrome or Edge on desktop.');
+      setVerdict('FAILED: Browser lacks window.SpeechRecognition / window.webkitSpeechRecognition.');
+      return;
+    }
+
+    setLogs([]);
+    setFinalTranscript('');
+    setInterimText('');
+    setVerdict(null);
+    setIsTesting(true);
+
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const rec = new SpeechRec();
+
+    rec.lang = testLanguage;
+    rec.continuous = testContinuous;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    addLog('info', `Initializing SpeechRecognition (lang: ${testLanguage}, continuous: ${testContinuous})`);
+
+    rec.onstart = () => {
+      addLog('event', '🔵 onstart: Speech recognition engine started');
+    };
+
+    rec.onaudiostart = () => {
+      addLog('event', '🎧 onaudiostart: Audio capture initiated by browser');
+    };
+
+    rec.onsoundstart = () => {
+      addLog('event', '🔊 onsoundstart: Sound energy detected from your microphone');
+    };
+
+    rec.onspeechstart = () => {
+      addLog('event', '🗣️ onspeechstart: Human speech phonemes recognized!');
+    };
+
+    rec.onresult = (event: any) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const item = event.results[i];
+        const text = item[0].transcript;
+        const confidence = Math.round((item[0].confidence || 0) * 100);
+        if (item.isFinal) {
+          addLog('success', `💬 onresult (FINAL): "${text}" (Confidence: ${confidence}%)`);
+          setFinalTranscript(prev => (prev ? prev + ' ' + text : text));
+          setVerdict(`SUCCESS! Recognized: "${text}"`);
+        } else {
+          interim += text;
+        }
+      }
+      setInterimText(interim);
+      if (interim) {
+        addLog('info', `... Hearing interim: "${interim}"`);
+      }
+    };
+
+    rec.onspeechend = () => {
+      addLog('event', '🛑 onspeechend: Speech pause detected');
+    };
+
+    rec.onsoundend = () => {
+      addLog('event', '🔇 onsoundend: Sound energy dropped');
+    };
+
+    rec.onaudioend = () => {
+      addLog('event', '⏹️ onaudioend: Audio stream closed by browser');
+    };
+
+    rec.onerror = (event: any) => {
+      const err = event.error;
+      addLog('error', `⚠️ onerror: [${err}]`, event.message || '');
+      
+      let explanation = `Error: ${err}.`;
+      if (err === 'network') {
+        explanation = `❌ ERROR 'network': Chrome cannot connect to Google's Speech Service.
+Causes:
+1. Windows Privacy Setting: 'Online speech recognition' is DISABLED in Windows Settings > Privacy & Security > Speech.
+2. Corporate Network: Company firewall / proxy blocks Google's Speech WebSocket server.
+3. Language Pack: Language '${testLanguage}' is not available offline in Windows.`;
+      } else if (err === 'not-allowed') {
+        explanation = `❌ ERROR 'not-allowed': Microphone permission is blocked or denied in Chrome site settings.`;
+      } else if (err === 'audio-capture') {
+        explanation = `❌ ERROR 'audio-capture': No microphone hardware was found or another program has an exclusive lock on your microphone.`;
+      } else if (err === 'no-speech') {
+        explanation = `⚠️ WARNING 'no-speech': No recognizable speech was detected before timeout. Speak closer to the microphone.`;
+      }
+      setVerdict(explanation);
+    };
+
+    rec.onend = () => {
+      addLog('event', '⚪ onend: Speech recognition session ended');
+      setIsTesting(false);
+      setInterimText('');
+    };
+
+    try {
+      rec.start();
+      recognitionRef.current = rec;
+      addLog('info', 'Recognition started! Speak into your microphone now...');
+    } catch (err: any) {
+      addLog('error', `Failed to start recognition: ${err.message}`);
+      setIsTesting(false);
+    }
+  };
+
+  const stopSpeechApiTest = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      setIsTesting(false);
+    }
+  };
+
+  // Hardware audio record & playback test
+  const startRecordingAudio = async () => {
+    setRecordedAudioUrl(null);
+    audioChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        setRecordedAudioUrl(url);
+        stream.getTracks().forEach(t => t.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecordingAudio(true);
+    } catch (err: any) {
+      alert('Microphone recording error: ' + err.message);
+    }
+  };
+
+  const stopRecordingAudio = () => {
+    if (mediaRecorderRef.current && isRecordingAudio) {
+      mediaRecorderRef.current.stop();
+      setIsRecordingAudio(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      backgroundColor: 'rgba(0,0,0,0.75)',
+      backdropFilter: 'blur(4px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: '20px',
+    }}>
+      <div style={{
+        backgroundColor: '#131b2e',
+        borderRadius: '16px',
+        border: '1px solid #273553',
+        width: '100%',
+        maxWidth: '850px',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 25px 50px rgba(0,0,0,0.6)',
+        overflow: 'hidden',
+      }}>
+        {/* Modal Header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '18px 24px',
+          borderBottom: '1px solid #273553',
+          backgroundColor: '#101626',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Wrench size={20} color="#38bdf8" />
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#f8fafc', margin: 0 }}>
+                Speech Transcription Diagnostic Lab
+              </h2>
+              <p style={{ fontSize: '12px', color: '#94a3b8', margin: 0 }}>
+                Diagnose why your browser or PC is not emitting transcriptions
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              backgroundColor: 'transparent',
+              border: 'none',
+              color: '#94a3b8',
+              cursor: 'pointer',
+              padding: '6px',
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Tab Selection */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #1e293b', backgroundColor: '#0f172a' }}>
+          <button
+            onClick={() => setActiveTab('speech-api')}
+            style={{
+              padding: '12px 20px',
+              backgroundColor: activeTab === 'speech-api' ? '#131b2e' : 'transparent',
+              border: 'none',
+              borderBottom: activeTab === 'speech-api' ? '2px solid #3b82f6' : 'none',
+              color: activeTab === 'speech-api' ? '#f8fafc' : '#94a3b8',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            1. Web Speech API Event Trace (Live Demo)
+          </button>
+          <button
+            onClick={() => setActiveTab('record-playback')}
+            style={{
+              padding: '12px 20px',
+              backgroundColor: activeTab === 'record-playback' ? '#131b2e' : 'transparent',
+              border: 'none',
+              borderBottom: activeTab === 'record-playback' ? '2px solid #3b82f6' : 'none',
+              color: activeTab === 'record-playback' ? '#f8fafc' : '#94a3b8',
+              fontWeight: 600,
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            2. Hardware Audio Record & Playback
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+          {activeTab === 'speech-api' && (
+            <div>
+              {/* Controls */}
+              <div style={{
+                backgroundColor: '#0f172a',
+                border: '1px solid #1e293b',
+                borderRadius: '10px',
+                padding: '16px',
+                marginBottom: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                      Language:
+                    </label>
+                    <select
+                      value={testLanguage}
+                      onChange={e => setTestLanguage(e.target.value as any)}
+                      disabled={isTesting}
+                      style={{
+                        padding: '6px 10px',
+                        backgroundColor: '#1e293b',
+                        border: '1px solid #334155',
+                        borderRadius: '6px',
+                        color: '#f8fafc',
+                        fontSize: '12px',
+                      }}
+                    >
+                      <option value="id-ID">Bahasa Indonesia (id-ID)</option>
+                      <option value="en-US">English US (en-US)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                      Mode:
+                    </label>
+                    <button
+                      type="button"
+                      disabled={isTesting}
+                      onClick={() => setTestContinuous(!testContinuous)}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#1e293b',
+                        border: '1px solid #334155',
+                        borderRadius: '6px',
+                        color: '#cbd5e1',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {testContinuous ? 'Continuous (Long)' : 'Single Utterance (Recommended)'}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {isTesting ? (
+                    <button
+                      onClick={stopSpeechApiTest}
+                      style={{
+                        padding: '8px 18px',
+                        backgroundColor: '#dc2626',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <Square size={14} />
+                      <span>Stop Listening</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startSpeechApiTest}
+                      style={{
+                        padding: '8px 20px',
+                        backgroundColor: '#2563eb',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <Play size={14} />
+                      <span>Start Speech Test</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Interim Banner */}
+              {interimText && (
+                <div style={{
+                  backgroundColor: '#1e3a8a',
+                  border: '1px solid #3b82f6',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#bfdbfe',
+                  fontSize: '13px',
+                  marginBottom: '16px',
+                }}>
+                  Hearing right now: <strong>"{interimText}"</strong>
+                </div>
+              )}
+
+              {finalTranscript && (
+                <div style={{
+                  backgroundColor: '#064e3b',
+                  border: '1px solid #059669',
+                  borderRadius: '8px',
+                  padding: '10px 16px',
+                  color: '#a7f3d0',
+                  fontSize: '13px',
+                  marginBottom: '16px',
+                }}>
+                  Recognized Words: <strong>"{finalTranscript}"</strong>
+                </div>
+              )}
+
+              {/* Diagnostic Verdict */}
+              {verdict && (
+                <div style={{
+                  backgroundColor: verdict.startsWith('SUCCESS') ? '#064e3b' : '#451a1a',
+                  border: verdict.startsWith('SUCCESS') ? '1px solid #059669' : '1px solid #b91c1c',
+                  borderRadius: '8px',
+                  padding: '14px 18px',
+                  color: verdict.startsWith('SUCCESS') ? '#a7f3d0' : '#fecaca',
+                  fontSize: '13px',
+                  lineHeight: 1.5,
+                  marginBottom: '16px',
+                  whiteSpace: 'pre-line',
+                }}>
+                  {verdict}
+                </div>
+              )}
+
+              {/* Live Terminal Event Log */}
+              <div style={{
+                backgroundColor: '#0a0e17',
+                border: '1px solid #1e293b',
+                borderRadius: '10px',
+                padding: '16px',
+                minHeight: '220px',
+                maxHeight: '300px',
+                overflowY: 'auto',
+                fontFamily: 'Consolas, monospace',
+                fontSize: '12px',
+              }}>
+                <div style={{ color: '#64748b', marginBottom: '8px', borderBottom: '1px solid #1e293b', paddingBottom: '6px' }}>
+                  === SpeechRecognition Event Log Terminal ===
+                </div>
+                {logs.length === 0 ? (
+                  <div style={{ color: '#475569', fontStyle: 'italic' }}>
+                    Click "Start Speech Test" and speak a phrase (e.g. "Testing one two three" or "Selamat siang")...
+                  </div>
+                ) : (
+                  logs.map(l => (
+                    <div key={l.id} style={{
+                      marginBottom: '4px',
+                      color: l.type === 'error' ? '#f87171' : l.type === 'success' ? '#34d399' : l.type === 'event' ? '#38bdf8' : '#cbd5e1',
+                    }}>
+                      <span style={{ color: '#64748b' }}>[{l.time}] </span>
+                      <span>{l.message}</span>
+                      {l.detail && <div style={{ color: '#94a3b8', marginLeft: '16px', fontSize: '11px' }}>{l.detail}</div>}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'record-playback' && (
+            <div>
+              <p style={{ color: '#cbd5e1', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
+                This test records raw audio directly using the browser's <code>MediaRecorder</code> API and plays it back to you.
+                If you hear your clear voice during playback, your microphone hardware, permissions, and browser audio stack are 100% working!
+              </p>
+
+              <div style={{
+                backgroundColor: '#0f172a',
+                border: '1px solid #1e293b',
+                borderRadius: '10px',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '16px',
+              }}>
+                {isRecordingAudio ? (
+                  <button
+                    onClick={stopRecordingAudio}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: '#dc2626',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: '14px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <Square size={16} />
+                    <span>Stop Recording (Speak now...)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={startRecordingAudio}
+                    style={{
+                      padding: '12px 24px',
+                      backgroundColor: '#2563eb',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: '14px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <Mic size={16} />
+                    <span>Record 5s Voice Sample</span>
+                  </button>
+                )}
+
+                {recordedAudioUrl && (
+                  <div style={{ marginTop: '16px', width: '100%', textAlign: 'center' }}>
+                    <div style={{ fontSize: '13px', color: '#10b981', marginBottom: '8px', fontWeight: 600 }}>
+                      ✓ Audio Recorded Successfully! Listen below:
+                    </div>
+                    <audio src={recordedAudioUrl} controls style={{ width: '100%', maxWidth: '400px' }} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div style={{
+          padding: '14px 24px',
+          backgroundColor: '#101626',
+          borderTop: '1px solid #273553',
+          display: 'flex',
+          justifyContent: 'flex-end',
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '8px 18px',
+              backgroundColor: '#1e293b',
+              border: '1px solid #334155',
+              borderRadius: '8px',
+              color: '#f8fafc',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            Close Diagnostics
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -521,7 +1125,6 @@ function MicrophoneDiagnostic() {
             <span>Input Level: <strong style={{ color: volume > 10 ? '#34d399' : '#94a3b8' }}>{volume}%</strong></span>
           </div>
 
-          {/* Real-time VU Volume Level Bar */}
           <div style={{
             height: '10px',
             backgroundColor: '#1e293b',
@@ -563,6 +1166,7 @@ function LobbyView({
   setRoomName,
   isJoining,
   joinError,
+  onOpenDiagnostic,
   onJoin,
 }: any) {
   return (
@@ -580,9 +1184,30 @@ function LobbyView({
         boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
       }}>
         <div style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '4px 12px', borderRadius: '14px', backgroundColor: '#1e293b', border: '1px solid #334155', color: '#38bdf8', fontSize: '13px', marginBottom: '14px' }}>
-            <ShieldCheck size={16} />
-            <span>Bali Tower Internal Secure Voice Network</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '4px 12px', borderRadius: '14px', backgroundColor: '#1e293b', border: '1px solid #334155', color: '#38bdf8', fontSize: '13px' }}>
+              <ShieldCheck size={16} />
+              <span>Bali Tower Internal Secure Voice Network</span>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenDiagnostic}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 12px',
+                borderRadius: '14px',
+                backgroundColor: '#172554',
+                border: '1px solid #2563eb',
+                color: '#60a5fa',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              <Wrench size={13} />
+              <span>Run Speech Diagnostic Demo</span>
+            </button>
           </div>
           <h2 style={{ fontSize: '26px', fontWeight: 600, color: '#f8fafc', marginBottom: '8px' }}>
             Join Voice Conference
@@ -786,12 +1411,12 @@ function InCallView({
   serverUrl,
   roomName,
   employeeId,
-  employeeName,
   transcripts,
   activeTab,
   setActiveTab,
   onAddSpeechLine,
   onEndMeeting,
+  onOpenDiagnostic,
   isSummarizing,
 }: any) {
   return (
@@ -807,12 +1432,12 @@ function InCallView({
       <RoomContent
         roomName={roomName}
         employeeId={employeeId}
-        employeeName={employeeName}
         transcripts={transcripts}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onAddSpeechLine={onAddSpeechLine}
         onEndMeeting={onEndMeeting}
+        onOpenDiagnostic={onOpenDiagnostic}
         isSummarizing={isSummarizing}
       />
     </LiveKitRoom>
@@ -827,6 +1452,7 @@ function RoomContent({
   setActiveTab,
   onAddSpeechLine,
   onEndMeeting,
+  onOpenDiagnostic,
   isSummarizing,
 }: any) {
   const participants = useParticipants();
@@ -837,63 +1463,32 @@ function RoomContent({
   const [interimText, setInterimText] = useState('');
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>('id-ID');
-  const [micVolume, setMicVolume] = useState(0);
 
+  const isListeningRef = useRef(false);
   const recognitionRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const animFrameRef = useRef<number | null>(null);
 
-  // In-call real-time mic volume level monitor
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(s => {
-        stream = s;
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        audioContextRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(s);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        const data = new Uint8Array(analyser.frequencyBinCount);
+  const startRecognitionInstance = () => {
+    if (!isListeningRef.current) return;
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setSpeechError('Web Speech API is not supported in this browser. Please use Chrome or Edge.');
+      isListeningRef.current = false;
+      setIsListeningSpeechApi(false);
+      return;
+    }
 
-        const checkVolume = () => {
-          analyser.getByteFrequencyData(data);
-          let sum = 0;
-          for (let i = 0; i < data.length; i++) sum += data[i];
-          const avg = sum / data.length;
-          setMicVolume(Math.min(100, Math.round((avg / 128) * 100)));
-          animFrameRef.current = requestAnimationFrame(checkVolume);
-        };
-        checkVolume();
-      })
-      .catch(err => {
-        console.warn('In-call mic visualizer error:', err);
-      });
+    try {
+      const rec = new SpeechRec();
+      rec.lang = speechLanguage;
+      rec.continuous = false; // Single sentence mode: fastest response, avoids Chrome buffer timeouts
+      rec.interimResults = true;
 
-    return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      if (audioContextRef.current) audioContextRef.current.close();
-    };
-  }, []);
-
-  // Initialize Web Speech API for voice-to-text
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = speechLanguage;
-
-      recognition.onstart = () => {
+      rec.onstart = () => {
         setIsListeningSpeechApi(true);
         setSpeechError(null);
       };
 
-      recognition.onresult = (event: any) => {
+      rec.onresult = (event: any) => {
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
@@ -909,60 +1504,71 @@ function RoomContent({
         setInterimText(interim);
       };
 
-      recognition.onerror = (err: any) => {
-        console.warn('Speech Recognition error event:', err);
-        if (err.error === 'not-allowed') {
-          setSpeechError('Microphone permission blocked in browser. Please allow microphone access.');
-        } else if (err.error === 'network') {
-          setSpeechError('Speech recognition network error. (Note: Web Speech API requires internet access to Google STT).');
-        } else if (err.error !== 'no-speech') {
-          setSpeechError(`Speech error: ${err.error}`);
+      rec.onerror = (err: any) => {
+        const code = err.error;
+        if (code === 'network') {
+          setSpeechError('Speech network error (Google Speech API unreachable or Windows Online Speech is turned off).');
+        } else if (code === 'not-allowed') {
+          setSpeechError('Microphone permission blocked in browser settings.');
+          isListeningRef.current = false;
+          setIsListeningSpeechApi(false);
+        } else if (code !== 'no-speech') {
+          console.warn('Speech error event:', code);
         }
       };
 
-      recognition.onend = () => {
-        // Auto-restart if user still wants it active
-        if (isListeningSpeechApi) {
-          try {
-            recognition.start();
-          } catch (e) {}
+      rec.onend = () => {
+        // Continuous Reconnect Loop: If still active, seamlessly restart for next sentence!
+        if (isListeningRef.current) {
+          setTimeout(() => {
+            if (isListeningRef.current) {
+              startRecognitionInstance();
+            }
+          }, 150);
+        } else {
+          setIsListeningSpeechApi(false);
+          setInterimText('');
         }
       };
 
-      recognitionRef.current = recognition;
-
-      // Auto start speech listening
-      try {
-        recognition.start();
-        setIsListeningSpeechApi(true);
-      } catch (e) {}
-    } else {
-      setSpeechError('Web Speech API is not supported in this browser. Please use Google Chrome or Edge.');
+      rec.start();
+      recognitionRef.current = rec;
+    } catch (err: any) {
+      console.warn('Speech recognition restart exception:', err);
+      if (isListeningRef.current) {
+        setTimeout(() => {
+          if (isListeningRef.current) startRecognitionInstance();
+        }, 400);
+      }
     }
+  };
 
+  const toggleSpeechRecognition = () => {
+    if (isListeningRef.current) {
+      isListeningRef.current = false;
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+      setIsListeningSpeechApi(false);
+      setInterimText('');
+    } else {
+      isListeningRef.current = true;
+      setIsListeningSpeechApi(true);
+      startRecognitionInstance();
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
+      isListeningRef.current = false;
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
       }
     };
-  }, [onAddSpeechLine, speechLanguage]);
-
-  const toggleSpeechRecognition = () => {
-    if (!recognitionRef.current) return;
-    if (isListeningSpeechApi) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-      setIsListeningSpeechApi(false);
-      setInterimText('');
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsListeningSpeechApi(true);
-        setSpeechError(null);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  };
+  }, []);
 
   const isMuted = !localParticipant.isMicrophoneEnabled;
 
@@ -993,28 +1599,45 @@ function RoomContent({
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* Live Mic Activity Bar */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: '#1e293b',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              border: '1px solid #334155',
-              fontSize: '12px'
-            }}>
-              <Mic size={14} color={micVolume > 10 ? '#34d399' : '#94a3b8'} />
-              <span>Mic:</span>
-              <div style={{ width: '40px', height: '6px', backgroundColor: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{
-                  width: `${micVolume}%`,
-                  height: '100%',
-                  backgroundColor: micVolume > 10 ? '#10b981' : '#64748b'
-                }} />
-              </div>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={toggleSpeechRecognition}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '12px',
+                fontWeight: 600,
+                padding: '5px 12px',
+                borderRadius: '6px',
+                backgroundColor: isListeningSpeechApi ? '#065f46' : '#1e293b',
+                color: isListeningSpeechApi ? '#6ee7b7' : '#94a3b8',
+                border: isListeningSpeechApi ? '1px solid #10b981' : '1px solid #334155',
+                cursor: 'pointer',
+              }}
+            >
+              <Mic size={14} className={isListeningSpeechApi ? 'live-indicator' : ''} />
+              <span>{isListeningSpeechApi ? '● Live Transcribe: ACTIVE' : 'Start Live Transcribe'}</span>
+            </button>
+
+            <button
+              onClick={onOpenDiagnostic}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '11px',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                backgroundColor: '#1e293b',
+                color: '#38bdf8',
+                border: '1px solid #334155',
+                cursor: 'pointer',
+              }}
+            >
+              <Wrench size={13} />
+              <span>Speech Diagnostics</span>
+            </button>
 
             <div style={{
               display: 'flex',
@@ -1027,12 +1650,12 @@ function RoomContent({
               color: '#a5f3fc'
             }}>
               <Sparkles size={14} color="#06b6d4" />
-              <span>AI Secretary: Recording</span>
+              <span>AI Secretary: Ready</span>
             </div>
           </div>
         </div>
 
-        {/* Interim Speech Banner (Displays words live as you speak!) */}
+        {/* Interim Speech Banner */}
         {interimText && (
           <div style={{
             backgroundColor: '#1e3a8a',
@@ -1061,7 +1684,19 @@ function RoomContent({
             justifyContent: 'space-between',
           }}>
             <span>⚠️ {speechError}</span>
-            <span style={{ fontSize: '11px', color: '#f87171' }}>Use the quick-click lines or text box below to add speech</span>
+            <button
+              onClick={onOpenDiagnostic}
+              style={{
+                fontSize: '11px',
+                color: '#60a5fa',
+                backgroundColor: 'transparent',
+                border: 'underline',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+              }}
+            >
+              Open Diagnostic Lab
+            </button>
           </div>
         )}
 
@@ -1191,7 +1826,7 @@ function RoomContent({
                   borderRadius: '6px',
                   backgroundColor: isListeningSpeechApi ? '#10b981' : '#1e293b',
                   color: '#fff',
-                  border: '1px solid #334155',
+                  border: isListeningSpeechApi ? '1px solid #059669' : '1px solid #334155',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
@@ -1199,7 +1834,7 @@ function RoomContent({
                 }}
               >
                 <Mic size={12} />
-                <span>{isListeningSpeechApi ? 'Auto Transcribing Active' : 'Start Auto Transcribe'}</span>
+                <span>{isListeningSpeechApi ? 'Transcribing Live (Click to stop)' : 'Start Auto Transcribe'}</span>
               </button>
             </div>
           </div>
@@ -1307,6 +1942,26 @@ function RoomContent({
               {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
               <span>{isMuted ? 'Unmute Mic' : 'Mute Mic'}</span>
             </button>
+
+            <button
+              onClick={toggleSpeechRecognition}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '8px',
+                backgroundColor: isListeningSpeechApi ? '#065f46' : '#1e293b',
+                border: isListeningSpeechApi ? '1px solid #10b981' : '1px solid #334155',
+                color: isListeningSpeechApi ? '#6ee7b7' : '#f8fafc',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <Mic size={18} className={isListeningSpeechApi ? 'live-indicator' : ''} />
+              <span>{isListeningSpeechApi ? 'Live Transcribe: ON' : 'Turn On Live Transcribe'}</span>
+            </button>
           </div>
 
           <button
@@ -1388,7 +2043,7 @@ function RoomContent({
               <div style={{ textAlign: 'center', color: '#64748b', marginTop: '60px', fontSize: '13px' }}>
                 <Activity size={32} style={{ margin: '0 auto 10px', opacity: 0.5 }} />
                 <p>Waiting for speech input...</p>
-                <p style={{ fontSize: '11px', marginTop: '6px' }}>Speak into your microphone or use the preset lines below.</p>
+                <p style={{ fontSize: '11px', marginTop: '6px' }}>Click "Start Auto Transcribe" or use preset lines.</p>
               </div>
             ) : (
               transcripts.map((t: TranscriptEntry) => {
