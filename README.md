@@ -56,17 +56,28 @@ There are two separate layers in voice call systems:
 
 ## 🚀 Quick Start (Running on Windows)
 
-Double-click [`start.bat`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/start.bat) or run from terminal:
+### On a Fresh Clone / New PC:
+Simply double-click [`start.bat`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/start.bat).
+The script is **self-healing** and will automatically:
+1. Verify **Node.js** is installed.
+2. Create `server/.env` from `server/.env.example` if missing.
+3. Automatically download `bin/livekit-server.exe` if not present.
+4. Run `npm install` in both `server/` and `client/` if `node_modules` are missing.
+5. Launch all 3 services in separate windows!
 
+### Manual Setup via Terminal (Alternative):
+If you prefer running commands manually:
 ```powershell
-# Terminal 1: LiveKit SFU (Native Windows binary)
-npm run sfu
+# 1. Install all dependencies (both server and client)
+npm run install:all
 
-# Terminal 2: Backend & Office LLM Proxy
-npm run server
+# 2. Setup .env and download LiveKit SFU (if needed)
+npm run setup
 
-# Terminal 3: PC Web Client
-npm run client
+# 3. Launch services:
+npm run sfu       # Terminal 1: LiveKit SFU (Port 7880)
+npm run server    # Terminal 2: Backend API & Office LLM (Port 3001)
+npm run client    # Terminal 3: PC Web Client (Port 5173)
 ```
 
-Then visit **`http://localhost:5173`** in your browser.
+Then open **`http://localhost:5173`** in your browser.
