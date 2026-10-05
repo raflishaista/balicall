@@ -7,7 +7,7 @@ import { Track } from 'livekit-client';
 import { AudioLines, Mic, MicOff, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 
-export function ParticipantVideoTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }) {
+export function ParticipantVideoTile({ trackRef, spotlight = false }: { trackRef: TrackReferenceOrPlaceholder; spotlight?: boolean }) {
   const participant = trackRef.participant;
   const cameraMuted = useIsMuted(trackRef);
   const microphoneMuted = useIsMuted({ participant, source: Track.Source.Microphone });
@@ -30,7 +30,8 @@ export function ParticipantVideoTile({ trackRef }: { trackRef: TrackReferenceOrP
 
   return <ParticipantTile
     trackRef={trackRef}
-    className={`participant-tile ${speaking ? 'is-speaking' : ''} ${showVideo ? 'has-video' : ''}`}
+    className={`participant-tile ${speaking ? 'is-speaking' : ''} ${showVideo ? 'has-video' : ''} ${spotlight ? 'is-spotlight' : ''}`}
+    data-spotlight={spotlight ? 'true' : 'false'}
     aria-label={`${displayName}${participant.isLocal ? ' (Kamu)' : ''}`}
   >
     {showVideo && isTrackReference(trackRef) ? <VideoTrack

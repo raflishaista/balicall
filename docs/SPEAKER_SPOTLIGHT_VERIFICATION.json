@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-05T09:25:28.231Z",
+  "status": "passed",
+  "media": "controlled oscillator audio and canvas video, real local LiveKit WebRTC/SFU active speaker events; speech recognition stubbed; physical microphones and human speech not tested",
+  "timing": {
+    "confirmationMs": 600,
+    "minimumHoldMs": 1200
+  },
+  "checks": [
+    "three silent participants have a stable initial spotlight and all camera tiles are visible",
+    "real SFU speaker events promote newest overlapping speaker; loudness variation does not reorder focus; tile/video DOM nodes, camera capture, and recognizer remain unchanged",
+    "silence preserves most recent spotlight beyond the hold interval",
+    "muted microphone remains correctly marked; camera-off speaker is spotlighted with initials without misassigning another participant video",
+    "screen share remains the main stage while speaker history updates; stopping share restores latest speaker without recreating participant tiles",
+    "departing spotlight falls back to last confirmed participant still in room",
+    "local spotlight keeps Kamu marker and local-only mirror; mobile fits without horizontal overflow and honors reduced motion",
+    "leaving cleans media; last participant retains a valid spotlight",
+    "no uncaught browser errors"
+  ],
+  "errors": []
+}

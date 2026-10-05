@@ -8,6 +8,10 @@ import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspa
 import { initials } from './presentation';
 import { MeetingRoom } from './MeetingRoom';
 import { cameraErrorMessage, useCameraControl } from './useCameraControl';
+import { useScreenShareControl } from './useScreenShareControl';
+import { useDeviceSettings } from './useDeviceSettings';
+import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import {
   LiveKitRoom,
@@ -17,6 +21,8 @@ import {
   useTrackVolume,
   useConnectionState,
   useTracks,
+  useRoomContext,
+  isTrackReference,
 } from '@livekit/components-react';
 import {
   Copy,
@@ -524,16 +530,23 @@ function RoomContent({
   isSummarizing,
 }: any) {
   const participants = useParticipants();
-  const { localParticipant, isMicrophoneEnabled, microphoneTrack, isCameraEnabled, lastCameraError, lastMicrophoneError } = useLocalParticipant();
+  const room = useRoomContext();
+  const { localParticipant, isMicrophoneEnabled, microphoneTrack, isCameraEnabled, isScreenShareEnabled, lastCameraError, lastMicrophoneError } = useLocalParticipant();
   const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], { onlySubscribed: false });
+  const screenTracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: true }).filter(isTrackReference).filter(track => !track.publication.isMuted);
   const connectionState = useConnectionState();
   const connected = connectionState === ConnectionState.Connected;
+  const spotlightIdentity = useSpeakerSpotlight(room, connected);
   const camera = useCameraControl(localParticipant, connected, true);
+  const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+  const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported);
   const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
   const microphoneError = !isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null;
   const isMuted = !isMicrophoneEnabled;
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const closeDevices = useCallback(() => setDevicesOpen(false), []);
   const presence = useEffectEvent((value: boolean) => onPresence(value));
   useEffect(() => {
     void presence(connected);
@@ -548,6 +561,14 @@ function RoomContent({
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
   const backendSpeech = useBackendTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'server',
     track: microphoneTrack?.track?.mediaStreamTrack, volume, onAudio: onAddAudio });
+  const { prepareTrackChange, resumeTrackChange } = backendSpeech;
+  const prepareMicrophoneChange = useCallback(async () => {
+    if (sttProvider === 'server') await prepareTrackChange();
+  }, [sttProvider, prepareTrackChange]);
+  const resumeMicrophoneChange = useCallback(() => {
+    resumeTrackChange();
+  }, [resumeTrackChange]);
+  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || camera.pending, prepareMicrophoneChange, resumeMicrophoneChange);
   const { isListeningSpeechApi, interimText, speechError, toggleSpeechRecognition, speechEnabled, finishTranscription } =
     sttProvider === 'server' ? backendSpeech : browserSpeech;
   const finishMeeting = async (generate: boolean) => {
@@ -561,17 +582,21 @@ function RoomContent({
     catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal mengubah mikrofon'); }
   };
 
-  return <MeetingRoom
+  return <><MeetingRoom
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
+    screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
+    screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
+    devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error} onOpenDevices={() => setDevicesOpen(true)}
+    spotlightIdentity={spotlightIdentity}
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
     setSttProvider={setSttProvider} speechLanguage={speechLanguage} setSpeechLanguage={setSpeechLanguage}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
     onToggleMute={toggleMute} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
-  />;
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }
 function SummaryView({
   summary,

@@ -6,14 +6,14 @@
 
 **Audit awal:** pada commit `a2b841e`, rapat masih audio-only (`video={false}`), dengan avatar, mic, indikator berbicara, transkrip, dan peserta. Kamera, screen share, dan pemilih perangkat belum tersedia.
 
-**Status terbaru:** P1-01 sudah diimplementasikan di working tree lokal pada 5 Oktober 2026. Build, lint, tes frontend, dan pengujian video simulasi melalui LiveKit sudah dijalankan. Webcam fisik belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md).
+**Status terbaru:** P1-01 sudah di-push ke `testingsam` pada commit `fc7f0e3`. P1-02, P1-03, dan P1-04 sudah diimplementasikan lokal pada 5 Oktober 2026. Build, lint, 63 tes frontend, dan pengujian spotlight tiga peserta melalui LiveKit lulus. Perangkat fisik, percakapan manusia, output suara nyata, dan dialog berbagi layar sistem belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md), [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md), [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md), dan [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md).
 
 | Tanggung jawab Person 1 | Status kode saat ini | Sisa pekerjaan |
 | --- | --- | --- |
 | Video kamera | Implementasi dan verifikasi otomatis lokal selesai: inisialisasi kamera terkelola, tile video lokal/remote, toggle, dan fallback | Uji webcam fisik dengan dua peserta/perangkat |
-| Screen share | Belum ada kontrol atau render track screen share | Mulai/berhenti share dan layout presentasi |
-| Device switcher | Belum ada enumerasi/pemilihan perangkat | Dialog dan pergantian perangkat aktif |
-| Active speaker spotlight | Sebagian: `ParticipantVideoTile` sudah menandai pembicara lewat `useIsSpeaking` | Riwayat pembicara terbaru dan posisi spotlight |
+| Screen share | Kontrol mulai/berhenti, area presentasi, strip kamera, pilihan presenter, dan verifikasi simulasi tersedia | Acceptance dengan dialog browser/izin sistem nyata di perangkat kantor |
+| Device switcher | Dialog mikrofon/kamera/speaker, enumerasi, pergantian SDK, hotplug, fallback, dan verifikasi simulasi tersedia | Acceptance headset/webcam fisik, izin output browser, dan kualitas suara nyata |
+| Active speaker spotlight | Pembicara terbaru, konfirmasi 600 ms, jeda pergantian 1,2 detik, fallback peserta, prioritas screen share, dan verifikasi tiga peserta tersedia | Acceptance percakapan nyata, interupsi singkat, dan kebisingan kantor |
 | Pemeriksaan sebelum bergabung | Sebagian: `MicrophoneDiagnostic` sudah mengukur input suara, menampilkan nama mic, dan membersihkan track | Preview kamera, pilihan perangkat, serta membawa pilihan ke dalam rapat |
 
 Kode server saat ini memberikan `canPublish` dan `canSubscribe` pada token rapat (`server/app.js:46`), tanpa pembatasan sumber kamera/screen share yang terlihat pada grant tersebut. Tidak ditemukan penghalang grant untuk mulai mengerjakan fitur media; hasil publikasi tetap perlu diuji pada server LiveKit yang digunakan.
@@ -44,6 +44,8 @@ Implementasi akhir menginisialisasi kamera lewat `useCameraControl` setelah room
 
 ### P1-02 — Berbagi layar
 
+**Hasil:** implementasi tersedia dan verifikasi otomatis dengan media simulasi lulus. Dialog pemilihan layar, izin OS, dan penghentian lewat toolbar browser asli masih perlu acceptance manual. Lihat [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md).
+
 **Prioritas:** P0 · **Lokasi utama:** `client/src/App.tsx`, `client/src/MeetingRoom.tsx`, `client/src/App.css`
 
 Tambahkan kontrol “Bagikan layar” dan tampilkan track screen share dengan area utama yang lebih besar. Gunakan state/track LiveKit sebagai sumber status, termasuk ketika pengguna menghentikan share melalui toolbar browser.
@@ -59,6 +61,8 @@ Tambahkan kontrol “Bagikan layar” dan tampilkan track screen share dengan ar
 - Screen share berhenti ketika pemilik share keluar atau rapat diselesaikan.
 
 ### P1-03 — Pemilih perangkat audio/video
+
+**Hasil:** implementasi lokal tersedia. Build/lint, 52 tes frontend, dan 9 pemeriksaan integrasi simulasi lulus. Perangkat fisik dan output suara nyata masih membutuhkan acceptance. Lihat [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md).
 
 **Prioritas:** P1 · **Lokasi utama:** `client/src/MeetingRoom.tsx` dan komponen dialog baru bila diperlukan
 
@@ -79,6 +83,8 @@ API versi LiveKit yang terpasang menyediakan `room.switchActiveDevice(kind, devi
 - Dialog dapat dibuka/ditutup dengan keyboard, mengelola fokus, dan menampilkan kegagalan pergantian perangkat tanpa mengklaim perangkat baru sudah aktif.
 
 ### P1-04 — Active speaker spotlight yang stabil
+
+**Hasil:** implementasi lokal tersedia. Build/lint, 63 tes frontend, dan 9 pemeriksaan integrasi dengan audio/video simulasi melalui SFU LiveKit lulus. Percakapan manusia dan mikrofon fisik masih membutuhkan acceptance. Lihat [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md).
 
 **Prioritas:** P1 · **Lokasi utama:** `client/src/MeetingRoom.tsx`, `client/src/App.css`
 
