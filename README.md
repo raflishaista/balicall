@@ -12,10 +12,10 @@ Gunakan Node.js 24 LTS, minimum 22.18. Dari direktori proyek:
 npm run setup
 npm run sfu       # terminal 1: LiveKit, port 7880
 npm run server    # terminal 2: API, port 3001
-npm run client    # terminal 3: Vite, port 5173
+npm run client    # terminal 3: Vite, port 5187
 ```
 
-Buka [http://localhost:5173](http://localhost:5173). `start.bat` menjalankan setup dan ketiga layanan. Setup dapat dijalankan dari direktori lain, mengunduh LiveKit v1.13.7 dari rilis resmi, memverifikasi SHA-256, dan berhenti jika instalasi gagal.
+Buka [http://127.0.0.1:5187](http://127.0.0.1:5187). Port dev dikunci supaya Vite gagal dengan jelas bila sudah dipakai, bukan diam-diam berpindah ke port project lain. `start.bat` menjalankan setup dan ketiga layanan. Setup dapat dijalankan dari direktori lain, mengunduh LiveKit v1.13.7 dari rilis resmi, memverifikasi SHA-256, dan berhenti jika instalasi gagal.
 
 Untuk hanya menyiapkan konfigurasi/dependensi tanpa mengunduh SFU:
 

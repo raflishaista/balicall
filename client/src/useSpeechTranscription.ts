@@ -15,7 +15,7 @@ export function useSpeechTranscription({ language, muted, onFinal }: {
   const controller = useRef<ReturnType<typeof startSpeechRecognition> | null>(null);
   const onFinalSpeech = useEffectEvent((text: string) => {
     Promise.resolve(onFinal(text)).catch((error: unknown) => {
-      setSpeechError(error instanceof Error ? error.message : 'Failed to save transcript.');
+      setSpeechError(error instanceof Error ? error.message : 'Gagal menyimpan transkrip.');
     });
   });
 
@@ -30,7 +30,7 @@ export function useSpeechTranscription({ language, muted, onFinal }: {
     if (!SpeechRecognition) {
       // Capability errors come from the external browser API being initialized here.
       // eslint-disable-next-line react/set-state-in-effect
-      setSpeechError('Speech recognition is unavailable in this browser. Use a browser with Web Speech support or configure backend STT.');
+      setSpeechError('Browser ini tidak mendukung transkripsi suara. Gunakan browser yang mendukung Web Speech atau siapkan transkripsi server.');
       return;
     }
     setSpeechError(null);

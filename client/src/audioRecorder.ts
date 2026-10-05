@@ -47,8 +47,8 @@ export function startAudioRecorder(options: {
       recorder.onerror = () => {
         disposed = true;
         clearTimers();
-        options.onError('Audio recording failed. Check microphone access and restart transcription.');
-        finishReject?.(new Error('Audio recording failed'));
+        options.onError('Perekaman audio gagal. Periksa izin mikrofon lalu mulai ulang transkripsi.');
+        finishReject?.(new Error('Perekaman audio gagal'));
         clearTimeout(finishTimer);
         if (recorder.state !== 'inactive') recorder.stop();
       };
@@ -62,7 +62,7 @@ export function startAudioRecorder(options: {
       disposed = true;
       clearTimers();
       clearTimeout(finishTimer);
-      options.onError('This browser cannot record audio for backend STT. Try a supported browser.');
+      options.onError('Browser ini tidak dapat merekam audio untuk transkripsi server. Coba browser yang didukung.');
     }
   };
   startSegment();
@@ -83,7 +83,7 @@ export function startAudioRecorder(options: {
       finishResolve = resolve;
       finishReject = reject;
       clearTimers();
-      finishTimer = setTimeout(() => reject(new Error('Audio recorder did not finish. Retry before leaving.')), options.finishTimeoutMs ?? 4000);
+      finishTimer = setTimeout(() => reject(new Error('Perekam audio belum selesai. Coba lagi sebelum meninggalkan rapat.')), options.finishTimeoutMs ?? 4000);
       recorder.stop();
     }),
   };

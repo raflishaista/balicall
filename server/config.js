@@ -9,7 +9,7 @@ export function loadConfig(env = process.env) {
     livekitSecret: env.LIVEKIT_API_SECRET || 'secret',
     livekitUrl: env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
     livekitInternalUrl: env.LIVEKIT_INTERNAL_URL || env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
-    corsOrigins: (env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(value => value.trim()).filter(Boolean),
+    corsOrigins: (env.CORS_ORIGINS || 'http://localhost:5187,http://127.0.0.1:5187').split(',').map(value => value.trim()).filter(Boolean),
     llmProvider: (env.LLM_PROVIDER || 'office').toLowerCase(),
     llmKey: env.LLM_KEY || env.LLM_API_KEY || '',
     llmBaseUrl: env.LLM_BASE_URL || 'http://10.7.1.21/v1',

@@ -42,7 +42,7 @@ export function startSpeechRecognition(recognition: Recognition, options: {
     } catch (error) {
       wanted = false;
       options.onListening(false);
-      options.onError(`Cannot start speech recognition: ${error instanceof Error ? error.message : String(error)}`);
+      options.onError(`Transkripsi tidak dapat dimulai: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -76,13 +76,13 @@ export function startSpeechRecognition(recognition: Recognition, options: {
     options.onListening(false);
     options.onInterim('');
     const messages: Record<string, string> = {
-      'not-allowed': 'Microphone permission blocked. Allow microphone access, then restart transcription.',
-      'service-not-allowed': 'Speech recognition service is blocked by your browser or organization.',
-      'audio-capture': 'No microphone available for speech recognition. Check your input device.',
-      network: 'Speech recognition network error. Browser STT needs access to its online service; voice calls can still work.',
-      'language-not-supported': 'The speech service does not support this language. Select another language.',
+      'not-allowed': 'Izin mikrofon ditolak. Izinkan akses mikrofon, lalu mulai ulang transkripsi.',
+      'service-not-allowed': 'Layanan pengenalan ucapan diblokir oleh browser atau jaringan organisasi.',
+      'audio-capture': 'Mikrofon tidak tersedia untuk transkripsi. Periksa perangkat input.',
+      network: 'Layanan transkripsi browser gagal dijangkau (network). Koneksi suara rapat masih bisa berfungsi.',
+      'language-not-supported': 'Bahasa ini tidak didukung layanan transkripsi. Pilih bahasa lain.',
     };
-    options.onError(messages[error] || `Speech recognition stopped: ${error}. Restart transcription to retry.`);
+    options.onError(messages[error] || `Transkripsi berhenti (${error}). Mulai ulang untuk mencoba lagi.`);
     finishReject?.(new Error(messages[error] || `Speech recognition failed: ${error}`));
     clearTimeout(finishTimer);
   };

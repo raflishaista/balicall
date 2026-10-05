@@ -11,5 +11,5 @@ if errorlevel 1 (
 start "BaliCall LiveKit" cmd /k "npm run sfu"
 start "BaliCall Backend" cmd /k "npm run server"
 start "BaliCall Client" cmd /k "npm run client"
-echo Open http://localhost:5173 after the client is ready.
+echo Open http://127.0.0.1:5187 after the client is ready.
 endlocal

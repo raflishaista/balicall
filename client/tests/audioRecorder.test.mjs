@@ -51,6 +51,6 @@ test('recorder failures are visible and stop capture', () => {
 test('missing stop event has a bounded finish timeout', async () => {
   const { controller, instances } = setup({ segmentMs: 1000, finishTimeoutMs: 20 });
   instances[0].stop = () => { instances[0].state = 'inactive'; };
-  await assert.rejects(controller.finish(), /did not finish/);
+  await assert.rejects(controller.finish(), /belum selesai/);
   controller.dispose();
 });

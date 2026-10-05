@@ -14,7 +14,7 @@ export function useBackendTranscription(options: {
   const controller = useRef<ReturnType<typeof startAudioRecorder> | null>(null);
   const format = typeof MediaRecorder === 'undefined' ? undefined :
     ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(value => MediaRecorder.isTypeSupported(value));
-  const capabilityError = !format ? 'This browser cannot record audio in a format supported by backend STT.' : null;
+  const capabilityError = !format ? 'Browser ini tidak dapat merekam audio dalam format yang didukung transkripsi server.' : null;
   const onAudio = useEffectEvent((audio: Blob) => options.onAudio(audio, options.language));
   const hasVoice = useEffectEvent(() => options.volume > 0.005);
   const onError = useEffectEvent((message: string) => setError(message));
