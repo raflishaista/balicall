@@ -31,7 +31,8 @@ import {
   Square,
   X,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Database
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -112,13 +113,34 @@ export default function App() {
     llmModel?: string;
     llmBaseUrl?: string;
     hasLlmKey?: boolean;
+    database?: {
+      connected: boolean;
+      configured: boolean;
+    };
   } | null>(null);
+
+  // Registered employees list from database / directory
+  const [employeeDirectory, setEmployeeDirectory] = useState<{ id: string; name: string; dept: string; role?: string }[]>(PRESET_PERSONAS);
 
   useEffect(() => {
     fetch(`${API_BASE}/health`)
       .then(res => res.json())
       .then(data => setBackendHealth(data))
       .catch(() => setBackendHealth(null));
+
+    fetch(`${API_BASE}/employees`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.employees && data.employees.length > 0) {
+          setEmployeeDirectory(data.employees.map((e: any) => ({
+            id: e.employee_id,
+            name: e.name,
+            dept: e.department,
+            role: e.position,
+          })));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Timer logic
@@ -390,9 +412,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
                     ? 'Gemini 2.5 Flash'
                     : 'Smart Demo Engine'}
               </span>
-              {!backendHealth.hasLlmKey && (
-                <span style={{ color: '#f59e0b', fontSize: '11px' }}>(No Key)</span>
-              )}
+              <span style={{ color: '#64748b' }}>•</span>
+              <Database size={14} color={backendHealth.database?.connected ? '#10b981' : '#f59e0b'} />
+              <span style={{ color: backendHealth.database?.connected ? '#10b981' : '#94a3b8', fontSize: '11px', fontWeight: 500 }}>
+                {backendHealth.database?.connected ? 'DB: Connected' : 'DB: Standby'}
+              </span>
             </div>
           ) : (
             <div style={{
@@ -441,6 +465,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             setRoomName={setRoomName}
             isJoining={isJoining}
             joinError={joinError}
+            employeeDirectory={employeeDirectory}
             onOpenDiagnostic={() => setIsDiagnosticOpen(true)}
             onJoin={handleJoin}
           />
@@ -1215,9 +1240,12 @@ function LobbyView({
   setRoomName,
   isJoining,
   joinError,
+  employeeDirectory,
   onOpenDiagnostic,
   onJoin,
 }: any) {
+  const personas = (employeeDirectory && employeeDirectory.length > 0) ? employeeDirectory : PRESET_PERSONAS;
+
   return (
     <div style={{
       maxWidth: '820px',
@@ -1262,7 +1290,7 @@ function LobbyView({
             Join Voice Conference
           </h2>
           <p style={{ color: '#94a3b8', fontSize: '14px', lineHeight: '1.5' }}>
-            Enter your employee credentials to connect to the meeting. All voice streams are automatically monitored by the embedded AI Meeting Secretary to generate instant summaries and action item logs upon completion.
+            Enter your employee credentials to connect to the meeting. All employee IDs are authenticated against the central database (<span style={{ color: '#38bdf8', fontWeight: 600 }}>balicall_employees</span>) to ensure secure corporate communication.
           </p>
         </div>
 
@@ -1290,10 +1318,10 @@ function LobbyView({
         {/* Preset Persona Quick Buttons */}
         <div style={{ marginBottom: '24px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
-            Quick Select Employee Persona (For Multi-Window Testing)
+            Registered Employee Roster (Click to Select)
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px' }}>
-            {PRESET_PERSONAS.map(p => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+            {personas.map((p: any) => (
               <button
                 key={p.id}
                 type="button"
@@ -1314,8 +1342,8 @@ function LobbyView({
                 }}
               >
                 <div style={{ fontWeight: 600, fontSize: '13px' }}>{p.name}</div>
-                <div style={{ fontSize: '11px', color: '#94a3b8' }}>{p.id}</div>
-                <div style={{ fontSize: '10px', color: '#38bdf8', marginTop: '2px' }}>{p.dept}</div>
+                <div style={{ fontSize: '11px', color: '#38bdf8', fontWeight: 500 }}>{p.id}</div>
+                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '2px' }}>{p.dept}</div>
               </button>
             ))}
           </div>
@@ -1343,6 +1371,10 @@ function LobbyView({
                 outline: 'none',
               }}
             />
+            <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <ShieldCheck size={12} />
+              <span>Checked against company database (balicall_employees)</span>
+            </div>
           </div>
 
           <div>

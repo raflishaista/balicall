@@ -3,6 +3,18 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { GoogleGenAI } from '@google/genai';
+import {
+  initDb,
+  isDbConnected,
+  saveMeeting,
+  saveMeetingSummary,
+  saveTranscripts,
+  saveAttendees,
+  getMeetingSummaries,
+  getMeetingDetails,
+  verifyEmployeeId,
+  getAllEmployees,
+} from './db.js';
 
 dotenv.config();
 
@@ -90,36 +102,68 @@ app.get('/api/health', (req, res) => {
     webhookEndpoint: '/api/livekit/webhook',
     totalWebhookEvents: webhookLogs.length,
     outboundWebhookConfigured: Boolean(OUTBOUND_WEBHOOK_URL),
+    database: {
+      connected: isDbConnected(),
+      configured: Boolean(process.env.DATABASE_URL),
+    },
   });
 });
 
-// 2. Generate LiveKit Access Token for an Employee
+// 2. Generate LiveKit Access Token for an Employee (with Database Employee ID Verification)
 app.post('/api/token', async (req, res) => {
   try {
     const { roomName, employeeId, employeeName, department, newSession } = req.body;
 
-    if (!roomName || !employeeId || !employeeName) {
-      return res.status(400).json({ error: 'roomName, employeeId, and employeeName are required' });
+    if (!roomName || !employeeId) {
+      return res.status(400).json({ error: 'roomName and employeeId are required' });
     }
+
+    // 🔒 1. Check if the Employee ID exists and is active in company database
+    const empCheck = await verifyEmployeeId(employeeId);
+    if (!empCheck.valid) {
+      const errorMsg = empCheck.inactive
+        ? `Akses ditolak: Status karyawan dengan ID "${employeeId}" sedang non-aktif.`
+        : `Akses ditolak: Employee ID "${employeeId}" tidak terdaftar di database resmi perusahaan. Harap periksa kembali ID Anda atau hubungi admin.`;
+      
+      console.warn(`[AUTH] ⛔ Access denied for Employee ID "${employeeId}": ${empCheck.reason}`);
+      return res.status(403).json({
+        error: errorMsg,
+        code: 'EMPLOYEE_NOT_FOUND',
+        employeeId,
+        verifiedAgainstDb: empCheck.checked,
+      });
+    }
+
+    // 👤 2. Use authoritative name and department from DB if registered
+    const verifiedName = empCheck.employee?.name || employeeName || employeeId;
+    const verifiedDept = empCheck.employee?.department || department || 'General';
+    const verifiedRole = empCheck.employee?.position || 'Staff';
+
+    console.log(`[AUTH] 🟢 Employee verified: ${verifiedName} (${employeeId} - ${verifiedDept}) [Source: ${empCheck.checked ? 'PostgreSQL DB' : 'Standby Roster'}]`);
 
     const meeting = getOrCreateMeeting(roomName, Boolean(newSession));
     
-    // Register participant in attendance
+    // Asynchronously ensure meeting is registered in PostgreSQL
+    saveMeeting(meeting).catch(e => console.error('[DB] Note:', e.message));
+
+    // Register participant in attendance with verified profile
     meeting.participants.set(employeeId, {
       employeeId,
-      employeeName,
-      department: department || 'General',
+      employeeName: verifiedName,
+      department: verifiedDept,
+      position: verifiedRole,
       joinedAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
     });
 
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: employeeId,
-      name: employeeName,
+      name: verifiedName,
       metadata: JSON.stringify({
         employeeId,
-        employeeName,
-        department: department || 'General',
+        employeeName: verifiedName,
+        department: verifiedDept,
+        position: verifiedRole,
         app: 'BaliTower-Attendance-Voice',
       }),
     });
@@ -140,13 +184,30 @@ app.post('/api/token', async (req, res) => {
       roomName,
       employee: {
         employeeId,
-        employeeName,
-        department: department || 'General',
+        employeeName: verifiedName,
+        department: verifiedDept,
+        position: verifiedRole,
+        dbVerified: empCheck.checked,
       },
     });
   } catch (error) {
     console.error('Error generating token:', error);
     res.status(500).json({ error: 'Failed to generate token' });
+  }
+});
+
+// 2b. List authorized company employees
+app.get('/api/employees', async (req, res) => {
+  try {
+    const list = await getAllEmployees();
+    res.json({
+      success: true,
+      count: list.length,
+      databaseConnected: isDbConnected(),
+      employees: list,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch employees list', details: err.message });
   }
 });
 
@@ -221,11 +282,43 @@ app.post('/api/meetings/:roomName/reset', (req, res) => {
   });
 });
 
-// 6. View completed meeting history
+// 6. View completed meeting history (in-memory)
 app.get('/api/meetings/history', (req, res) => {
   res.json({
     history: meetingHistory,
   });
+});
+
+// 6b. View persisted meeting summaries from PostgreSQL database
+app.get('/api/meetings/db-summaries', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const summaries = await getMeetingSummaries(limit);
+    res.json({
+      success: true,
+      count: summaries.length,
+      databaseConnected: isDbConnected(),
+      summaries,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve summaries from DB', details: err.message });
+  }
+});
+
+// 6c. View comprehensive meeting record (summary, transcripts, attendees) from PostgreSQL
+app.get('/api/meetings/db-details/:meetingId', async (req, res) => {
+  try {
+    const details = await getMeetingDetails(req.params.meetingId);
+    if (!details) {
+      return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });
+    }
+    res.json({
+      success: true,
+      ...details,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve meeting details', details: err.message });
+  }
 });
 
 // ==========================================
@@ -591,6 +684,20 @@ ${formattedDialogue}`;
     meeting.status = 'ended';
     meeting.endedAt = new Date().toISOString();
 
+    // Persist to PostgreSQL database (balicall_meetings, balicall_transcripts, balicall_attendees, balicall_summaries)
+    let dbSummaryRecord = null;
+    try {
+      await saveMeeting(meeting);
+      await saveTranscripts(meeting.id, roomName, transcriptsToSummarize);
+      await saveAttendees(meeting.id, Array.from(meeting.participants.values()));
+      dbSummaryRecord = await saveMeetingSummary(meeting.id, roomName, summaryResult);
+      if (dbSummaryRecord) {
+        console.log(`[DB] ✅ Meeting minutes persisted to PostgreSQL for ${roomName} (Summary ID: ${dbSummaryRecord.id})`);
+      }
+    } catch (dbErr) {
+      console.error('[DB] ⚠️ Error persisting meeting to database:', dbErr.message);
+    }
+
     // Trigger outbound webhook if configured (e.g. ERP, Teams, Telegram, Slack)
     dispatchOutboundWebhook({
       event: 'meeting.summary.created',
@@ -607,7 +714,12 @@ ${formattedDialogue}`;
       timestamp: new Date().toISOString(),
     });
 
-    res.json({ success: true, summary: summaryResult });
+    res.json({
+      success: true,
+      summary: summaryResult,
+      dbSummaryId: dbSummaryRecord?.id || null,
+      savedToDb: Boolean(dbSummaryRecord),
+    });
   } catch (error) {
     console.error('Error generating meeting summary:', error);
     res.status(500).json({ error: 'Failed to generate summary', details: error.message });
@@ -643,7 +755,7 @@ app.post('/api/meetings/:roomName/dispatch-webhook', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`====================================================`);
   console.log(`🚀 Bali Tower Voice Call Server running on port ${port}`);
   console.log(`📡 Connected LiveKit SFU: ${LIVEKIT_URL}`);
@@ -655,5 +767,8 @@ app.listen(port, () => {
   } else {
     console.log(`🤖 Gemini API Key: ${Boolean(GEMINI_API_KEY) ? 'YES' : 'NO'}`);
   }
+  
+  // Initialize Database connection and verify tables
+  await initDb();
   console.log(`====================================================`);
 });

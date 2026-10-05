@@ -129,13 +129,41 @@ webhook:
 | `POST` | `/api/token` | Issues a LiveKit JWT token with Employee ID, name, and permissions |
 | `GET` | `/api/meetings/:roomName/transcript` | Fetches active transcripts and attendance for a room |
 | `POST` | `/api/meetings/:roomName/transcript` | Persists a dialogue line (idempotent with deduplication) |
-| `POST` | `/api/meetings/:roomName/summarize` | Triggers AI meeting minutes synthesis (`qwen-35b` / Gemini) |
+| `POST` | `/api/meetings/:roomName/summarize` | Triggers AI meeting minutes synthesis (`qwen-35b` / Gemini) & saves to PostgreSQL |
 | `POST` | `/api/meetings/:roomName/reset` | Resets and archives a room session for a fresh call |
-| `GET` | `/api/meetings/history` | Retrieves list of completed past meetings and summaries |
+| `GET` | `/api/meetings/history` | Retrieves list of completed past meetings and summaries (in-memory) |
+| `GET` | `/api/employees` | Lists authorized company employees from `balicall_employees` |
+| `GET` | `/api/meetings/db-summaries` | Retrieves persisted meeting summaries directly from PostgreSQL |
+| `GET` | `/api/meetings/db-details/:meetingId` | Retrieves complete meeting record, transcripts, and attendees from PostgreSQL |
 | `POST` | `/api/livekit/webhook` | **Inbound LiveKit Webhook:** Cryptographically verified room/peer events |
 | `GET` | `/api/livekit/webhooks` | Returns recent LiveKit webhook event audit log |
 | `POST` | `/api/livekit/webhook/test` | Local simulation endpoint for testing webhook payloads |
 | `POST` | `/api/meetings/:roomName/dispatch-webhook` | **Outbound Webhook:** Dispatches minutes to external ERP/webhooks |
+
+---
+
+## 🗄️ PostgreSQL Database Integration
+
+Bali Tower Call integrates with the company PostgreSQL instance (`jds3_db` on `10.17.101.232:5432`) without requiring `CREATE DATABASE` privileges. All tables use the prefix `balicall_*`:
+
+* **`balicall_employees`**: Authorized company employee registry (`employee_id`, `name`, `email`, `department`, `position`, `status`). When creating/joining calls, the backend strictly verifies the participant's Employee ID against this table.
+* **`balicall_meetings`**: Meeting session lifecycle (`id`, `room_name`, `status`, `created_at`, `ended_at`).
+* **`balicall_summaries`**: Structured AI meeting minutes (`title`, `executive_summary`, `key_discussion_points`, `decisions`, `action_items`, `attendance_summary`, `provider`).
+* **`balicall_transcripts`**: Real-time dialogue turns indexed by `meeting_id`.
+* **`balicall_attendees`**: Attendance roster (`employee_id`, `employee_name`, `department`, `joined_at`, `left_at`).
+
+### Setup & Verification
+
+1. In [`server/.env`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/server/.env), set your database credentials:
+   ```env
+   DATABASE_URL=postgresql://jds3:YOUR_PASSWORD@10.17.101.232:5432/jds3_db
+   ```
+2. You can review and execute mock employee data via [`scripts/create_mock_employees.sql`](file:///c:/Users/rafliaditya.intern/Documents/video%20call/scripts/create_mock_employees.sql) in DBeaver.
+3. Run the database integration test:
+   ```powershell
+   node scripts/test_db.js
+   ```
+   *The test automatically runs schema migrations (`CREATE TABLE IF NOT EXISTS`), tests employee validation and mock data, tests full CRUD operations, and verifies relational integrity.*
 
 ---
 
