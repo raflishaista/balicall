@@ -1,23 +1,29 @@
 import { useState } from 'react';
-import type { Participant, LocalParticipant } from 'livekit-client';
-import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, MicOff, PhoneOff, Send, Users } from 'lucide-react';
+import type { Participant } from 'livekit-client';
+import { Track } from 'livekit-client';
+import type { TrackReferenceOrPlaceholder } from '@livekit/components-react';
+import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, MicOff, PhoneOff, Send, Users, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
+import { ParticipantVideoTile } from './ParticipantVideoTile';
 
 interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
 
-export function MeetingRoom({ participants, localParticipant, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine }: {
-  participants: Participant[]; localParticipant: LocalParticipant; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera }: {
+  participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
   sttProvider: 'browser' | 'server'; sttConfigured: boolean; setSttProvider: (provider: 'browser' | 'server') => void;
   speechLanguage: 'id-ID' | 'en-US'; setSpeechLanguage: (language: 'id-ID' | 'en-US') => void;
   activeTab: 'transcript' | 'attendance'; setActiveTab: (tab: 'transcript' | 'attendance') => void; transcripts: Transcript[];
   onToggleMute: () => Promise<void>; onToggleTranscription: () => void; onFinish: (generate: boolean) => Promise<void>; onAddSpeechLine: (text: string) => void;
+  cameraTracks: TrackReferenceOrPlaceholder[]; isCameraEnabled: boolean; cameraPending: boolean;
+  cameraError: string | null; microphoneError: string | null; onToggleCamera: () => Promise<void>;
 }) {
   const [manualText, setManualText] = useState('');
   const [finishMode, setFinishMode] = useState<'summary' | 'leave' | null>(null);
   const busy = finishing || isSummarizing;
+  const camerasByIdentity = new Map(cameraTracks.map(track => [track.participant.identity, track]));
   const isVoiceActive = connected && !isMuted && micVolume > 5;
   const finishLabel = !busy ? null : finishing && !isSummarizing ? 'Menyimpan transkrip…' : finishMode === 'summary' ? 'Menyiapkan notulen…' : 'Menyimpan rapat…';
   const requestFinish = (generate: boolean) => {
@@ -30,16 +36,14 @@ export function MeetingRoom({ participants, localParticipant, roomName, employee
     <section className="call-stage">
       <div className="call-info-bar"><div><span className="room-label">#{roomName}</span><span className="call-connection"><i className={connected ? 'status-dot online' : 'status-dot offline'} />{connected ? 'Terhubung' : 'Menghubungkan'}</span></div><span className="participant-count"><Users size={16} />{participants.length} peserta</span></div>
       {finishError && <div className="call-error" role="alert">{finishError}</div>}
+      {microphoneError && <div className="call-error" role="alert">{microphoneError}</div>}
+      {cameraError && <div className="call-error camera-error" role="alert"><VideoOff size={17} /><span>{cameraError}</span><button type="button" disabled={busy || cameraPending || !connected} onClick={() => void onToggleCamera()}>Coba kamera lagi</button></div>}
       <div className={`participant-grid ${participants.length < 3 ? 'small-room' : ''}`}>
-        {participants.map(participant => <article key={participant.identity} className={`participant-tile ${participant.isSpeaking ? 'is-speaking' : ''}`}>
-          <span className={`participant-avatar ${participant === localParticipant ? 'is-local' : ''}`}>{initials(participant.name || participant.identity)}</span>
-          <div className="participant-tile-footer"><span>{participant.name || participant.identity}{participant === localParticipant && <small> (Kamu)</small>}</span><span className={participant.isMicrophoneEnabled ? 'tile-mic' : 'tile-mic muted'}>{participant.isSpeaking ? <AudioLines size={18} /> : participant.isMicrophoneEnabled ? <Mic size={17} /> : <MicOff size={17} />}</span></div>
-          {participant.isSpeaking && <span className="speaker-label"><span />Berbicara</span>}
-        </article>)}
+        {participants.map(participant => <ParticipantVideoTile key={participant.identity} trackRef={camerasByIdentity.get(participant.identity) || { participant, source: Track.Source.Camera }} />)}
         {!participants.length && <div className="waiting-participants"><Loader2 className="ui-spinner" size={30} aria-hidden="true" /><p>Menghubungkan peserta ke ruang rapat...</p></div>}
       </div>
-      <div className="call-bottom-note"><span><AudioLines size={15} />Rapat suara · Transkrip mengikuti mikrofon setiap peserta</span><span className="mic-level"><Mic size={14} /><i><b style={{ width: micVolume + '%' }} /></i></span></div>
-      <footer className="call-control-bar"><div className="call-controls"><button className={`call-control ${isMuted ? 'control-muted' : ''}`} disabled={busy} onClick={() => void onToggleMute()}>{isMuted ? <MicOff size={22} /> : <Mic size={22} />}<span>{isMuted ? 'Aktifkan mic' : 'Mikrofon'}</span></button><button className={`call-control ${isListening ? 'control-active' : ''}`} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={22} /><span>{speechError ? 'Coba transkrip' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span></button><button className="call-control" onClick={() => setActiveTab('attendance')}><Users size={22} /><span>Peserta</span></button></div><div className="leave-controls"><button className="leave-simple" disabled={busy} onClick={() => requestFinish(false)}>Keluar</button><button className="leave-button" disabled={busy} onClick={() => requestFinish(true)} aria-busy={busy}>{busy && <Loader2 className="ui-spinner" size={16} aria-hidden="true" />}{busy ? finishLabel : <><PhoneOff size={18} />Selesai &amp; notulen</>}</button></div></footer>
+      <div className="call-bottom-note"><span><AudioLines size={15} />Rapat audio &amp; video · Kamera bisa dimatikan kapan saja</span><span className="mic-level"><Mic size={14} /><i><b style={{ width: micVolume + '%' }} /></i></span></div>
+      <footer className="call-control-bar"><div className="call-controls"><button className={`call-control ${isMuted ? 'control-muted' : ''}`} disabled={busy} onClick={() => void onToggleMute()}>{isMuted ? <MicOff size={22} /> : <Mic size={22} />}<span>{isMuted ? 'Aktifkan mic' : 'Mikrofon'}</span></button><button type="button" className={`call-control ${isCameraEnabled ? 'control-active' : 'control-muted'}`} aria-label={isCameraEnabled ? 'Matikan kamera' : 'Aktifkan kamera'} aria-pressed={isCameraEnabled} aria-busy={cameraPending} disabled={busy || cameraPending || !connected} onClick={() => void onToggleCamera()}>{cameraPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isCameraEnabled ? <Video size={22} /> : <VideoOff size={22} />}<span>{cameraPending ? 'Memproses...' : isCameraEnabled ? 'Kamera' : 'Aktifkan kamera'}</span></button><button className={`call-control ${isListening ? 'control-active' : ''}`} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={22} /><span>{speechError ? 'Coba transkrip' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span></button><button className="call-control" onClick={() => setActiveTab('attendance')}><Users size={22} /><span>Peserta</span></button></div><div className="leave-controls"><button className="leave-simple" disabled={busy} onClick={() => requestFinish(false)}>Keluar</button><button className="leave-button" disabled={busy} onClick={() => requestFinish(true)} aria-busy={busy}>{busy && <Loader2 className="ui-spinner" size={16} aria-hidden="true" />}{busy ? finishLabel : <><PhoneOff size={18} />Selesai &amp; notulen</>}</button></div></footer>
     </section>
 
     <aside className="call-side-panel"><div className="call-panel-tabs"><button className={activeTab === 'transcript' ? 'active' : ''} onClick={() => setActiveTab('transcript')}><FileText size={17} />Transkrip</button><button className={activeTab === 'attendance' ? 'active' : ''} onClick={() => setActiveTab('attendance')}><Users size={17} />Peserta <span>{participants.length}</span></button></div>

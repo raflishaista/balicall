@@ -1,4 +1,4 @@
-import { useState, useEffect, useEffectEvent, useRef } from 'react';
+import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
 import { apiRequest, meetingPath } from './api';
 import { createSaveQueue } from './saveQueue';
 import { useBackendTranscription } from './useBackendTranscription';
@@ -7,7 +7,8 @@ import './App.css';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { initials } from './presentation';
 import { MeetingRoom } from './MeetingRoom';
-import { Track, ConnectionState } from 'livekit-client';
+import { cameraErrorMessage, useCameraControl } from './useCameraControl';
+import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -15,6 +16,7 @@ import {
   useLocalParticipant,
   useTrackVolume,
   useConnectionState,
+  useTracks,
 } from '@livekit/components-react';
 import {
   Copy,
@@ -473,6 +475,12 @@ function InCallView({
   isSummarizing,
 }: any) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const onRoomError = useCallback((error: Error) => {
+    // Camera access errors are handled separately; audio can remain connected.
+    const failure = MediaDeviceFailure.getFailure(error);
+    if (!failure || failure === MediaDeviceFailure.Other) setConnectionError('Koneksi rapat bermasalah: ' + error.message);
+  }, []);
+  const onConnected = useCallback(() => setConnectionError(null), []);
   return (
     <div style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
     {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
@@ -480,11 +488,9 @@ function InCallView({
       serverUrl={serverUrl}
       token={token}
       connect={true}
-      onError={(error: Error) => setConnectionError('Koneksi suara gagal: ' + error.message)}
-      onConnected={() => setConnectionError(null)}
-      onMediaDeviceFailure={() => setConnectionError('Mikrofon tidak tersedia. Periksa perangkat dan izin browser.')}
+      onError={onRoomError}
+      onConnected={onConnected}
       audio={true}
-      video={false}
       style={{ display: 'flex', flex: 1, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
@@ -518,9 +524,13 @@ function RoomContent({
   isSummarizing,
 }: any) {
   const participants = useParticipants();
-  const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
+  const { localParticipant, isMicrophoneEnabled, microphoneTrack, isCameraEnabled, lastCameraError, lastMicrophoneError } = useLocalParticipant();
+  const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], { onlySubscribed: false });
   const connectionState = useConnectionState();
   const connected = connectionState === ConnectionState.Connected;
+  const camera = useCameraControl(localParticipant, connected, true);
+  const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
+  const microphoneError = !isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null;
   const isMuted = !isMicrophoneEnabled;
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
@@ -552,7 +562,9 @@ function RoomContent({
   };
 
   return <MeetingRoom
-    participants={participants} localParticipant={localParticipant} roomName={roomName} employeeId={employeeId}
+    participants={participants} roomName={roomName} employeeId={employeeId}
+    cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending}
+    cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}

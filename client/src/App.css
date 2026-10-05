@@ -186,7 +186,14 @@ input::placeholder { color: #a1b1c6; }
 .participant-count { display: flex; align-items: center; gap: 7px; font-size: 10px; }
 .participant-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); grid-auto-rows: minmax(160px,1fr); flex: 1; min-height: 0; gap: 12px; padding: 0 22px 10px; overflow: auto; align-content: center; }
 .participant-grid.small-room { grid-template-columns: repeat(auto-fit,minmax(min(260px,100%),1fr)); }
-.participant-tile { display: flex; position: relative; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 190px; padding: 24px; border: 1px solid #29465c; border-radius: 10px; background: linear-gradient(135deg,#203b51,#1a3043); transition: border-color .2s ease,background .2s ease,box-shadow .2s ease; }
+.participant-tile { display: flex; position: relative; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 190px; padding: 24px; overflow: hidden; border: 1px solid #29465c; border-radius: 10px; background: linear-gradient(135deg,#203b51,#1a3043); transition: border-color .2s ease,background .2s ease,box-shadow .2s ease; }
+.participant-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.participant-video.is-local-video { transform: scaleX(-1); }
+.camera-placeholder { display: flex; align-items: center; gap: 5px; margin-top: 12px; color: #8eabc1; font-size: 10px; }
+.participant-tile.has-video::after { content: ''; position: absolute; inset: 0; background: linear-gradient(transparent 55%,#05182be6); pointer-events: none; }
+.participant-tile-footer,.speaker-label { z-index: 1; }
+.participant-tile.has-video .speaker-label { padding: 5px 8px; border-radius: 6px; background: #061a2dcc; }
+.participant-tile.has-video .participant-tile-footer small { color: #d6e6f5; }
 .participant-tile { animation: participant-in .25s ease-out both; }
 .participant-tile:nth-child(2) { animation-delay: .04s; }
 .participant-tile:nth-child(3) { animation-delay: .08s; }
@@ -215,6 +222,10 @@ input::placeholder { color: #a1b1c6; }
 .mic-level b { display: block; height: 100%; background: #22cba3; }
 .call-control-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px 18px; border-top: 1px solid #203e56; }
 .call-controls { display: flex; align-items: center; gap: 8px; }
+.call-control-bar { flex-wrap: wrap; }
+.call-controls { flex-wrap: wrap; }
+.call-control:disabled { opacity: .55; cursor: not-allowed; }
+.call-control:focus-visible { outline: 2px solid #74c9ff; outline-offset: 3px; }
 .call-control { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: 70px; min-height: 64px; padding: 10px 9px; border: 0; border-radius: 8px; background: transparent; color: #e2edf5; font-size: 9px; cursor: pointer; }
 .call-control:hover { background: #183b55; }
 .control-muted { color: #ee9c97; background: #5f2e3533; }
@@ -224,6 +235,10 @@ input::placeholder { color: #a1b1c6; }
 .leave-button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 15px; border: 0; border-radius: 6px; background: #f0474d; color: #fff; font-size: 10px; font-weight: 550; cursor: pointer; }
 .leave-button:hover { background: #df383f; }
 .call-error { padding: 12px 24px; color: #ffb6ac; background: #542c333d; font-size: 11px; }
+.camera-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.camera-error > span { flex: 1; min-width: 180px; line-height: 1.6; }
+.camera-error button { padding: 7px 10px; border: 1px solid #ae7373; border-radius: 5px; background: transparent; color: #ffd6d0; cursor: pointer; }
+.camera-error button:disabled { opacity: .55; cursor: not-allowed; }
 .call-side-panel { display: flex; flex-direction: column; min-height: 0; margin: 0 16px 18px 0; border-radius: 12px; background: #fff; overflow: hidden; }
 .call-panel-tabs { display: flex; padding: 0 14px; border-bottom: 1px solid #e5edf6; }
 .call-panel-tabs button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 7px; min-height: 54px; padding: 0 8px; border: 0; border-bottom: 2px solid transparent; color: #8ca0b6; background: #fff; font-size: 11px; cursor: pointer; }
