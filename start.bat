@@ -67,7 +67,11 @@ echo.
 
 :: Launch 1: SFU Server
 echo [1/3] Starting LiveKit SFU Server on Port 7880...
-start "LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
+if exist "livekit.yaml" (
+    start "LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
+) else (
+    start "LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
+)
 ping -n 3 127.0.0.1 >nul
 
 :: Launch 2: Backend Server

@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
@@ -12,6 +12,7 @@ const port = process.env.PORT || 3001;
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'devkey';
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || 'secret';
 const LIVEKIT_URL = process.env.LIVEKIT_URL || 'ws://127.0.0.1:7880';
+const OUTBOUND_WEBHOOK_URL = process.env.OUTBOUND_WEBHOOK_URL || '';
 
 // LLM Provider Baseline Configuration
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || 'office').toLowerCase();
@@ -21,22 +22,58 @@ const TEXT_MODEL = process.env.LLM_MODEL || process.env.TEXT_MODEL || 'qwen-35b'
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 app.use(cors());
-app.use(express.json());
 
-// In-memory meeting store: roomName -> { roomName, createdAt, participants: Map(), transcripts: [], summary: null }
-const meetings = new Map();
-
-function getOrCreateMeeting(roomName) {
-  if (!meetings.has(roomName)) {
-    meetings.set(roomName, {
-      roomName,
-      createdAt: new Date().toISOString(),
-      participants: new Map(),
-      transcripts: [],
-      summary: null,
-    });
+// Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
+app.use(express.json({
+  type: ['application/json', 'application/webhook+json'],
+  verify: (req, _res, buf) => {
+    req.rawBody = buf ? buf.toString('utf8') : '';
   }
-  return meetings.get(roomName);
+}));
+
+// Initialize LiveKit Webhook Receiver & in-memory event logger
+const webhookReceiver = new WebhookReceiver(LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+const webhookLogs = [];
+
+// In-memory meeting store: roomName -> active meeting session
+// Archive of completed calls is stored in meetingHistory
+const meetings = new Map();
+const meetingHistory = [];
+
+function getOrCreateMeeting(roomName, forceNew = false) {
+  const existing = meetings.get(roomName);
+  if (existing && !forceNew) {
+    // If the meeting was marked as ended (summarized or finished), archive it and start fresh
+    if (existing.status === 'ended') {
+      meetingHistory.push({
+        ...existing,
+        participants: Array.from(existing.participants.values()),
+      });
+      meetings.delete(roomName);
+    } else {
+      return existing;
+    }
+  }
+
+  if (existing && forceNew) {
+    meetingHistory.push({
+      ...existing,
+      participants: Array.from(existing.participants.values()),
+    });
+    meetings.delete(roomName);
+  }
+
+  const newMeeting = {
+    id: `call-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    roomName,
+    createdAt: new Date().toISOString(),
+    status: 'active',
+    participants: new Map(),
+    transcripts: [],
+    summary: null,
+  };
+  meetings.set(roomName, newMeeting);
+  return newMeeting;
 }
 
 // 1. Health check & provider info
@@ -49,19 +86,23 @@ app.get('/api/health', (req, res) => {
     llmBaseUrl: LLM_BASE_URL,
     hasLlmKey: Boolean(LLM_KEY || GEMINI_API_KEY),
     activeRooms: Array.from(meetings.keys()),
+    totalCompletedCalls: meetingHistory.length,
+    webhookEndpoint: '/api/livekit/webhook',
+    totalWebhookEvents: webhookLogs.length,
+    outboundWebhookConfigured: Boolean(OUTBOUND_WEBHOOK_URL),
   });
 });
 
 // 2. Generate LiveKit Access Token for an Employee
 app.post('/api/token', async (req, res) => {
   try {
-    const { roomName, employeeId, employeeName, department } = req.body;
+    const { roomName, employeeId, employeeName, department, newSession } = req.body;
 
     if (!roomName || !employeeId || !employeeName) {
       return res.status(400).json({ error: 'roomName, employeeId, and employeeName are required' });
     }
 
-    const meeting = getOrCreateMeeting(roomName);
+    const meeting = getOrCreateMeeting(roomName, Boolean(newSession));
     
     // Register participant in attendance
     meeting.participants.set(employeeId, {
@@ -150,9 +191,10 @@ app.get('/api/meetings/:roomName/transcript', (req, res) => {
   const { roomName } = req.params;
   const meeting = meetings.get(roomName);
 
-  if (!meeting) {
+  if (!meeting || meeting.status === 'ended') {
     return res.json({
       roomName,
+      callId: null,
       transcripts: [],
       participants: [],
       summary: null,
@@ -161,11 +203,235 @@ app.get('/api/meetings/:roomName/transcript', (req, res) => {
 
   res.json({
     roomName,
+    callId: meeting.id,
     transcripts: meeting.transcripts,
     participants: Array.from(meeting.participants.values()),
     summary: meeting.summary,
   });
 });
+
+// 5. Reset/clear active call session for a room (guarantees fresh transcripts for new call)
+app.post('/api/meetings/:roomName/reset', (req, res) => {
+  const { roomName } = req.params;
+  const meeting = getOrCreateMeeting(roomName, true);
+  res.json({
+    success: true,
+    message: `Meeting session for ${roomName} reset successfully.`,
+    callId: meeting.id,
+  });
+});
+
+// 6. View completed meeting history
+app.get('/api/meetings/history', (req, res) => {
+  res.json({
+    history: meetingHistory,
+  });
+});
+
+// ==========================================
+// 📡 LIVEKIT SFU INBOUND WEBHOOK RECEIVER
+// ==========================================
+// LiveKit automatically sends HTTP POST notifications on room and participant lifecycle changes
+app.post('/api/livekit/webhook', async (req, res) => {
+  try {
+    const rawBody = req.rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
+    const authHeader = req.headers['authorization'] || req.headers['authorize'];
+
+    let event;
+    const isDev = process.env.NODE_ENV !== 'production';
+
+    // Verify cryptographic signature via LiveKit WebhookReceiver
+    try {
+      event = await webhookReceiver.receive(rawBody, authHeader);
+    } catch (verifyErr) {
+      if (isDev && req.body && req.body.event) {
+        console.warn(`[WEBHOOK] Notice: Auth header check bypassed for dev simulation: ${verifyErr.message}`);
+        event = req.body;
+      } else {
+        console.error(`[WEBHOOK] Invalid webhook signature:`, verifyErr.message);
+        return res.status(401).json({ error: 'Unauthorized webhook signature', details: verifyErr.message });
+      }
+    }
+
+    const eventName = event.event;
+    const room = event.room;
+    const participant = event.participant;
+    const roomName = room?.name;
+
+    // Record event in memory log (latest 50)
+    const logItem = {
+      id: `wh-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      time: new Date().toISOString(),
+      event: eventName,
+      roomName: roomName || 'N/A',
+      participant: participant?.name || participant?.identity || 'N/A',
+      details: {
+        roomSid: room?.sid,
+        participantIdentity: participant?.identity,
+      },
+    };
+    webhookLogs.unshift(logItem);
+    if (webhookLogs.length > 50) webhookLogs.pop();
+
+    console.log(`[LIVEKIT WEBHOOK] 🔔 Event: ${eventName} | Room: ${roomName || 'N/A'}`);
+
+    // Synchronize meeting and attendance state with LiveKit truth
+    switch (eventName) {
+      case 'participant_joined': {
+        if (roomName && participant) {
+          const meeting = getOrCreateMeeting(roomName);
+          let dept = 'General';
+          try {
+            const meta = JSON.parse(participant.metadata || '{}');
+            if (meta.department) dept = meta.department;
+          } catch (e) {}
+
+          const joinTime = participant.joinedAt
+            ? new Date(Number(participant.joinedAt) * 1000).toISOString()
+            : new Date().toISOString();
+
+          meeting.participants.set(participant.identity, {
+            employeeId: participant.identity,
+            employeeName: participant.name || participant.identity,
+            department: dept,
+            joinedAt: joinTime,
+            lastSeen: new Date().toISOString(),
+            status: 'connected',
+          });
+          console.log(`[WEBHOOK] 👤 Attendance marked: ${participant.name || participant.identity} (${dept})`);
+        }
+        break;
+      }
+
+      case 'participant_left': {
+        if (roomName && participant) {
+          const meeting = meetings.get(roomName);
+          if (meeting && meeting.participants.has(participant.identity)) {
+            const p = meeting.participants.get(participant.identity);
+            p.status = 'disconnected';
+            p.leftAt = new Date().toISOString();
+            console.log(`[WEBHOOK] 🚪 Participant left: ${participant.name || participant.identity}`);
+          }
+        }
+        break;
+      }
+
+      case 'room_started': {
+        if (roomName) {
+          const meeting = getOrCreateMeeting(roomName);
+          meeting.status = 'active';
+          console.log(`[WEBHOOK] 🟢 Room active: ${roomName} (SID: ${room?.sid})`);
+        }
+        break;
+      }
+
+      case 'room_finished': {
+        if (roomName) {
+          const meeting = meetings.get(roomName);
+          if (meeting) {
+            meeting.status = 'ended';
+            meeting.endedAt = new Date().toISOString();
+            console.log(`[WEBHOOK] 🔴 Room finished: ${roomName}`);
+          }
+        }
+        break;
+      }
+
+      case 'track_published': {
+        console.log(`[WEBHOOK] 🎙️ Track published by ${participant?.identity || 'unknown'} (${event.track?.type || 'media'})`);
+        break;
+      }
+
+      case 'track_unpublished': {
+        console.log(`[WEBHOOK] 🔇 Track unpublished by ${participant?.identity || 'unknown'}`);
+        break;
+      }
+
+      default:
+        console.log(`[WEBHOOK] Event ${eventName} recorded.`);
+    }
+
+    res.json({ success: true, event: eventName, loggedAt: logItem.time });
+  } catch (error) {
+    console.error(`[WEBHOOK ERROR]:`, error);
+    res.status(500).json({ error: 'Failed to process webhook', message: error.message });
+  }
+});
+
+// 8. Query recent webhook event logs
+app.get('/api/livekit/webhooks', (req, res) => {
+  res.json({
+    totalEvents: webhookLogs.length,
+    events: webhookLogs,
+  });
+});
+
+// 9. Webhook simulation / test trigger endpoint
+app.post('/api/livekit/webhook/test', (req, res) => {
+  const {
+    event = 'participant_joined',
+    roomName = 'site-sync-tower-jakarta',
+    employeeId = 'BT-10492',
+    employeeName = 'Rafli Aditya',
+    department = 'NOC & Core Network',
+  } = req.body;
+
+  const mockPayload = {
+    event,
+    room: { name: roomName, sid: `RM_${Date.now()}` },
+    participant: {
+      identity: employeeId,
+      name: employeeName,
+      joinedAt: Math.floor(Date.now() / 1000),
+      metadata: JSON.stringify({ department }),
+    },
+    createdAt: Math.floor(Date.now() / 1000),
+  };
+
+  const meeting = getOrCreateMeeting(roomName);
+  if (event === 'participant_joined') {
+    meeting.participants.set(employeeId, {
+      employeeId,
+      employeeName,
+      department,
+      joinedAt: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+      status: 'connected',
+    });
+  }
+
+  webhookLogs.unshift({
+    id: `wh-test-${Date.now()}`,
+    time: new Date().toISOString(),
+    event,
+    roomName,
+    participant: employeeName,
+    isSimulation: true,
+  });
+  if (webhookLogs.length > 50) webhookLogs.pop();
+
+  res.json({
+    success: true,
+    message: `Test webhook [${event}] processed successfully`,
+    simulatedPayload: mockPayload,
+  });
+});
+
+// Outbound webhook notification helper (e.g. ERP, Teams, Telegram, Slack)
+async function dispatchOutboundWebhook(payload) {
+  if (!OUTBOUND_WEBHOOK_URL) return;
+  try {
+    console.log(`[OUTBOUND WEBHOOK] Forwarding event to ${OUTBOUND_WEBHOOK_URL}...`);
+    await fetch(OUTBOUND_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    console.log(`[OUTBOUND WEBHOOK] Dispatched successfully.`);
+  } catch (err) {
+    console.warn(`[OUTBOUND WEBHOOK] Failed to dispatch:`, err.message);
+  }
+}
 
 // Helper to extract JSON from LLM response text
 function cleanJsonOutput(text) {
@@ -322,10 +588,58 @@ ${formattedDialogue}`;
     }
 
     meeting.summary = summaryResult;
+    meeting.status = 'ended';
+    meeting.endedAt = new Date().toISOString();
+
+    // Trigger outbound webhook if configured (e.g. ERP, Teams, Telegram, Slack)
+    dispatchOutboundWebhook({
+      event: 'meeting.summary.created',
+      roomName,
+      meetingId: meeting.id,
+      summary: summaryResult,
+      transcriptsCount: transcriptsToSummarize.length,
+      attendees: Array.from(meeting.participants.values()).map(p => ({
+        id: p.employeeId,
+        name: p.employeeName,
+        department: p.department,
+        joinedAt: p.joinedAt,
+      })),
+      timestamp: new Date().toISOString(),
+    });
+
     res.json({ success: true, summary: summaryResult });
   } catch (error) {
     console.error('Error generating meeting summary:', error);
     res.status(500).json({ error: 'Failed to generate summary', details: error.message });
+  }
+});
+
+// 10. Manual dispatch to external webhook URL
+app.post('/api/meetings/:roomName/dispatch-webhook', async (req, res) => {
+  const { roomName } = req.params;
+  const meeting = meetings.get(roomName);
+  const targetUrl = req.body.targetUrl || OUTBOUND_WEBHOOK_URL;
+
+  if (!targetUrl) {
+    return res.status(400).json({ error: 'No webhook target URL provided in body or server/.env' });
+  }
+
+  const payload = {
+    event: 'meeting.summary.dispatched',
+    roomName,
+    summary: meeting?.summary || req.body.summary || null,
+    dispatchedAt: new Date().toISOString(),
+  };
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    res.json({ success: true, targetUrl, status: response.status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to dispatch outbound webhook', details: err.message });
   }
 });
 

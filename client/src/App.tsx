@@ -165,6 +165,11 @@ export default function App() {
     setJoinError(null);
     setIsJoining(true);
 
+    // Ensure completely fresh transcript and summary state for new call
+    setTranscripts([]);
+    setSummary(null);
+    setSummaryError(null);
+
     try {
       const res = await fetch(`${API_BASE}/token`, {
         method: 'POST',
@@ -174,6 +179,7 @@ export default function App() {
           employeeId: employeeId.trim(),
           employeeName: employeeName.trim(),
           department,
+          newSession: true, // Guarantees fresh call session on the server
         }),
       });
 
@@ -469,6 +475,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onCopy={copyMarkdownSummary}
             onRetry={() => fetchMeetingSummary(transcripts)}
             onNewCall={() => {
+              fetch(`${API_BASE}/meetings/${roomName}/reset`, { method: 'POST' }).catch(() => {});
               setToken(null);
               setTranscripts([]);
               setSummary(null);
