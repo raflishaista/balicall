@@ -112,15 +112,24 @@ app.post('/api/token', async (req, res) => {
 // 3. Post a transcript line (sent from client or agent)
 app.post('/api/meetings/:roomName/transcript', (req, res) => {
   const { roomName } = req.params;
-  const { speakerId, speakerName, text, timestamp } = req.body;
+  const { speakerId, speakerName, text, timestamp, id } = req.body;
 
   if (!text || !speakerId) {
     return res.status(400).json({ error: 'speakerId and text are required' });
   }
 
   const meeting = getOrCreateMeeting(roomName);
+
+  // If entry with this id already exists, return existing (prevents duplicate from data channel + http)
+  if (id) {
+    const existing = meeting.transcripts.find(t => t.id === id);
+    if (existing) {
+      return res.json({ success: true, entry: existing });
+    }
+  }
+
   const entry = {
-    id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    id: id || `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     speakerId,
     speakerName: speakerName || speakerId,
     text: text.trim(),

@@ -83,3 +83,13 @@ body {
 .live-indicator {
   animation: live-dot 1.5s infinite ease-in-out;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+

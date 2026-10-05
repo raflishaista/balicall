@@ -4,7 +4,9 @@ import {
   RoomAudioRenderer,
   useParticipants,
   useLocalParticipant,
+  useRoomContext,
 } from '@livekit/components-react';
+import { RoomEvent } from 'livekit-client';
 import {
   PhoneCall,
   PhoneOff,
@@ -27,7 +29,9 @@ import {
   Wrench,
   Play,
   Square,
-  X
+  X,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:3001/api';
@@ -95,6 +99,7 @@ export default function App() {
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   // Diagnostic Modal state
@@ -128,7 +133,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [view, meetingStartTime]);
 
-  // Poll transcripts while in-call
+  // Fallback periodic sync (merges any missing transcripts for late-joiners or recovery)
   useEffect(() => {
     if (view !== 'in-call') return;
     const interval = setInterval(async () => {
@@ -136,14 +141,19 @@ export default function App() {
         const res = await fetch(`${API_BASE}/meetings/${roomName}/transcript`);
         if (res.ok) {
           const data = await res.json();
-          if (data.transcripts) {
-            setTranscripts(data.transcripts);
+          if (data.transcripts && Array.isArray(data.transcripts)) {
+            setTranscripts(prev => {
+              const existingIds = new Set(prev.map(p => p.id));
+              const missing = data.transcripts.filter((t: TranscriptEntry) => !existingIds.has(t.id));
+              if (missing.length === 0) return prev;
+              return [...prev, ...missing];
+            });
           }
         }
       } catch (err) {
         console.error('Failed to sync transcripts:', err);
       }
-    }, 2500);
+    }, 8000);
     return () => clearInterval(interval);
   }, [view, roomName]);
 
@@ -184,52 +194,77 @@ export default function App() {
     }
   };
 
-  const handleEndMeeting = async () => {
-    if (window.confirm('Do you want to end this voice meeting and generate the AI summary?')) {
-      setIsSummarizing(true);
-      try {
-        const res = await fetch(`${API_BASE}/meetings/${roomName}/summarize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcripts }),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || 'Failed to generate summary');
-        }
-
-        const data = await res.json();
-        setSummary(data.summary);
-        setView('summary');
-      } catch (err: any) {
-        alert('Notice: ' + err.message);
-        setView('lobby');
-      } finally {
-        setIsSummarizing(false);
+  const fetchMeetingSummary = async (transcriptList: TranscriptEntry[]) => {
+    setIsSummarizing(true);
+    setSummaryError(null);
+    try {
+      if (!transcriptList || transcriptList.length === 0) {
+        throw new Error('No dialogue was recorded in this call. Please speak into your mic or submit dialogue lines before ending the meeting.');
       }
+
+      const res = await fetch(`${API_BASE}/meetings/${roomName}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcripts: transcriptList }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to generate summary (HTTP ${res.status})`);
+      }
+
+      const data = await res.json();
+      setSummary(data.summary);
+    } catch (err: any) {
+      console.error('Summary generation error:', err);
+      setSummaryError(err.message || 'Failed to generate AI meeting summary');
+    } finally {
+      setIsSummarizing(false);
     }
   };
 
-  const handleAddSpeechLine = async (text: string) => {
-    if (!text.trim()) return;
+  const handleEndMeeting = () => {
+    if (window.confirm('Do you want to end this voice meeting and generate the AI summary?')) {
+      const capturedTranscripts = [...transcripts];
+      // 1. Immediately leave call & disconnect LiveKit audio session
+      setToken(null);
+      setView('summary');
+
+      // 2. Asynchronously request AI minutes in the background
+      fetchMeetingSummary(capturedTranscripts);
+    }
+  };
+
+  const handleAddSpeechEntry = async (entry: TranscriptEntry) => {
+    // Immediate optimistic local update (deduplicated by entry.id)
+    setTranscripts(prev => {
+      if (prev.some(t => t.id === entry.id)) return prev;
+      return [...prev, entry];
+    });
+
+    // Asynchronously persist to server
     try {
-      const res = await fetch(`${API_BASE}/meetings/${roomName}/transcript`, {
+      await fetch(`${API_BASE}/meetings/${roomName}/transcript`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          speakerId: employeeId,
-          speakerName: employeeName,
-          text: text.trim(),
+          id: entry.id,
+          speakerId: entry.speakerId,
+          speakerName: entry.speakerName,
+          text: entry.text,
+          timestamp: entry.timestamp,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTranscripts(prev => [...prev, data.entry]);
-      }
     } catch (err) {
-      console.error('Failed to post speech line:', err);
+      console.error('Failed to post speech line to server:', err);
     }
+  };
+
+  const handleReceiveRemoteEntry = (entry: TranscriptEntry) => {
+    setTranscripts(prev => {
+      if (prev.some(t => t.id === entry.id)) return prev;
+      return [...prev, entry];
+    });
   };
 
   const copyMarkdownSummary = () => {
@@ -411,26 +446,33 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             serverUrl={serverUrl}
             roomName={roomName}
             employeeId={employeeId}
+            employeeName={employeeName}
             transcripts={transcripts}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
-            onAddSpeechLine={handleAddSpeechLine}
+            onAddSpeechEntry={handleAddSpeechEntry}
+            onReceiveRemoteEntry={handleReceiveRemoteEntry}
             onEndMeeting={handleEndMeeting}
             onOpenDiagnostic={() => setIsDiagnosticOpen(true)}
             isSummarizing={isSummarizing}
           />
         )}
 
-        {view === 'summary' && summary && (
+        {view === 'summary' && (
           <SummaryView
             summary={summary}
+            isSummarizing={isSummarizing}
+            summaryError={summaryError}
+            transcripts={transcripts}
             roomName={roomName}
             copied={copied}
             onCopy={copyMarkdownSummary}
+            onRetry={() => fetchMeetingSummary(transcripts)}
             onNewCall={() => {
               setToken(null);
               setTranscripts([]);
               setSummary(null);
+              setSummaryError(null);
               setView('lobby');
             }}
           />
@@ -1411,14 +1453,30 @@ function InCallView({
   serverUrl,
   roomName,
   employeeId,
+  employeeName,
   transcripts,
   activeTab,
   setActiveTab,
-  onAddSpeechLine,
+  onAddSpeechEntry,
+  onReceiveRemoteEntry,
   onEndMeeting,
   onOpenDiagnostic,
   isSummarizing,
-}: any) {
+}: {
+  token: string;
+  serverUrl: string;
+  roomName: string;
+  employeeId: string;
+  employeeName: string;
+  transcripts: TranscriptEntry[];
+  activeTab: 'transcript' | 'attendance';
+  setActiveTab: (tab: 'transcript' | 'attendance') => void;
+  onAddSpeechEntry: (entry: TranscriptEntry) => void;
+  onReceiveRemoteEntry: (entry: TranscriptEntry) => void;
+  onEndMeeting: () => void;
+  onOpenDiagnostic: () => void;
+  isSummarizing: boolean;
+}) {
   return (
     <LiveKitRoom
       serverUrl={serverUrl}
@@ -1432,10 +1490,12 @@ function InCallView({
       <RoomContent
         roomName={roomName}
         employeeId={employeeId}
+        employeeName={employeeName}
         transcripts={transcripts}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onAddSpeechLine={onAddSpeechLine}
+        onAddSpeechEntry={onAddSpeechEntry}
+        onReceiveRemoteEntry={onReceiveRemoteEntry}
         onEndMeeting={onEndMeeting}
         onOpenDiagnostic={onOpenDiagnostic}
         isSummarizing={isSummarizing}
@@ -1447,14 +1507,29 @@ function InCallView({
 function RoomContent({
   roomName,
   employeeId,
+  employeeName,
   transcripts,
   activeTab,
   setActiveTab,
-  onAddSpeechLine,
+  onAddSpeechEntry,
+  onReceiveRemoteEntry,
   onEndMeeting,
   onOpenDiagnostic,
-  isSummarizing,
-}: any) {
+  isSummarizing: _isSummarizing,
+}: {
+  roomName: string;
+  employeeId: string;
+  employeeName: string;
+  transcripts: TranscriptEntry[];
+  activeTab: 'transcript' | 'attendance';
+  setActiveTab: (tab: 'transcript' | 'attendance') => void;
+  onAddSpeechEntry: (entry: TranscriptEntry) => void;
+  onReceiveRemoteEntry: (entry: TranscriptEntry) => void;
+  onEndMeeting: () => void;
+  onOpenDiagnostic: () => void;
+  isSummarizing: boolean;
+}) {
+  const room = useRoomContext();
   const participants = useParticipants();
   const { localParticipant } = useLocalParticipant();
   
@@ -1466,6 +1541,56 @@ function RoomContent({
 
   const isListeningRef = useRef(false);
   const recognitionRef = useRef<any>(null);
+
+  // 1. Listen for LiveKit Data Channel messages (<10ms peer-to-peer real-time delivery)
+  useEffect(() => {
+    if (!room) return;
+
+    const handleDataReceived = (payload: Uint8Array) => {
+      try {
+        const text = new TextDecoder().decode(payload);
+        const data = JSON.parse(text);
+        if (data.type === 'TRANSCRIPT' && data.entry) {
+          onReceiveRemoteEntry(data.entry);
+        }
+      } catch (err) {
+        console.error('Failed to parse incoming data channel packet:', err);
+      }
+    };
+
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
+    };
+  }, [room, onReceiveRemoteEntry]);
+
+  // 2. Helper to broadcast speech entry over LiveKit Data Channel AND inform App state/server
+  const broadcastAndAddSpeech = async (text: string) => {
+    if (!text || !text.trim()) return;
+    const cleanText = text.trim();
+    const entry: TranscriptEntry = {
+      id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      speakerId: employeeId,
+      speakerName: employeeName,
+      text: cleanText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    // Broadcast over LiveKit Data Channel to all other connected peers (<10ms)
+    if (localParticipant) {
+      try {
+        const payload = new TextEncoder().encode(
+          JSON.stringify({ type: 'TRANSCRIPT', entry })
+        );
+        await localParticipant.publishData(payload, { reliable: true, topic: 'transcript' });
+      } catch (dcErr) {
+        console.warn('Data channel publish warning (will persist via HTTP):', dcErr);
+      }
+    }
+
+    // Add locally (0ms) and persist to server
+    onAddSpeechEntry(entry);
+  };
 
   const startRecognitionInstance = () => {
     if (!isListeningRef.current) return;
@@ -1494,7 +1619,7 @@ function RoomContent({
           if (event.results[i].isFinal) {
             const spokenText = event.results[i][0].transcript;
             if (spokenText && spokenText.trim().length > 0) {
-              onAddSpeechLine(spokenText.trim());
+              broadcastAndAddSpeech(spokenText.trim());
               setInterimText('');
             }
           } else {
@@ -1596,6 +1721,10 @@ function RoomContent({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10b981', fontSize: '12px' }}>
               <Radio size={14} className="live-indicator" />
               <span>Voice Room Active</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38bdf8', fontSize: '12px', backgroundColor: '#1e293b', padding: '3px 8px', borderRadius: '6px', border: '1px solid #334155' }}>
+              <Activity size={13} color="#38bdf8" />
+              <span>Data Channel: P2P &lt;10ms</span>
             </div>
           </div>
 
@@ -1848,7 +1977,7 @@ function RoomContent({
             ].map((preset, idx) => (
               <button
                 key={idx}
-                onClick={() => onAddSpeechLine(preset)}
+                onClick={() => broadcastAndAddSpeech(preset)}
                 style={{
                   backgroundColor: '#1e293b',
                   border: '1px solid #334155',
@@ -1873,11 +2002,11 @@ function RoomContent({
               onChange={e => setSpeechInput(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
-                  onAddSpeechLine(speechInput);
+                  broadcastAndAddSpeech(speechInput);
                   setSpeechInput('');
                 }
               }}
-              placeholder="Or type what you say in the meeting to log speech..."
+              placeholder="Or type what you say in the meeting to broadcast & log..."
               style={{
                 flex: 1,
                 padding: '8px 12px',
@@ -1891,7 +2020,7 @@ function RoomContent({
             />
             <button
               onClick={() => {
-                onAddSpeechLine(speechInput);
+                broadcastAndAddSpeech(speechInput);
                 setSpeechInput('');
               }}
               style={{
@@ -1966,7 +2095,6 @@ function RoomContent({
 
           <button
             onClick={onEndMeeting}
-            disabled={isSummarizing}
             style={{
               padding: '10px 22px',
               borderRadius: '8px',
@@ -1975,7 +2103,7 @@ function RoomContent({
               color: '#fff',
               fontSize: '14px',
               fontWeight: 600,
-              cursor: isSummarizing ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
@@ -1983,7 +2111,7 @@ function RoomContent({
             }}
           >
             <PhoneOff size={18} />
-            <span>{isSummarizing ? 'Generating AI Minutes...' : 'End Meeting & Get AI Summary'}</span>
+            <span>End Meeting & Generate Minutes</span>
           </button>
         </div>
       </div>
@@ -2136,17 +2264,284 @@ function RoomContent({
 // ==========================================
 function SummaryView({
   summary,
+  isSummarizing,
+  summaryError,
+  transcripts,
   roomName,
   copied,
   onCopy,
+  onRetry,
   onNewCall,
 }: {
-  summary: MeetingSummary;
+  summary: MeetingSummary | null;
+  isSummarizing: boolean;
+  summaryError: string | null;
+  transcripts: TranscriptEntry[];
   roomName: string;
   copied: boolean;
   onCopy: () => void;
+  onRetry: () => void;
   onNewCall: () => void;
 }) {
+  // Case 1: Actively generating AI summary in background after call has disconnected
+  if (isSummarizing) {
+    return (
+      <div style={{ maxWidth: '840px', margin: '40px auto', padding: '0 20px', width: '100%' }}>
+        <div style={{
+          backgroundColor: '#131b2e',
+          borderRadius: '16px',
+          border: '1px solid #273553',
+          padding: '40px',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+          textAlign: 'center',
+        }}>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '68px',
+            height: '68px',
+            borderRadius: '50%',
+            backgroundColor: '#1e293b',
+            border: '2px solid #38bdf8',
+            marginBottom: '20px',
+            boxShadow: '0 0 24px rgba(56,189,248,0.3)',
+          }}>
+            <Loader2 size={34} color="#38bdf8" className="animate-spin" />
+          </div>
+
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '5px 14px',
+            borderRadius: '16px',
+            backgroundColor: '#064e3b',
+            color: '#6ee7b7',
+            fontSize: '12px',
+            fontWeight: 600,
+            marginBottom: '16px',
+          }}>
+            <PhoneOff size={14} />
+            <span>Call Disconnected • Meeting Completed</span>
+          </div>
+
+          <h2 style={{ fontSize: '24px', fontWeight: 600, color: '#f8fafc', margin: '0 0 10px 0' }}>
+            AI Secretary is Synthesizing Minutes...
+          </h2>
+          <p style={{ fontSize: '14px', color: '#94a3b8', maxWidth: '580px', margin: '0 auto 24px auto', lineHeight: 1.6 }}>
+            The voice session for <span style={{ color: '#38bdf8', fontWeight: 600 }}>#{roomName}</span> has concluded.
+            Our enterprise LLM is analyzing all recorded discussion turns to generate the executive summary, key decisions, and action items.
+          </p>
+
+          {/* Quick Metrics */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: '16px',
+            marginBottom: '28px',
+            flexWrap: 'wrap',
+          }}>
+            <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', padding: '10px 18px', borderRadius: '10px', minWidth: '120px' }}>
+              <span style={{ fontSize: '11px', color: '#64748b', display: 'block' }}>ROOM</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#cbd5e1' }}>#{roomName}</span>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', padding: '10px 18px', borderRadius: '10px', minWidth: '120px' }}>
+              <span style={{ fontSize: '11px', color: '#64748b', display: 'block' }}>TURNS CAPTURED</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#38bdf8' }}>{transcripts.length} dialogue lines</span>
+            </div>
+            <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', padding: '10px 18px', borderRadius: '10px', minWidth: '120px' }}>
+              <span style={{ fontSize: '11px', color: '#64748b', display: 'block' }}>STATUS</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#10b981' }}>NLP Processing...</span>
+            </div>
+          </div>
+
+          {/* Dialogue Transcript Preview */}
+          {transcripts.length > 0 && (
+            <div style={{ textAlign: 'left', marginBottom: '24px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileText size={14} color="#38bdf8" />
+                <span>Captured Discussion Transcripts ({transcripts.length}):</span>
+              </div>
+              <div style={{
+                maxHeight: '180px',
+                overflowY: 'auto',
+                backgroundColor: '#0b0f19',
+                borderRadius: '8px',
+                border: '1px solid #1e293b',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}>
+                {transcripts.map((t, idx) => (
+                  <div key={idx} style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 600, color: '#38bdf8' }}>[{t.speakerName}]:</span> {t.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
+            <button
+              onClick={onNewCall}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '8px',
+                backgroundColor: '#1e293b',
+                border: '1px solid #334155',
+                color: '#94a3b8',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel & Return to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Case 2: Error generating AI summary
+  if (summaryError && !summary) {
+    return (
+      <div style={{ maxWidth: '840px', margin: '40px auto', padding: '0 20px', width: '100%' }}>
+        <div style={{
+          backgroundColor: '#131b2e',
+          borderRadius: '16px',
+          border: '1px solid #7f1d1d',
+          padding: '36px',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+            <div style={{
+              width: '46px',
+              height: '46px',
+              borderRadius: '50%',
+              backgroundColor: '#450a0a',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#f87171',
+              flexShrink: 0,
+            }}>
+              <AlertCircle size={26} />
+            </div>
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#f87171', margin: '0 0 4px 0' }}>
+                AI Summary Generation Notice
+              </h2>
+              <div style={{ fontSize: '13px', color: '#94a3b8' }}>
+                The voice call ended successfully, but the AI synthesis encountered an issue.
+              </div>
+            </div>
+          </div>
+
+          <div style={{
+            backgroundColor: '#1f1315',
+            border: '1px solid #7f1d1d',
+            borderRadius: '8px',
+            padding: '14px',
+            color: '#fca5a5',
+            fontSize: '13px',
+            marginBottom: '24px',
+            lineHeight: 1.5,
+          }}>
+            <strong>Details:</strong> {summaryError}
+          </div>
+
+          {transcripts.length > 0 && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#cbd5e1', marginBottom: '8px' }}>
+                Captured Transcripts ({transcripts.length} items preserved safely):
+              </div>
+              <div style={{
+                maxHeight: '180px',
+                overflowY: 'auto',
+                backgroundColor: '#0b0f19',
+                borderRadius: '8px',
+                border: '1px solid #1e293b',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}>
+                {transcripts.map((t, idx) => (
+                  <div key={idx} style={{ fontSize: '12px', color: '#cbd5e1' }}>
+                    <span style={{ fontWeight: 600, color: '#38bdf8' }}>[{t.speakerName}]:</span> {t.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <button
+              onClick={onRetry}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                backgroundColor: '#2563eb',
+                border: 'none',
+                color: '#fff',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <RefreshCw size={15} />
+              <span>Retry AI Summary Generation</span>
+            </button>
+            <button
+              onClick={onNewCall}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '8px',
+                backgroundColor: '#1e293b',
+                border: '1px solid #334155',
+                color: '#cbd5e1',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              Return to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Case 3: Empty state
+  if (!summary) {
+    return (
+      <div style={{ maxWidth: '840px', margin: '40px auto', padding: '0 20px', width: '100%', textAlign: 'center' }}>
+        <div style={{ backgroundColor: '#131b2e', borderRadius: '16px', border: '1px solid #273553', padding: '40px' }}>
+          <p style={{ color: '#94a3b8', marginBottom: '20px' }}>No meeting summary available for this session.</p>
+          <button
+            onClick={onNewCall}
+            style={{
+              padding: '10px 20px',
+              borderRadius: '8px',
+              backgroundColor: '#2563eb',
+              border: 'none',
+              color: '#fff',
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            Start New Meeting
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: '900px', margin: '40px auto', padding: '0 20px', width: '100%' }}>
       <div style={{
