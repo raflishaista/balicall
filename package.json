@@ -2,6 +2,7 @@
   "name": "balitower-voice-call-base",
   "version": "1.0.0",
   "description": "Bali Tower internal voice call environment with embedded AI listener & meeting minutes summarizer",
+  "type": "module",
   "scripts": {
     "setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup.ps1",
     "install:all": "npm --prefix server install && npm --prefix client install",
