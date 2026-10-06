@@ -1,31 +1,28 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Ensure script runs from its own directory even when run as administrator or from another folder
+:: Ensure script runs from its own directory
 cd /d "%~dp0"
 
 echo ========================================================
-echo   Bali Tower Voice Call and AI Minutes Environment
+echo   Bali Tower Voice Call, Video & AI Workspace
 echo ========================================================
 echo.
 
-:: 1. Check Node.js
-where node >nul 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Node.js is not found on your system!
-    echo Please download and install Node.js v18 or v20 from:
-    echo https://nodejs.org/
-    echo.
-    pause
-    exit /b 1
+:: 1. Run setup checks if setup.ps1 exists
+if exist "scripts\setup.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\setup.ps1"
+    if errorlevel 1 (
+        echo [WARNING] Setup script reported issues. Continuing with direct launch...
+    )
 )
 
-:: 2. Check and copy server/.env
+:: 2. Ensure server/.env exists
 if not exist "server\.env" (
     echo [*] Setting up server\.env from template...
     if exist "server\.env.example" (
         copy "server\.env.example" "server\.env" >nul
-        echo [OK] Created server\.env. Edit it later to set your LLM_KEY if needed.
+        echo [OK] Created server\.env.
     )
 )
 
@@ -41,50 +38,49 @@ if not exist "bin\livekit-server.exe" (
     )
 )
 
-:: 4. Check server dependencies
+:: 4. Ensure dependencies are installed
 if not exist "server\node_modules" (
     echo [*] Installing backend dependencies...
     pushd "%~dp0server"
     call npm install
     popd
-    echo [OK] Backend dependencies installed!
 )
 
-:: 5. Check client dependencies
 if not exist "client\node_modules" (
     echo [*] Installing client dependencies...
     pushd "%~dp0client"
     call npm install
     popd
-    echo [OK] Client dependencies installed!
 )
 
 echo.
 echo ========================================================
-echo   All requirements verified! Launching services...
+echo   Launching BaliCall Services...
 echo ========================================================
 echo.
 
-:: Launch 1: SFU Server
+:: Launch 1: SFU Server (with webhook config if present)
 echo [1/3] Starting LiveKit SFU Server on Port 7880...
 if exist "livekit.yaml" (
-    start "LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
+    start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
 ) else (
-    start "LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
+    start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
 )
 ping -n 3 127.0.0.1 >nul
 
 :: Launch 2: Backend Server
 echo [2/3] Starting Backend Server on Port 3001...
-start "Backend Server" /D "%~dp0server" cmd /k "npm run dev"
+start "BaliCall Backend" /D "%~dp0server" cmd /k "npm run dev"
 ping -n 3 127.0.0.1 >nul
 
-:: Launch 3: PC Client
-echo [3/3] Starting PC Web Client on Port 5173...
-start "PC Client" /D "%~dp0client" cmd /k "npm run dev"
+:: Launch 3: Client Workspace
+echo [3/3] Starting PC Web Client on Port 5187...
+start "BaliCall Client" /D "%~dp0client" cmd /k "npm run dev"
 
 echo.
-echo All services launched!
-echo Open your browser at: http://localhost:5173
+echo ========================================================
+echo   All services launched!
+echo   Open your browser at: http://127.0.0.1:5187
 echo ========================================================
 pause
+endlocal
