@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>LiveKit Egress Test</title>
+</head>
+<body>
+  <h2>LiveKit Egress Test</h2>
+
+  <button id="join">Join Room</button>
+  <button id="leave" disabled>Leave Room</button>
+
+  <div id="status">Disconnected</div>
+  <div id="video"></div>
+
+  <script type="module">
+    import { Room, RoomEvent, Track } from 'https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/+esm';
+
+    const room = new Room();
+
+    const status = document.getElementById('status');
+    const videoContainer = document.getElementById('video');
+
+    document.getElementById('join').onclick = async () => {
+      try {
+        const token = await fetch('/egress-test-token')
+          .then(r => r.text());
+
+        await room.connect('ws://127.0.0.1:7880', token);
+
+        await room.localParticipant.setMicrophoneEnabled(true);
+        await room.localParticipant.setCameraEnabled(true);
+
+        status.textContent = 'Connected: egress-test-room';
+
+        room.localParticipant.trackPublications.forEach(publication => {
+          if (publication.track) {
+            attachTrack(publication.track);
+          }
+        });
+
+        document.getElementById('join').disabled = true;
+        document.getElementById('leave').disabled = false;
+
+      } catch (error) {
+        console.error(error);
+        status.textContent = 'Error: ' + error.message;
+      }
+    };
+
+    document.getElementById('leave').onclick = async () => {
+      await room.disconnect();
+      videoContainer.innerHTML = '';
+      status.textContent = 'Disconnected';
+
+      document.getElementById('join').disabled = false;
+      document.getElementById('leave').disabled = true;
+    };
+
+    function attachTrack(track) {
+      if (track.kind === Track.Kind.Video) {
+        const element = track.attach();
+        element.width = 640;
+        element.autoplay = true;
+        videoContainer.appendChild(element);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: balicall-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - livekit
+
+  livekit:
+    image: livekit/livekit-server:v1.13.7
+    container_name: balicall-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - redis
+    networks:
+      - livekit
+
+  egress:
+    image: livekit/egress:v1.14.1
+    container_name: balicall-egress
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+      - ./recordings:/out
+    depends_on:
+      - redis
+      - livekit
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - livekit
+
+networks:
+  livekit:
+
+volumes:
+  redis_data:
