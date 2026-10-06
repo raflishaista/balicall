@@ -163,8 +163,8 @@ try {
 
   await close(first);
   await first.getByRole('button', { name: 'Matikan kamera', exact: true }).click();
-  await first.getByRole('button', { name: 'Mikrofon', exact: true }).click();
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).waitFor();
+  await first.getByRole('button', { name: 'Matikan mikrofon', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).waitFor();
   const captures = await first.evaluate(() => window.__requests.length);
   await open(first);
   await select(first, 'Kamera', 'camera-a', 'Kamera berhasil dipilih. Kamera tetap nonaktif');
@@ -172,7 +172,7 @@ try {
   assert.equal(await first.evaluate(() => window.__requests.length), captures);
   await close(first);
   await first.getByRole('button', { name: 'Aktifkan kamera', exact: true }).click();
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).click();
   await cameraFrames(second, 3);
   await first.waitForFunction(() => window.__mediaTracks.some(t => t.kind === 'audio' && t.readyState === 'live' && t.getSettings().deviceId === 'mic-b'));
   checks.push('device choices while mic/camera are off do not acquire media or unmute; selected devices used when enabled again');

@@ -12,6 +12,10 @@ import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
+import { useMicrophoneControl } from './useMicrophoneControl';
+import { usePreJoinMedia } from './usePreJoinMedia';
+import type { JoinMediaChoices } from './usePreJoinMedia';
+import { PreJoinPreview } from './PreJoinPreview';
 import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import {
   LiveKitRoom,
@@ -31,7 +35,6 @@ import {
   Clock,
   AlertCircle,
   Loader2,
-  Volume2,
   Search,
   ChevronLeft,
 } from 'lucide-react';
@@ -90,6 +93,11 @@ export default function App() {
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [personas, setPersonas] = useState(PRESET_PERSONAS);
+  const preJoinMedia = usePreJoinMedia(view === 'lobby');
+  const [joinMedia, setJoinMedia] = useState<JoinMediaChoices>(preJoinMedia.choices);
+  const joinGeneration = useRef(0);
+  const joinPending = useRef(false);
+  const endingMeeting = useRef(false);
   
   // Connection state
   const [token, setToken] = useState<string | null>(null);
@@ -200,10 +208,10 @@ export default function App() {
   }, [pendingSaves]);
 
   const handleJoin = async () => {
-    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim()) {
-      setJoinError('Lengkapi identitas dan nama room.'); return;
+    if (joinPending.current) return;
+    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim() || !department.trim()) {
+      setJoinError('Lengkapi identitas, departemen, dan nama ruang.'); return;
     }
-
     // Format validation check (e.g. reject non-ID text such as "ns-12nsunauu")
     const cleanId = employeeId.trim();
     if (!/^BT-\d{4,6}$/i.test(cleanId)) {
@@ -211,21 +219,27 @@ export default function App() {
       return;
     }
 
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    const mediaChoices = preJoinMedia.prepareJoin();
+    if ((mediaChoices.microphoneEnabled || mediaChoices.cameraEnabled) && (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)) {
       setJoinError('Mikrofon membutuhkan HTTPS atau localhost. Untuk PC lain, gunakan alamat HTTPS aplikasi.'); return;
     }
+    const generation = ++joinGeneration.current;
+    joinPending.current = true;
     setJoinError(null); setCallError(null); setSyncError(null); setIsJoining(true);
     try {
       const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server' }>('/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department }),
       });
+      if (generation !== joinGeneration.current) return;
+      endingMeeting.current = false;
+      setJoinMedia(mediaChoices);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now());
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
-    } catch (error) { setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
-    finally { setIsJoining(false); }
+    } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
+    finally { if (generation === joinGeneration.current) { joinPending.current = false; setIsJoining(false); } }
   };
 
   const triggerSummarize = async (
@@ -278,7 +292,8 @@ export default function App() {
   };
 
   const handleEndMeeting = async (generate = true) => {
-    if (!meetingId || !token) return;
+    if (!meetingId || !token || endingMeeting.current) return;
+    endingMeeting.current = true;
     const currentMeetingId = meetingId;
     const currentToken = token;
     const currentRoomName = roomName;
@@ -323,7 +338,11 @@ export default function App() {
     setSummaryRoomName(currentRoomName);
 
     // 4. Request summary in the background
-    await triggerSummarize(currentMeetingId, currentToken, currentRoomName, capturedTranscripts, leavePromise);
+    try {
+      await triggerSummarize(currentMeetingId, currentToken, currentRoomName, capturedTranscripts, leavePromise);
+    } finally {
+      endingMeeting.current = false;
+    }
   };
 
   const handleRetrySummarize = () => {
@@ -351,10 +370,11 @@ export default function App() {
   };
 
   const handlePresence = async (connected: boolean) => {
-    if (!meetingId || !token) return;
+    if (!meetingId || !token || endingMeeting.current) return;
+    const generation = joinGeneration.current;
     try { await apiRequest(meetingPath(meetingId, 'presence'), {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
-    }, 5000); } catch { if (connected) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
+    }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
 
   const copyMarkdownSummary = () => {
@@ -394,6 +414,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
   };
 
   const openLobby = (intent: 'create' | 'join') => {
+    joinGeneration.current++; joinPending.current = false; setIsJoining(false);
+    preJoinMedia.resetLobby();
     setMeetingIntent(intent);
     setJoinError(null);
     setView('lobby');
@@ -401,7 +423,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''}`}>
-      {view !== 'in-call' && <WorkspaceSidebar view={view} intent={meetingIntent} employeeName={employeeName} hasSummary={Boolean(summary) || isSummarizing} onHome={() => setView('home')} onCreate={() => openLobby('create')} onJoin={() => openLobby('join')} onSummary={() => setView('summary')} />}
+      {view !== 'in-call' && <WorkspaceSidebar view={view} intent={meetingIntent} employeeName={employeeName} hasSummary={Boolean(summary) || isSummarizing} onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }} onCreate={() => openLobby('create')} onJoin={() => openLobby('join')} onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('summary'); }} />}
       <div className="workspace-body">
       <header className={`app-header ${view === 'in-call' ? 'app-header-call' : ''}`}>
         {view === 'in-call' ? <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div> : <div className="page-identity"><span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : 'Notulen'}</span><strong>Internal Meeting & AI Minutes</strong></div>}
@@ -453,13 +475,14 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isJoining={isJoining}
             joinError={joinError}
             onJoin={handleJoin}
-            microphoneDiagnostic={<MicrophoneDiagnostic />}
+            mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} />}
             personas={personas}
           />
         )}
 
         {view === 'in-call' && token && (
           <InCallView
+            joinMedia={joinMedia}
             token={token}
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
@@ -510,100 +533,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
   );
 }
 
-// ==========================================
-// 🎙️ MICROPHONE HARDWARE TESTER COMPONENT
-// ==========================================
-function MicrophoneDiagnostic() {
-  const [volume, setVolume] = useState(0);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [micName, setMicName] = useState<string>('Detecting microphone...');
-  const [micError, setMicError] = useState<string | null>(null);
-  
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const animFrameRef = useRef<number | null>(null);
-  const micRequestRef = useRef(0);
-  const [isRequestingMic, setIsRequestingMic] = useState(false);
-
-  const startMicTest = async () => {
-    const request = ++micRequestRef.current;
-    setIsRequestingMic(true);
-    setMicError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (request !== micRequestRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
-      streamRef.current = stream;
-
-      const track = stream.getAudioTracks()[0];
-      setMicName(track?.label || 'Default Microphone');
-
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const updateVolume = () => {
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength;
-        const normalized = Math.min(100, Math.round((avg / 128) * 100));
-        setVolume(normalized);
-        animFrameRef.current = requestAnimationFrame(updateVolume);
-      };
-
-      updateVolume();
-      setIsCapturing(true);
-    } catch (err: any) {
-      if (request !== micRequestRef.current) return;
-      streamRef.current?.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-      console.error('Microphone access failed:', err);
-      setMicError(err.message || 'Microphone access denied. Please grant permission in your browser.');
-    } finally { if (request === micRequestRef.current) setIsRequestingMic(false); }
-  };
-
-  const stopMicTest = () => {
-    micRequestRef.current++;
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    setIsCapturing(false);
-    setVolume(0);
-  };
-
-  useEffect(() => {
-    return () => stopMicTest();
-  }, []);
-
-  return (
-    <div className="microphone-check">
-      <div className="microphone-check-heading"><span><Volume2 size={17} />Periksa mikrofon</span><button type="button" disabled={isRequestingMic} onClick={isCapturing ? stopMicTest : startMicTest}>{isRequestingMic ? 'Meminta izin...' : isCapturing ? 'Hentikan' : 'Uji suara'}</button></div>
-      {micError && <p className="microphone-error" role="alert">{micError}</p>}
-      <div className="microphone-volume"><span style={{ width: volume + '%' }} /></div>
-      <div className={`diagnostic-wave ${isCapturing && volume > 5 ? 'voice-active' : ''}`} aria-hidden="true">{[7, 12, 19, 10, 23, 15, 20, 9, 17, 12, 22, 8, 16, 11].map((height, index) => <i key={index} style={{ height: isCapturing && volume > 5 ? Math.max(3, Math.round(height * Math.min(1, volume / 30))) : 3, animationDelay: index * .05 + 's' }} />)}</div>
-      <p>{isCapturing ? volume > 10 ? 'Suaramu terdeteksi. Mikrofon siap digunakan.' : 'Coba berbicara dan perhatikan indikator suara.' : 'Uji input suara sebelum bergabung ke rapat.'}</p>
-      {isCapturing && <small>{micName} · {volume}%</small>}
-    </div>
-  );
-}
-
 function InCallView({
+  joinMedia,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
@@ -617,6 +548,10 @@ function InCallView({
   onEndMeeting,
   isSummarizing,
 }: any) {
+  const [mediaOptions] = useState(() => ({
+    audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
+    videoCaptureDefaults: { deviceId: joinMedia.cameraId === 'default' ? undefined : { exact: joinMedia.cameraId } },
+  }));
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const onRoomError = useCallback((error: Error) => {
     // Camera access errors are handled separately; audio can remain connected.
@@ -633,11 +568,13 @@ function InCallView({
       connect={true}
       onError={onRoomError}
       onConnected={onConnected}
-      audio={true}
+      audio={joinMedia.microphoneEnabled}
+      options={mediaOptions}
       style={{ display: 'flex', flex: 1, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
       <RoomContent
+        startWithCamera={joinMedia.cameraEnabled}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
@@ -656,6 +593,7 @@ function InCallView({
 }
 
 function RoomContent({
+  startWithCamera,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -674,13 +612,15 @@ function RoomContent({
   const connectionState = useConnectionState();
   const connected = connectionState === ConnectionState.Connected;
   const spotlightIdentity = useSpeakerSpotlight(room, connected);
-  const camera = useCameraControl(localParticipant, connected, true);
+  const camera = useCameraControl(localParticipant, connected, startWithCamera);
+  const microphone = useMicrophoneControl(localParticipant, connected);
   const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported);
   const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
-  const microphoneError = !isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null;
+  const microphoneError = microphone.error || (!isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null);
   const isMuted = !isMicrophoneEnabled;
   const [finishing, setFinishing] = useState(false);
+  const finishRequest = useRef(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const closeDevices = useCallback(() => setDevicesOpen(false), []);
@@ -705,24 +645,23 @@ function RoomContent({
   const resumeMicrophoneChange = useCallback(() => {
     resumeTrackChange();
   }, [resumeTrackChange]);
-  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || camera.pending, prepareMicrophoneChange, resumeMicrophoneChange);
+  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || camera.pending || microphone.pending, prepareMicrophoneChange, resumeMicrophoneChange);
   const { isListeningSpeechApi, interimText, speechError, toggleSpeechRecognition, speechEnabled, finishTranscription } =
     sttProvider === 'server' ? backendSpeech : browserSpeech;
   const finishMeeting = async (generate: boolean) => {
+    if (finishRequest.current) return;
+    finishRequest.current = true;
     setFinishing(true); setFinishError(null);
     try { await finishTranscription(); await onEndMeeting(generate); }
     catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal menyelesaikan transkripsi'); }
-    finally { setFinishing(false); }
-  };
-  const toggleMute = async () => {
-    try { await localParticipant.setMicrophoneEnabled(isMuted); }
-    catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal mengubah mikrofon'); }
+    finally { finishRequest.current = false; setFinishing(false); }
   };
 
   return <><MeetingRoom
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
+    microphonePending={microphone.pending} connectionState={connectionState}
     screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
     screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
     devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error} onOpenDevices={() => setDevicesOpen(true)}
@@ -732,8 +671,8 @@ function RoomContent({
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
     setSttProvider={setSttProvider} speechLanguage={speechLanguage} setSpeechLanguage={setSpeechLanguage}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
-    onToggleMute={toggleMute} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
+    onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }
 
 function SummaryView({

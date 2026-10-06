@@ -140,3 +140,13 @@ test('leaving during initial publication releases capture before publish finishe
   await act(async () => { resolve({ track }); });
   assert.equal(unpublished, true);
 });
+test('permission from before disconnect cannot publish after reconnect', async t => {
+  let resolve, task, stopped = false, published = 0;
+  const participant = { isCameraEnabled: false, getTrackPublication: () => undefined,
+    createTracks: () => new Promise(done => { resolve = done; }), async publishTrack() { published++; } };
+  const h = await mountCamera(t, participant);
+  await act(async () => { task = h.camera.toggleCamera(); });
+  await h.connect(false); await h.connect(true);
+  await act(async () => { resolve([{ kind: 'video', stop() { stopped = true; } }]); await task; });
+  assert.equal(stopped, true); assert.equal(published, 0); assert.equal(h.camera.pending, false);
+});

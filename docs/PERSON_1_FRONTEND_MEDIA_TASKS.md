@@ -6,7 +6,7 @@
 
 **Audit awal:** pada commit `a2b841e`, rapat masih audio-only (`video={false}`), dengan avatar, mic, indikator berbicara, transkrip, dan peserta. Kamera, screen share, dan pemilih perangkat belum tersedia.
 
-**Status terbaru:** P1-01 sudah di-push ke `testingsam` pada commit `fc7f0e3`. P1-02, P1-03, dan P1-04 sudah diimplementasikan lokal pada 5 Oktober 2026. Build, lint, 63 tes frontend, dan pengujian spotlight tiga peserta melalui LiveKit lulus. Perangkat fisik, percakapan manusia, output suara nyata, dan dialog berbagi layar sistem belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md), [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md), [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md), dan [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md).
+**Status terbaru:** P1-01 sudah di-push ke `testingsam` pada commit `fc7f0e3`; P1-02 sampai P1-04 pada commit `cabb56d`. P1-05 dan P1-06 selesai pada tahap implementasi dan verifikasi otomatis pada 6 Oktober 2026, disertakan dalam commit gabungan P1-05/P1-06. Build, lint, 86 tes frontend, 10 pemeriksaan P1-06 dengan enam sesi LiveKit, serta regresi perangkat dan prejoin masing-masing 9 pemeriksaan lulus. Axe tidak menemukan pelanggaran otomatis pada empat tampilan yang diuji; temuan yang membutuhkan penilaian manual tetap dicatat. Perangkat fisik, percakapan manusia, output suara nyata, screen reader, dan dialog berbagi layar sistem belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md), [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md), [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md), [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md), [laporan P1-05](./P1_05_PREJOIN_IMPLEMENTATION.md), dan [laporan P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md).
 
 | Tanggung jawab Person 1 | Status kode saat ini | Sisa pekerjaan |
 | --- | --- | --- |
@@ -14,7 +14,8 @@
 | Screen share | Kontrol mulai/berhenti, area presentasi, strip kamera, pilihan presenter, dan verifikasi simulasi tersedia | Acceptance dengan dialog browser/izin sistem nyata di perangkat kantor |
 | Device switcher | Dialog mikrofon/kamera/speaker, enumerasi, pergantian SDK, hotplug, fallback, dan verifikasi simulasi tersedia | Acceptance headset/webcam fisik, izin output browser, dan kualitas suara nyata |
 | Active speaker spotlight | Pembicara terbaru, konfirmasi 600 ms, jeda pergantian 1,2 detik, fallback peserta, prioritas screen share, dan verifikasi tiga peserta tersedia | Acceptance percakapan nyata, interupsi singkat, dan kebisingan kantor |
-| Pemeriksaan sebelum bergabung | Sebagian: `MicrophoneDiagnostic` sudah mengukur input suara, menampilkan nama mic, dan membersihkan track | Preview kamera, pilihan perangkat, serta membawa pilihan ke dalam rapat |
+| Pemeriksaan sebelum bergabung | Preview kamera lokal, tes mic, pilihan input, status awal, handoff ke room, cleanup, dan verifikasi simulasi tersedia | Acceptance webcam/headset kantor, izin browser nyata, dan kualitas input suara |
+| Layout, aksesibilitas, dan media | Kontrol mobile tetap tersedia, keyboard/fokus, fallback track, reconnect, pemulihan autoplay, dan verifikasi enam peserta tersedia | Acceptance screen reader, perangkat fisik, lintas browser, dan pergantian jaringan kantor |
 
 Kode server saat ini memberikan `canPublish` dan `canSubscribe` pada token rapat (`server/app.js:46`), tanpa pembatasan sumber kamera/screen share yang terlihat pada grant tersebut. Tidak ditemukan penghalang grant untuk mulai mengerjakan fitur media; hasil publikasi tetap perlu diuji pada server LiveKit yang digunakan.
 
@@ -30,7 +31,7 @@ Aktifkan publikasi kamera LiveKit dan tambahkan tombol kamera di sebelah kontrol
 
 Gunakan track kamera melalui komponen LiveKit `VideoTrack`/`ParticipantTile` sesuai kebutuhan layout. Mengubah `video={false}` menjadi `true` saja belum menyelesaikan fitur: pilihan awal kamera harus konsisten dengan lobby, render track remote, dan toggle `localParticipant.setCameraEnabled(...)`.
 
-Implementasi akhir menginisialisasi kamera lewat `useCameraControl` setelah room terhubung, bukan prop publikasi otomatis `LiveKitRoom`. Alasannya: tes browser menemukan track kamera dapat tetap hidup jika izin awal baru selesai setelah pengguna keluar. Hook memiliki track sebelum publikasi sehingga bisa menghentikannya ketika room ditinggalkan. Kamera tetap diminta otomatis saat pengguna bergabung, dan informasi ini tampil di lobby.
+Implementasi menginisialisasi kamera lewat `useCameraControl` setelah room terhubung, bukan prop publikasi otomatis `LiveKitRoom`. Alasannya: tes browser menemukan track kamera dapat tetap hidup jika izin awal baru selesai setelah pengguna keluar. Hook memiliki track sebelum publikasi sehingga bisa menghentikannya ketika room ditinggalkan. Sejak P1-05, kamera diminta saat bergabung hanya jika pilihan awal kamera di lobby aktif; perangkat kamera mengikuti pilihan lobby.
 
 **Kriteria selesai**
 
@@ -101,6 +102,8 @@ Gunakan status suara peserta dari LiveKit untuk mempromosikan pembicara terbaru 
 
 ### P1-05 — Preview dan pemeriksaan perangkat sebelum bergabung
 
+**Hasil:** implementasi lokal tersedia. Build/lint, 76 tes frontend, dan 9 pemeriksaan integrasi simulasi lulus, termasuk pilihan perangkat nyata pada room LiveKit, cleanup sebelum respons token, izin terlambat, perangkat terputus, dan masuk tanpa capture. Lihat [laporan P1-05](./P1_05_PREJOIN_IMPLEMENTATION.md). Acceptance perangkat fisik masih diperlukan.
+
 **Prioritas:** P2 · **Lokasi utama:** alur create/join meeting di `client/src`
 
 Kembangkan `MicrophoneDiagnostic` yang sudah ada; tidak perlu membuat tes suara dari awal. Tambahkan preview kamera dan pemilihan perangkat, lalu teruskan pilihan perangkat/status awal ke room saat pengguna bergabung.
@@ -113,6 +116,8 @@ Kembangkan `MicrophoneDiagnostic` yang sudah ada; tidak perlu membuat tes suara 
 - Alur bergabung tetap bisa digunakan audio-only.
 
 ### P1-06 — Layout, aksesibilitas, dan verifikasi media
+
+**Hasil:** implementasi lokal dan verifikasi otomatis selesai. Tujuh ukuran layar, enam peserta, reconnect signaling LiveKit nyata, fallback track, izin terlambat, dan pemulihan autoplay lulus. Build/lint dan 86 tes frontend lulus; axe mendeteksi nol pelanggaran otomatis pada lobby, ruang rapat, dialog perangkat, dan screen share mobile. Pengujian media memakai capture sintetis; acceptance hardware dan aksesibilitas manual masih diperlukan. Lihat [laporan P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md) dan [hasil terstruktur](./MEDIA_EXPERIENCE_VERIFICATION.json).
 
 **Prioritas:** P1 · **Dependensi:** P1-01 sampai P1-04
 
@@ -140,6 +145,10 @@ Selesaikan penyesuaian layout setelah kontrol dan track media tersedia. Layout a
 - **Person 1:** UI dan kontrol media di atas, termasuk publikasi/render track LiveKit dan pengujian pengalaman browser.
 - **Person 2:** autentikasi, penyimpanan, webhook, attendance, dan pengiriman event/transkrip lintas peserta melalui data channel. Jangan menganggap publish data dari klien sebagai penyimpanan permanen atau kontrol akses.
 - **Person 3:** transkripsi terpusat/server-side, ringkasan AI, ekspor, dan persiapan Android. UI Person 1 perlu menampilkan status/hasil yang disediakan layanan tersebut, tetapi pipeline transkripsi bukan bagian task media ini.
+
+## Langkah berikutnya untuk Person 1
+
+Kode P1-01 sampai P1-06 sudah tersedia. Lanjutkan acceptance memakai webcam/headset kantor, dialog berbagi layar OS, screen reader, browser target perusahaan, dan putus/sambung jaringan nyata sesuai [checklist P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md#acceptance-manual). Kode, laporan hasil pengujian, screenshot, dan checklist acceptance P1-05/P1-06 disertakan dalam commit gabungan; riwayat publikasi dapat diperiksa pada branch `testingsam`.
 
 ## Catatan implementasi
 

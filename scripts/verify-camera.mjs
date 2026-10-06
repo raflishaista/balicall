@@ -124,7 +124,7 @@ try {
   await videoCount(second, 1);
   await first.locator('.participant-tile').filter({ hasText: 'Camera Tester 1' }).getByText('Kamera mati', { exact: true }).waitFor();
   assert.equal(await first.evaluate(() => window.__cameraTestTracks.every(track => track.readyState === 'ended')), true);
-  assert.equal(await first.getByRole('button', { name: 'Mikrofon', exact: true }).count(), 1);
+  assert.equal(await first.getByRole('button', { name: 'Matikan mikrofon', exact: true }).count(), 1);
   checks.push('camera off restores initials on both clients and releases the local camera without muting microphone');
   await first.screenshot({ path: fileURLToPath(new URL('camera-off-desktop.png', output)), fullPage: true });
 
@@ -132,16 +132,16 @@ try {
   await videoCount(first, 2);
   await videoCount(second, 2);
   assert.equal(await first.evaluate(() => window.__cameraTestRecognitionStarts), recognitionStarts);
-  await first.getByRole('button', { name: 'Mikrofon', exact: true }).click();
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).waitFor();
+  await first.getByRole('button', { name: 'Matikan mikrofon', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).waitFor();
   await videoCount(second, 2);
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).click();
   checks.push('camera can be enabled again; camera toggle preserves the speech recognizer and mic mute preserves video');
 
   const third = await participant(3, 'NotAllowedError');
   await third.getByRole('alert').filter({ hasText: 'Izin kamera belum diberikan' }).waitFor();
   await videoCount(third, 2);
-  assert.equal(await third.getByRole('button', { name: 'Mikrofon', exact: true }).count(), 1);
+  assert.equal(await third.getByRole('button', { name: 'Matikan mikrofon', exact: true }).count(), 1);
   assert.equal(await third.getByRole('alert').filter({ hasText: 'Mikrofon tidak tersedia' }).count(), 0);
   checks.push('initial camera permission denial keeps audio connected and displays a camera-specific error');
 
@@ -165,7 +165,7 @@ try {
   await third.getByRole('button', { name: 'Aktifkan kamera', exact: true }).waitFor();
   await videoCount(first, 2);
   await third.locator('.participant-tile').filter({ hasText: 'Camera Tester 3' }).getByText('Kamera mati', { exact: true }).waitFor();
-  assert.equal(await third.getByRole('button', { name: 'Mikrofon', exact: true }).count(), 1);
+  assert.equal(await third.getByRole('button', { name: 'Matikan mikrofon', exact: true }).count(), 1);
   await third.evaluate(() => { window.__cameraTestFailure = null; });
   await third.getByRole('button', { name: 'Aktifkan kamera', exact: true }).click();
   await videoCount(first, 3);
