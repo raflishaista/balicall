@@ -2,6 +2,7 @@ import { VideoTrack } from '@livekit/components-react';
 import type { TrackReference } from '@livekit/components-react';
 import { useState } from 'react';
 import { MonitorUp } from 'lucide-react';
+import { useTrackUnavailable } from './useTrackUnavailable';
 
 function screenShareKey(track: TrackReference) {
   return `${track.participant.identity}:${track.publication.trackSid}`;
@@ -25,8 +26,10 @@ export function ScreenShareStage({ tracks }: { tracks: TrackReference[] }) {
 }
 
 function ScreenShareVideo({ track, presenter }: { track: TrackReference; presenter: string }) {
-  const [failed, setFailed] = useState(false);
+  const native = track.publication.track?.mediaStreamTrack;
+  const [failedTrack, setFailedTrack] = useState<MediaStreamTrack>();
+  const unavailable = useTrackUnavailable(native);
   return <div className="screen-share-content">
-    {failed ? <p role="status">Layar belum dapat ditampilkan. Minta presenter membagikan layar kembali.</p> : <VideoTrack trackRef={track} className="screen-share-video" autoPlay playsInline muted aria-label={`Layar ${presenter}`} onError={() => setFailed(true)} />}
+    {unavailable ? <p role="status">Menunggu layar presenter tersambung kembali.</p> : failedTrack === native ? <p role="status">Layar belum dapat ditampilkan. Minta presenter membagikan layar kembali.</p> : <VideoTrack trackRef={track} className="screen-share-video" autoPlay playsInline muted aria-label={`Layar ${presenter}`} onError={() => setFailedTrack(native)} />}
   </div>;
 }

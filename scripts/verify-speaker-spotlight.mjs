@@ -106,7 +106,7 @@ try {
   await first.waitForTimeout(1300); await focus(first, 2);
   checks.push('silence preserves most recent spotlight beyond the hold interval');
 
-  await second.getByRole('button', { name: 'Mikrofon', exact: true }).click();
+  await second.getByRole('button', { name: 'Matikan mikrofon', exact: true }).click();
   await tile(first, 2).getByLabel('Mikrofon mati', { exact: true }).waitFor();
   await focus(first, 2);
   await third.getByRole('button', { name: 'Matikan kamera', exact: true }).click();
@@ -120,7 +120,7 @@ try {
   assert.equal(await first.locator('.participant-tile[data-spotlight="true"]').count(), 0);
   await first.evaluate(() => { window.__screenNode = document.querySelector('.screen-share-video'); });
   await level(third, 0);
-  await second.getByRole('button', { name: 'Aktifkan mic', exact: true }).click();
+  await second.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).click();
   await level(second, .2); await speaking(first, 2);
   await first.waitForTimeout(1300);
   assert.equal(await first.evaluate(() => document.querySelector('.screen-share-video') === window.__screenNode), true);

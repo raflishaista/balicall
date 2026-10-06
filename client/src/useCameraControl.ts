@@ -31,6 +31,7 @@ export function useCameraControl(participant: LocalParticipant, connected: boole
   const mounted = useRef(false);
   const pendingTracks = useRef<LocalTrack[]>([]);
   const initialRequested = useRef(false);
+  const generation = useRef({ value: 0 });
 
   useEffect(() => {
     mounted.current = true;
@@ -39,8 +40,10 @@ export function useCameraControl(participant: LocalParticipant, connected: boole
 
   useEffect(() => {
     active.current = connected;
+    const epoch = generation.current;
     return () => {
       active.current = false;
+      epoch.value++;
       // A publish request can outlive the room; release capture immediately.
       pendingTracks.current.forEach(track => track.stop());
     };
@@ -49,6 +52,8 @@ export function useCameraControl(participant: LocalParticipant, connected: boole
   const toggleCamera = useCallback(async () => {
     if (!active.current || requestPending.current) return;
     requestPending.current = true;
+    const epoch = generation.current.value;
+    const isCurrent = () => active.current && generation.current.value === epoch;
     setPending(true);
     setError(null);
     try {
@@ -62,20 +67,20 @@ export function useCameraControl(participant: LocalParticipant, connected: boole
         // Own the track before publishing, so a late permission result cannot
         // leave the camera running while the SDK waits for a closed connection.
         const tracks = await participant.createTracks({ audio: false, video: true });
-        if (!active.current) { tracks.forEach(track => track.stop()); return; }
+        if (!isCurrent()) { tracks.forEach(track => track.stop()); return; }
         pendingTracks.current = tracks;
         const video = tracks.find(track => track.kind === Track.Kind.Video);
         if (!video) throw new Error('Camera track unavailable');
         publication = await participant.publishTrack(video, { source: Track.Source.Camera });
       }
       // Permission may resolve after the user has left the room.
-      if (enable && !active.current && publication?.track) {
+      if (enable && !isCurrent() && publication?.track) {
         publication.track.stop();
         await participant.unpublishTrack(publication.track);
       }
     } catch (cause) {
       pendingTracks.current.forEach(track => track.stop());
-      if (active.current) setError(cameraErrorMessage(cause));
+      if (isCurrent()) setError(cameraErrorMessage(cause));
     } finally {
       pendingTracks.current = [];
       requestPending.current = false;

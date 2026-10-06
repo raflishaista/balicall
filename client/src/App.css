@@ -147,6 +147,31 @@
 .microphone-check small { display: block; margin-top: 7px; color: #a8c6dd; font-size: 8px; overflow-wrap: anywhere; }
 .microphone-check .microphone-error { margin-top: 10px; color: #ffb5a5; }
 .preview-footer { display: flex; justify-content: center; align-items: center; gap: 7px; margin-top: 18px; color: #89a7c0; font-size: 8px; }
+.prejoin-panel { position: relative; min-width: 0; margin-top: 20px; }
+.prejoin-camera { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid #49647a; border-radius: 10px; background: #102c42; }
+.prejoin-video { display: block; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.prejoin-video[hidden] { display: none; }
+.prejoin-placeholder { display: flex; align-items: center; justify-content: center; flex-direction: column; height: 100%; padding-bottom: 32px; gap: 8px; }
+.prejoin-placeholder .preview-avatar { width: 66px; height: 66px; margin: 0 0 6px; font-size: 24px; box-shadow: none; }
+.prejoin-placeholder strong { font-size: 13px; }
+.prejoin-placeholder > span:last-child { color: #a7bed2; font-size: 10px; }
+.prejoin-camera-label { position: absolute; display: flex; align-items: center; justify-content: space-between; gap: 8px; bottom: 0; left: 0; right: 0; padding: 9px 10px; background: #061c30df; font-size: 10px; }
+.prejoin-camera-label > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prejoin-camera-label button,.prejoin-refresh { border: 1px solid #5c7892; border-radius: 5px; padding: 7px 9px; color: #e9f4ff; background: #24455f; font-size: 10px; cursor: pointer; }
+.prejoin-camera-label button { flex-shrink: 0; }
+.prejoin-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.prejoin-toggles button { display: flex; justify-content: center; align-items: center; gap: 6px; min-height: 40px; border: 1px solid #52718b; border-radius: 6px; color: #d7e9fb; background: #163c58; font-size: 10px; cursor: pointer; }
+.prejoin-toggles button[aria-pressed=false] { background: #102b3e; color: #aac0d5; }
+.prejoin-state { margin: 9px 0 15px; color: #b2cae1; font-size: 10px; text-align: center; }
+.prejoin-devices { display: grid; gap: 12px; }
+.prejoin-device-field { display: flex; flex-direction: column; gap: 6px; color: #ccdded; font-size: 11px; }
+.prejoin-device-field select { min-width: 0; width: 100%; min-height: 38px; padding: 0 8px; border: 1px solid #56728b; border-radius: 6px; background: #102e45; color: #edf5ff; font-size: 11px; }
+.prejoin-refresh { margin: 12px 0; background: transparent; }
+.prejoin-error { color: #ffd3c8; font-size: 11px; line-height: 1.6; margin: 10px 0; }
+.prejoin-panel button:disabled,.prejoin-panel select:disabled { cursor: wait; opacity: .6; }
+.prejoin-panel .microphone-check { margin-top: 2px; }
+.prejoin-panel :focus-visible { outline: 2px solid #81beff; outline-offset: 3px; }
+@media (max-width:900px) { .prejoin-panel { max-width: 520px; width: 100%; margin-left: auto; margin-right: auto; } }
 .lobby-card { padding: 29px; min-width: 0; }
 .lobby-switch { display: flex; gap: 4px; padding: 4px; margin-bottom: 27px; border-radius: 8px; background: #f1f5fb; }
 .lobby-switch button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #8197b1; font-size: 11px; cursor: pointer; }
@@ -422,3 +447,72 @@ input::placeholder { color: #a1b1c6; }
 @media (max-width:900px) { .workspace-search { display: none; } .dashboard-columns { grid-template-columns: 1fr; } .assistant-card { min-height: 295px; } .assistant-feature { padding: 11px 0; } .connection-card { margin-top: 18px; } .lobby-layout { grid-template-columns: 1fr; } .lobby-preview { padding: 22px; } .audio-preview { min-height: 210px; } .preview-wave { display: none; } .preview-diagnostic { max-width: 420px; width: 100%; margin: 0 auto; } .audio-preview .preview-avatar { width: 72px; height: 72px; font-size: 25px; margin-bottom: 14px; } .lobby-card { padding: 26px; } }
 @media (max-width:720px) { .app-root { display: flex; flex-direction: column; } .workspace-sidebar { position: relative; height: auto; padding: 16px; } .sidebar-brand { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 4px 15px; } .sidebar-brand .brand-logo { width: 127px; } .sidebar-brand > span { margin: 0; font-size: 7px; letter-spacing: 1.7px; color: #86a3bd; } .sidebar-label,.sidebar-bottom { display: none; } .sidebar-navigation { flex-direction: row; gap: 5px; } .sidebar-link { justify-content: center; min-height: 39px; gap: 6px; padding: 0 8px; flex: 1; width: auto; font-size: 10px; } .sidebar-link svg { width: 15px; height: 15px; } .sidebar-link:disabled { display: none; } .sidebar-link.active { box-shadow: none; } .app-header { min-height: 65px; padding: 12px 20px; } .page-identity strong { font-size: 11px; } .page-identity span { font-size: 9px; } .header-meta { gap: 10px; } .service-status { font-size: 9px; padding: 7px 8px; } .user-avatar { width: 30px; height: 30px; flex-basis: 30px; font-size: 10px; } .dashboard-content { padding: 25px 20px 20px; } .dashboard-heading h1 { font-size: 26px; } .dashboard-heading p:not(.page-kicker) { font-size: 11px; } .dashboard-hero { height: 230px; } .hero-copy { padding: 27px; } .hero-copy h2 { font-size: 29px; } .quick-actions { gap: 10px; } .quick-action { padding: 12px 9px; gap: 7px; flex-direction: column; align-items: flex-start; min-height: 98px; } .quick-action strong { font-size: 11px; } .quick-action small { font-size: 8px; } .quick-action-icon { width: 30px; height: 30px; flex-basis: 30px; } .quick-action-icon svg { width: 19px; } .quick-action > span:nth-child(2) { flex: 0; } .dashboard-footer span:last-child { display: none; } .lobby-page { padding: 26px 20px; } .lobby-page-heading h1 { font-size: 24px; } .summary-page { padding: 20px; } .summary-card { padding: 20px; } .summary-preview-grid { grid-template-columns: 1fr; } .summary-heading h1 { font-size: 21px; } .call-brand > span { display: none; } .call-brand .brand-logo { width: 126px; } .call-room { grid-template-columns: 1fr; height: auto; min-height: 0; overflow: visible; } .call-stage { min-height: 65vh; } .participant-grid { min-height: 250px; grid-auto-rows: minmax(170px,1fr); padding: 0 15px 10px; } .call-side-panel { min-height: 420px; max-height: 680px; margin: 0 15px 18px; } .call-info-bar { padding: 5px 18px 18px; } .call-control-bar { gap: 8px; } .call-control { min-width: 53px; font-size: 8px; } .leave-simple { display: none; } .call-bottom-note { padding: 10px 18px; } .call-bottom-note > span:first-child { max-width: 270px; font-size: 8px; } }
 @media (max-width:420px) { .app-header { padding: 12px 16px; } .header-meta .service-status { max-width: 117px; font-size: 8px; white-space: normal; } .dashboard-content { padding: 23px 16px; } .dashboard-hero { height: 221px; } .hero-copy { padding: 25px 22px; } .hero-copy h2 { font-size: 26px; } .hero-copy p { font-size: 10px; } .quick-actions { gap: 7px; } .quick-action { border-radius: 8px; padding: 12px 8px; } .quick-action strong { font-size: 10px; } .quick-action small { line-height: 1.5; } .surface-card { padding: 18px; } .empty-meetings { padding: 15px 0 25px; } .lobby-card { padding: 21px; } .lobby-page { padding: 25px 16px; } .form-grid { grid-template-columns: 1fr; } .summary-page { padding: 18px 13px; } .summary-card { padding: 16px; } .summary-actions { width: 100%; } .summary-actions button { flex: 1; padding: 0 8px; font-size: 10px; } .transcript-heading { align-items: flex-start; flex-direction: column; } .transcript-search { width: 100%; } .participant-grid { gap: 8px; grid-template-columns: 1fr; } .participant-tile { min-height: 200px; } .call-control-bar { padding: 10px; } .leave-button { font-size: 9px; padding: 0 9px; } .call-controls { gap: 2px; } .call-control { min-width: 47px; padding: 7px 5px; } .modal-backdrop { padding: 15px; } .guide-dialog { padding: 26px; } }
+
+/* Media workspace: keep controls outside the video scroll region. */
+.call-room { grid-template-rows: minmax(0,1fr) auto; height: calc(100dvh - 76px); }
+.call-stage { grid-column: 1; grid-row: 1; overflow: auto; }
+.call-side-panel { grid-column: 2; grid-row: 1 / 3; }
+.call-control-bar { grid-column: 1; grid-row: 2; min-width: 0; background: #0b2235; }
+.call-info-bar > div { min-width: 0; flex: 1; flex-wrap: wrap; gap: 8px; }
+.room-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.participant-count { flex-shrink: 0; }
+.call-connection { color: #b0c8da; font-size: 11px; }
+.connection-notice { padding: 10px 22px; margin-bottom: 12px; background: #173b53; color: #d5e7f5; font-size: 12px; line-height: 1.6; }
+.audio-playback-button { align-self: flex-start; margin: 0 22px 12px; padding: 10px 14px; min-height: 44px; border: 1px solid #69a1ca; border-radius: 7px; background: #163c57; color: #e5f4ff; cursor: pointer; }
+.call-tab-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.call-tab-panel[hidden] { display: none; }
+.attendance-list.call-tab-panel { overflow: auto; }
+.call-control,.leave-simple,.leave-button { min-height: 44px; font-size: 11px; }
+.leave-simple { display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; }
+.leave-button { background: #c82f3a; }
+.leave-button:hover { background: #ac2330; }
+.call-side-panel button,.call-side-panel select,.device-dialog button,.device-dialog select { min-height: 44px; }
+.call-panel-tabs button,.transcription-settings select,.transcription-settings label,.live-transcript-entry time,.transcript-empty p,.listening-footer,.manual-transcript { color: #526d89; }
+.call-side-panel select,.transcription-settings label { font-size: 11px; }
+.transcription-settings label select { color: #526d89; font-size: 11px; }
+.listening-footer.listening { color: #16745f; font-size: 11px; }
+.device-dialog-heading p,.device-input-meter,.device-dialog .device-help { color: #526d89; }
+.lobby-page-heading > p,.lobby-page .page-kicker,.lobby-intro,.lobby-switch button,.lobby-page .form-note,.lobby-page .dev-tools { color: #526d89; }
+.lobby-switch .selected { color: #1258b9; }
+.prejoin-panel button,.prejoin-panel select { min-height: 44px; }
+.prejoin-panel .microphone-check-heading button { color: #edf7ff; background: #1c4664; font-size: 11px; }
+.transcription-settings select { max-width: 160px; }
+.live-transcript-entry time { font-size: 11px; }
+.transcript-empty p { font-size: 12px; }
+.device-dialog .icon-button { min-width: 44px; }
+.screen-share-header select { min-height: 44px; }
+.screen-share-header label { min-width: 0; }
+.call-room :focus-visible,.device-dialog :focus-visible { outline: 3px solid #72baff; outline-offset: -3px; }
+.call-side-panel :focus-visible,.device-dialog :focus-visible { outline-color: #135eaf; }
+.call-room button:disabled { cursor: not-allowed; opacity: .55; }
+@media (max-width:1024px) {
+  .call-room { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; min-height: 0; overflow: visible; }
+  .call-stage { grid-column: 1; grid-row: 1; overflow: visible; min-height: 450px; }
+  .call-side-panel { grid-column: 1; grid-row: 2; height: 500px; min-height: 0; max-height: none; margin: 8px 16px 0; }
+  .call-control-bar { grid-column: 1; grid-row: 3; position: sticky; bottom: 0; z-index: 5; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -6px 18px #02121d40; }
+  .participant-grid { flex: auto; min-height: 330px; overflow-y: visible; }
+  .participant-grid.spotlight-grid { grid-template-rows: minmax(270px,1fr); }
+  .screen-share-stage { flex: none; height: 44dvh; min-height: 240px; }
+  .has-screen-share .participant-grid { overflow-x: auto; overflow-y: hidden; }
+}
+@media (max-width:580px) {
+  .call-stage { min-height: 0; }
+  .call-controls { display: grid; width: 100%; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; }
+  .call-control-bar { gap: 6px; padding-left: 10px; padding-right: 10px; }
+  .call-control { min-width: 0; min-height: 52px; gap: 5px; font-size: 10px; }
+  .leave-controls { width: 100%; justify-content: flex-end; gap: 8px; }
+  .leave-simple,.leave-button { min-height: 44px; font-size: 11px; }
+  .call-info-bar { align-items: flex-start; }
+  .screen-share-header { padding: 10px; }
+  .screen-share-header select { max-width: 160px; }
+}
+@media (min-width:1025px) and (max-height:650px) {
+  .call-room { height: auto; min-height: 574px; overflow: visible; }
+  .call-stage { min-height: 430px; }
+  .call-side-panel { max-height: 574px; }
+}
+@media (forced-colors:active) {
+  .call-room :focus-visible,.device-dialog :focus-visible { outline-color: Highlight; }
+  .participant-tile.is-speaking { border-color: Highlight; }
+  .call-control,.leave-button,.leave-simple { border: 1px solid ButtonText; }
+}

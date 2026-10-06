@@ -102,7 +102,7 @@ try {
   const style = await second.locator('.screen-share-video').evaluate(v => ({ fit: getComputedStyle(v).objectFit, transform: getComputedStyle(v).transform }));
   assert.deepEqual(style, { fit: 'contain', transform: 'none' });
   assert.equal(await second.locator('.participant-tile').count(), 2);
-  assert.equal(await first.getByRole('button', { name: 'Mikrofon', exact: true }).count(), 1);
+  assert.equal(await first.getByRole('button', { name: 'Matikan mikrofon', exact: true }).count(), 1);
   assert.equal(await first.evaluate(() => window.__recognitionStarts), recognitionStarts);
   checks.push('share starts on click, sends real WebRTC frames to a second client, preserves cameras/microphone/transcription, and shows uncropped unmirrored content');
   await second.screenshot({ path: fileURLToPath(new URL('screen-share-desktop.png', output)), fullPage: true });
@@ -111,10 +111,10 @@ try {
   await cameras(second, 1); await frames(second, 1);
   await first.getByRole('button', { name: 'Aktifkan kamera', exact: true }).click();
   await cameras(second, 2); await frames(second, 1);
-  await first.getByRole('button', { name: 'Mikrofon', exact: true }).click();
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).waitFor();
+  await first.getByRole('button', { name: 'Matikan mikrofon', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).waitFor();
   await frames(second, 1);
-  await first.getByRole('button', { name: 'Aktifkan mic', exact: true }).click();
+  await first.getByRole('button', { name: 'Aktifkan mikrofon', exact: true }).click();
   checks.push('camera toggles and microphone mute do not interrupt active screen sharing');
 
   await first.getByRole('button', { name: 'Hentikan berbagi layar', exact: true }).click();

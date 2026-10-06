@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-06T03:08:17.977Z",
+  "status": "passed",
+  "media": "synthetic canvas camera, oscillator microphone, device/permission/hotplug fixtures; real browser analyser/preview and local LiveKit WebRTC; speech recognition stubbed; physical hardware not tested",
+  "checks": [
+    "opening lobby and selecting devices request no capture; labels and keyboard-accessible choices render without overlay",
+    "selected camera-b preview plays muted with local mirror and microphone-b drives real analyser meter; desktop/mobile fit",
+    "preview tracks and analyser contexts close before token response; selected inputs become actual in-call devices",
+    "camera-off and muted join acquires no input but receives remote video; enabling later uses saved camera-b/mic-b preferences",
+    "camera permission denial disables initial camera while audio-only join succeeds with three real LiveKit participants",
+    "cancel/navigation cleans late capture and returning lobby works; unplugging active camera clears preview and disables call camera",
+    "microphone denial disables initial mic; explicit test retry succeeds; stopping test retains call preference and releases track/analyser",
+    "navigation invalidates pending join so late success/failure cannot reopen call or contaminate a fresh lobby",
+    "leaving all participants releases call media; no uncaught browser errors or unexpected console errors"
+  ],
+  "errors": []
+}
