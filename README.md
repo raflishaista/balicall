@@ -172,3 +172,7 @@ npm --prefix client run build
 node scripts/test_db.js
 ```
 *Memverifikasi koneksi PostgreSQL, pembuatan skema `balicall_*`, validasi NIK karyawan, dan operasi CRUD.*
+
+### Pengaturan dan dokumen Person 1
+
+Menu **Pengaturan** menyediakan default mikrofon/kamera/speaker, kondisi awal media, sorotan pembicara, mirror video lokal, dan pengurangan animasi. Preferensi tersimpan di browser dan diteruskan ke preview/room saat bergabung. Lihat [task Person 1](docs/PERSON_1_FRONTEND_MEDIA_TASKS.md), [implementasi Pengaturan](docs/P1_07_10_SETTINGS_IMPLEMENTATION.md), serta [hasil verifikasi](docs/SETTINGS_VERIFICATION.json).

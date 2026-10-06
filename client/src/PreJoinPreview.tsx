@@ -4,8 +4,9 @@ import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
-export function PreJoinPreview({ media, employeeName, blocked }: {
+export function PreJoinPreview({ media, employeeName, blocked, mirror = true }: {
   media: ReturnType<typeof usePreJoinMedia>; employeeName: string; blocked: boolean;
+  mirror?: boolean;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -26,7 +27,7 @@ export function PreJoinPreview({ media, employeeName, blocked }: {
   };
   return <section className="prejoin-panel" aria-label="Pemeriksaan perangkat sebelum bergabung">
     <div className="prejoin-camera">
-      <video ref={video} className="prejoin-video" muted playsInline autoPlay aria-label="Preview kamera kamu" hidden={!media.streams.videoinput} />
+      <video ref={video} className={`prejoin-video${mirror ? '' : ' unmirrored'}`} muted playsInline autoPlay aria-label="Preview kamera kamu" hidden={!media.streams.videoinput} />
       {!media.streams.videoinput && <div className="prejoin-placeholder"><span className="preview-avatar">{initials(employeeName)}</span><strong>{employeeName || 'Nama kamu'}</strong><span>{media.pending.videoinput ? 'Menunggu izin kamera…' : 'Preview hanya terlihat oleh kamu'}</span></div>}
       <div className="prejoin-camera-label"><span>{employeeName || 'Kamu'} · Preview lokal</span><button type="button" disabled={blocked} onClick={() => media.pending.videoinput || media.streams.videoinput ? media.stopCamera() : media.capture('videoinput')}>{media.pending.videoinput ? 'Batalkan preview' : media.streams.videoinput ? 'Hentikan preview' : 'Preview kamera'}</button></div>
     </div>

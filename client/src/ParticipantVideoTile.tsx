@@ -8,7 +8,7 @@ import { Track } from 'livekit-client';
 import { AudioLines, Mic, MicOff, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 
-export function ParticipantVideoTile({ trackRef, spotlight = false }: { trackRef: TrackReferenceOrPlaceholder; spotlight?: boolean }) {
+export function ParticipantVideoTile({ trackRef, spotlight = false, mirrorLocalVideo = true }: { trackRef: TrackReferenceOrPlaceholder; spotlight?: boolean; mirrorLocalVideo?: boolean }) {
   const participant = trackRef.participant;
   const cameraMuted = useIsMuted(trackRef);
   const microphoneMuted = useIsMuted({ participant, source: Track.Source.Microphone });
@@ -28,7 +28,7 @@ export function ParticipantVideoTile({ trackRef, spotlight = false }: { trackRef
   >
     {showVideo && isTrackReference(trackRef) ? <VideoTrack
       trackRef={trackRef}
-      className={`participant-video ${participant.isLocal ? 'is-local-video' : ''}`}
+      className={`participant-video ${participant.isLocal && mirrorLocalVideo ? 'is-local-video' : ''}`}
       autoPlay playsInline muted
       aria-label={`Video kamera ${displayName}`}
       onError={() => setFailedTrack(mediaTrack)}

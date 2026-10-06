@@ -1,12 +1,14 @@
 # Task Person 1 — Frontend & Media Experience
 
-**Tujuan:** mengembangkan pengalaman kamera, berbagi layar, kontrol perangkat, dan tata letak pembicara di ruang rapat Bali Tower Sentra.
+**Tujuan:** mengembangkan pengalaman kamera, berbagi layar, kontrol perangkat, tata letak pembicara, dan Pengaturan workspace Bali Tower Sentra.
+
+**Update pengembangan 6 Oktober 2026:** fitur P1-01–P1-06 sudah masuk `main` pada `1917948`. Branch `testingsam` mengikuti update Jadwal pada `ffbd333` melalui fast-forward. Pengaturan P1-07–P1-10 selesai dan terintegrasi dengan Jadwal; lima blok konflik diselesaikan dengan mempertahankan kedua fitur. Preferensi disimpan di browser, tidak mengubah profil atau kebijakan perusahaan. Lihat [laporan Pengaturan](./P1_07_10_SETTINGS_IMPLEMENTATION.md) dan [verifikasi browser](./SETTINGS_VERIFICATION.json).
 
 **Referensi implementasi:** [PERSON_1_MEDIA_REFERENCES.md](./PERSON_1_MEDIA_REFERENCES.md) memetakan dokumentasi dan contoh resmi ke setiap task.
 
 **Audit awal:** pada commit `a2b841e`, rapat masih audio-only (`video={false}`), dengan avatar, mic, indikator berbicara, transkrip, dan peserta. Kamera, screen share, dan pemilih perangkat belum tersedia.
 
-**Status terbaru:** P1-01 sudah di-push ke `testingsam` pada commit `fc7f0e3`; P1-02 sampai P1-04 pada commit `cabb56d`. P1-05 dan P1-06 selesai pada tahap implementasi dan verifikasi otomatis pada 6 Oktober 2026, disertakan dalam commit gabungan P1-05/P1-06. Build, lint, 86 tes frontend, 10 pemeriksaan P1-06 dengan enam sesi LiveKit, serta regresi perangkat dan prejoin masing-masing 9 pemeriksaan lulus. Axe tidak menemukan pelanggaran otomatis pada empat tampilan yang diuji; temuan yang membutuhkan penilaian manual tetap dicatat. Perangkat fisik, percakapan manusia, output suara nyata, screen reader, dan dialog berbagi layar sistem belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md), [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md), [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md), [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md), [laporan P1-05](./P1_05_PREJOIN_IMPLEMENTATION.md), dan [laporan P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md).
+**Riwayat verifikasi P1-01–P1-06:** P1-01 di-push ke `testingsam` pada commit `fc7f0e3`; P1-02 sampai P1-04 pada commit `cabb56d`; P1-05 dan P1-06 pada `7fe6800`. Build, lint, 86 tes frontend, 10 pemeriksaan P1-06 dengan enam sesi LiveKit, serta regresi perangkat dan prejoin masing-masing 9 pemeriksaan lulus pada tahap tersebut. Axe tidak menemukan pelanggaran otomatis pada empat tampilan yang diuji; temuan yang membutuhkan penilaian manual tetap dicatat. Perangkat fisik, percakapan manusia, output suara nyata, screen reader, dan dialog berbagi layar sistem belum diuji. Lihat [laporan P1-01](./P1_01_CAMERA_IMPLEMENTATION.md), [laporan P1-02](./P1_02_SCREEN_SHARE_IMPLEMENTATION.md), [laporan P1-03](./P1_03_DEVICE_SETTINGS_IMPLEMENTATION.md), [laporan P1-04](./P1_04_SPEAKER_SPOTLIGHT_IMPLEMENTATION.md), [laporan P1-05](./P1_05_PREJOIN_IMPLEMENTATION.md), dan [laporan P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md).
 
 | Tanggung jawab Person 1 | Status kode saat ini | Sisa pekerjaan |
 | --- | --- | --- |
@@ -132,6 +134,65 @@ Selesaikan penyesuaian layout setelah kontrol dan track media tersedia. Layout a
 - Animasi media menghormati preferensi reduced motion yang sudah ada di stylesheet.
 - Jalankan build/lint dan tes yang relevan; catat browser, jumlah peserta, hasil uji media nyata, dan batasan yang ditemukan.
 
+## Lanjutan Pengaturan — mengikuti konsep pengguna
+
+### P1-07 — Overview dan navigasi Pengaturan
+
+**Status:** implementasi lokal dan verifikasi otomatis selesai.
+
+- Menu Pengaturan di sidebar; overview dengan pencarian kategori dan kartu identitas rapat yang bersifat informatif.
+- Kategori aktif Audio & Video serta Tampilan Rapat.
+- Notifikasi, AI & Notulen, Rekaman & Penyimpanan, serta Keamanan & Akses ditandai menunggu integrasi; tidak menyediakan toggle palsu.
+- Identitas ditampilkan sebagai data formulir rapat, bukan klaim sesi login perusahaan yang sudah terverifikasi.
+
+**Kriteria selesai:** navigasi desktop/mobile, pencarian termasuk hasil kosong, label aksesibilitas, dan membuka halaman tanpa menyalakan media terverifikasi.
+
+### P1-08 — Preferensi audio/video dan handoff ke prejoin
+
+**Status:** implementasi lokal dan verifikasi otomatis selesai; acceptance headset/webcam fisik belum dilakukan.
+
+- Simpan mikrofon, kamera, speaker/headset default, serta kondisi awal mic/kamera.
+- Penyimpanan browser menggunakan schema versi 1; hanya preferensi yang diizinkan, tanpa nama/NIK/token.
+- Simpan, Batal, Default, pesan gagal simpan, serta pilihan perangkat yang sudah tidak tersedia.
+- Simpan & periksa perangkat membuka preview P1-05 dengan pilihan baru; preview tidak otomatis menangkap media.
+- Speaker diterapkan saat room terhubung; perangkat tidak tersedia/izin gagal menggunakan fallback/pesan yang jelas. Pergantian manual selama rapat dipertahankan saat reconnect.
+
+**Kriteria selesai:** persistensi setelah reload, input dipakai oleh capture LiveKit, output browser didukung, cleanup media, storage ditolak, serta output tidak didukung terverifikasi. Input SpeechRecognition browser tetap mengikuti keterbatasan P1-03; pilihan perangkat LiveKit tidak menjamin perangkat STT browser sama.
+
+### P1-09 — Preferensi tampilan rapat
+
+**Status:** implementasi lokal dan verifikasi otomatis selesai.
+
+- Sorotan pembicara otomatis bisa dinonaktifkan menjadi grid; riwayat speaker tetap diproses dan screen share tetap prioritas.
+- Mirror hanya pada preview/video lokal; kamera remote dan screen share tidak ikut dicerminkan.
+- Kurangi animasi tersimpan dan diterapkan pada workspace. Preferensi reduced motion sistem tetap dihormati.
+
+**Kriteria selesai:** perubahan benar-benar memengaruhi preview/room, tetap tersimpan setelah reload, dan Batal mengembalikan pilihan tersimpan.
+
+### P1-10 — Verifikasi Pengaturan dan regresi frontend dari main
+
+**Status:** implementasi dan verifikasi otomatis lokal selesai. Acceptance hardware dan screen reader masih terbuka.
+
+- Setelah integrasi dengan `main/ffbd333`: 105 tes frontend dan 22 tes backend lulus; build/lint exit 0 dengan warning bawaan Jadwal dan ukuran bundle.
+- Harness `scripts/verify-settings.mjs` memverifikasi browser, storage, prejoin, room LiveKit, dan notulen dengan backend terisolasi serta media/respons simulasi.
+- Overview, Audio & Video, dan Tampilan Rapat diuji pada 1440 px dan 390 px; empat tampilan diuji axe, nol pelanggaran otomatis. Hasil `incomplete` kontras tetap perlu penilaian manual.
+- Perbaikan MAIN-01: loading/error/retry notulen tampil walaupun hasil masih null.
+- Perbaikan MAIN-03: ekspor memakai API_BASE yang sama. Isi PDF/database sebenarnya belum diuji.
+- Hasil notulen lama tidak menimpa sesi baru. Kegagalan flush transkrip tetap mempertahankan ruang rapat dan menyediakan retry.
+- Lima blok konflik integrasi Jadwal/Pengaturan diselesaikan dengan mempertahankan kedua menu, view, dan callback. Menu mobile disusun tiga kolom untuk menghindari overflow.
+- Harness memeriksa create/cancel jadwal fixture, navigasi desktop/mobile, persistensi preferensi, serta handoff kode ruang dan media default dari Jadwal ke prejoin.
+
+**Masih perlu dilakukan:** webcam/headset kantor, browser target, pemilihan output/izin nyata, screen reader, dan uji ulang Office LLM dengan Person 3. MAIN-02 (routing riwayat DB) tetap tugas Person 2; tidak diubah dalam pengembangan frontend ini.
+
+### Backlog lanjutan setelah kontrak backend tersedia
+
+| Task | Kebutuhan | Koordinasi | Status |
+| --- | --- | --- | --- |
+| P1-11 — Profil perusahaan | API sesi pengguna, field yang boleh diedit, upload foto; NIK/departemen/jabatan mengikuti sumber resmi | Person 2 | Menunggu autentikasi dan API profil |
+| P1-12 — Notifikasi | Event undangan, jadwal, pengingat, notulen siap; preferensi delivery dan izin browser | Person 2 | Menunggu sumber event dan jadwal |
+| P1-13 — UI preferensi AI | Default bahasa, hak host, status transkripsi, format notulen; berlaku konsisten per ruang | Person 2 + Person 3 | Menunggu kontrak room dan pipeline |
+| P1-14 — Rekaman, keamanan, admin | API rekaman/kuota/retensi, session auth, role/RBAC; halaman admin hanya untuk pengguna berhak | Person 2 + Person 3 | Menunggu layanan dan kebijakan perusahaan |
+
 ## Checklist verifikasi lintas fitur
 
 - Rapat audio yang sudah ada tetap berjalan; mute/unmute, transkrip, peserta, dan keluar rapat tidak regresi.
@@ -148,7 +209,7 @@ Selesaikan penyesuaian layout setelah kontrol dan track media tersedia. Layout a
 
 ## Langkah berikutnya untuk Person 1
 
-Kode P1-01 sampai P1-06 sudah tersedia. Lanjutkan acceptance memakai webcam/headset kantor, dialog berbagi layar OS, screen reader, browser target perusahaan, dan putus/sambung jaringan nyata sesuai [checklist P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md#acceptance-manual). Kode, laporan hasil pengujian, screenshot, dan checklist acceptance P1-05/P1-06 disertakan dalam commit gabungan; riwayat publikasi dapat diperiksa pada branch `testingsam`.
+Kode P1-01 sampai P1-10 sudah tersedia pada tahap implementasi lokal. Lanjutkan acceptance perangkat kantor sesuai [checklist P1-06](./P1_06_MEDIA_EXPERIENCE_IMPLEMENTATION.md#acceptance-manual) dan [checklist Pengaturan](./P1_07_10_SETTINGS_IMPLEMENTATION.md#acceptance-manual). P1-01–P1-06 sudah dipublikasikan; perubahan P1-07–P1-10 dan laporan testing terbaru masih lokal. Untuk P1-11–P1-14, sepakati kontrak autentikasi/API/event dengan Person 2/3 terlebih dahulu.
 
 ## Catatan implementasi
 

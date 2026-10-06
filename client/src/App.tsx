@@ -1,5 +1,10 @@
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
-import { apiRequest, meetingPath } from './api';
+import { apiRequest, meetingPath, API_BASE } from './api';
+import { SettingsPage } from './SettingsPage';
+import { usePreferences } from './usePreferences';
+import { mediaChoices } from './preferences';
+import type { MeetingPreferences } from './preferences';
+import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
 import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
@@ -82,7 +87,7 @@ const PRESET_PERSONAS = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule'>('home');
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>('home');
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
   const [schedules, setSchedules] = useState<ScheduledMeeting[]>([]);
@@ -95,7 +100,10 @@ export default function App() {
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [personas, setPersonas] = useState(PRESET_PERSONAS);
-  const preJoinMedia = usePreJoinMedia(view === 'lobby');
+  const userPreferences = usePreferences();
+  const preJoinMedia = usePreJoinMedia(view === 'lobby', mediaChoices(userPreferences.preferences));
+  const [callPreferences, setCallPreferences] = useState<MeetingPreferences>(userPreferences.preferences);
+  const summaryGeneration = useRef(0);
   const [joinMedia, setJoinMedia] = useState<JoinMediaChoices>(preJoinMedia.choices);
   const joinGeneration = useRef(0);
   const joinPending = useRef(false);
@@ -282,6 +290,9 @@ export default function App() {
       });
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
+      summaryGeneration.current++;
+      setIsSummarizing(false);
+      setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now());
@@ -298,6 +309,7 @@ export default function App() {
     fallbackTranscripts: TranscriptEntry[],
     leavePromise?: Promise<{ status: string } | void>
   ) => {
+    const generation = ++summaryGeneration.current;
     setIsSummarizing(true);
     setSummaryError(null);
     try {
@@ -311,6 +323,7 @@ export default function App() {
         },
         125000
       );
+      if (generation !== summaryGeneration.current) return;
       setLastMeeting({
         title: data.summary.title,
         roomName: targetRoomName,
@@ -332,11 +345,12 @@ export default function App() {
           : data.summary
       );
     } catch (error) {
+      if (generation !== summaryGeneration.current) return;
       setSummaryError(
         error instanceof Error ? error.message : 'Gagal membuat notulen AI. Silakan coba lagi.'
       );
     } finally {
-      setIsSummarizing(false);
+      if (generation === summaryGeneration.current) setIsSummarizing(false);
     }
   };
 
@@ -352,7 +366,8 @@ export default function App() {
     try {
       await saveQueue.flush();
     } catch (flushErr) {
-      console.warn('Transcript flush note:', flushErr);
+      endingMeeting.current = false;
+      throw flushErr;
     }
 
     // 1. Terminate call media session immediately (turns off microphone, camera, and screen share)
@@ -462,26 +477,28 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
     }).catch(() => setCallError('Tidak dapat menyalin ringkasan. Periksa izin clipboard browser.'));
   };
 
-  const openLobby = (intent: 'create' | 'join') => {
+  const openLobby = (intent: 'create' | 'join', preferences = userPreferences.preferences) => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
+    preJoinMedia.applyChoices(mediaChoices(preferences));
     setMeetingIntent(intent);
     setJoinError(null);
     setView('lobby');
   };
 
   return (
-    <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''}`}>
+    <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
       {view !== 'in-call' && (
         <WorkspaceSidebar
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          hasSummary={Boolean(summary) || isSummarizing}
+          hasSummary={Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
           onSchedule={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('schedule'); }}
+          onSettings={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('settings'); }}
           onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('summary'); }}
         />
       )}
@@ -491,7 +508,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwal rapat' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwal rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -542,6 +559,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
+        {view === 'settings' && <SettingsPage preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+
         {view === 'lobby' && (
           <LobbyView
             intent={meetingIntent}
@@ -557,7 +576,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isJoining={isJoining}
             joinError={joinError}
             onJoin={handleJoin}
-            mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} />}
+            mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} mirror={userPreferences.preferences.mirrorLocalVideo} />}
             personas={personas}
           />
         )}
@@ -565,6 +584,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView
             joinMedia={joinMedia}
+            callPreferences={callPreferences}
             token={token}
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
@@ -585,7 +605,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           />
         )}
 
-        {view === 'summary' && summary && (
+        {view === 'summary' && (
           <SummaryView
             summary={summary}
             roomName={summaryRoomName || roomName}
@@ -598,6 +618,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
             onNewCall={() => {
+              summaryGeneration.current++;
+              setIsSummarizing(false);
               setToken(null);
               setMeetingId(null);
               setCallError(null);
@@ -618,7 +640,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 }
 
 function InCallView({
-  joinMedia,
+  joinMedia, callPreferences,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
@@ -659,6 +681,7 @@ function InCallView({
       <RoomAudioRenderer />
       <RoomContent
         startWithCamera={joinMedia.cameraEnabled}
+        callPreferences={callPreferences}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
@@ -677,7 +700,7 @@ function InCallView({
 }
 
 function RoomContent({
-  startWithCamera,
+  startWithCamera, callPreferences,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -696,6 +719,7 @@ function RoomContent({
   const connectionState = useConnectionState();
   const connected = connectionState === ConnectionState.Connected;
   const spotlightIdentity = useSpeakerSpotlight(room, connected);
+  const preferredOutputError = usePreferredAudioOutput(room, connected, callPreferences.outputId);
   const camera = useCameraControl(localParticipant, connected, startWithCamera);
   const microphone = useMicrophoneControl(localParticipant, connected);
   const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
@@ -748,8 +772,8 @@ function RoomContent({
     microphonePending={microphone.pending} connectionState={connectionState}
     screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
     screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
-    devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error} onOpenDevices={() => setDevicesOpen(true)}
-    spotlightIdentity={spotlightIdentity}
+    devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error || preferredOutputError} onOpenDevices={() => setDevicesOpen(true)}
+    spotlightIdentity={spotlightIdentity} autoSpotlight={callPreferences.autoSpotlight} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
@@ -795,7 +819,7 @@ function SummaryView({
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE || 'http://localhost:3001/api'}/meetings/${encodeURIComponent(meetingId)}/export/${format}`,
+        `${API_BASE}${meetingPath(meetingId, `export/${format}`)}`,
         {
           method: 'GET',
           headers: {

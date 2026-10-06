@@ -25,7 +25,7 @@
 .sidebar-profile .user-avatar { border-color: #2a4964; background: #335572; color: #fff; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 82px; padding: 14px clamp(20px,3.1vw,44px); border-bottom: 1px solid #e5ebf3; background: rgba(255,255,255,.96); }
 .page-identity { display: grid; gap: 7px; }
-.page-identity span { color: #8a9baf; font-size: 11px; }
+.page-identity span { color: #556d88; font-size: 11px; }
 .page-identity strong { color: #223d60; font-size: 13px; font-weight: 600; }
 .header-meta { display: flex; align-items: center; gap: 18px; }
 .service-status { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border-radius: 6px; background: #f1f8f6; color: #3c7769; font-size: 11px; white-space: nowrap; }
@@ -964,5 +964,10 @@ input::placeholder { color: #a1b1c6; }
   .schedule-grid {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 720px) {
+  .sidebar-navigation { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sidebar-link { width: 100%; min-width: 0; }
 }
 

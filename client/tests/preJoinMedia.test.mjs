@@ -48,6 +48,19 @@ test('opening lobby only enumerates devices, captures require user action', asyn
   await act(async () => { await h.current.capture('videoinput'); await h.current.capture('audioinput'); });
   assert.deepEqual(h.media.calls, [{ audio: false, video: { deviceId: { exact: 'cam-b' } } }, { audio: { deviceId: { exact: 'mic-b' } }, video: false }]);
 });
+test('saved preferences can be applied without capture and replace a running preview safely', async t => {
+  const h = await mount(t);
+  const preferences = { microphoneEnabled: false, cameraEnabled: false, microphoneId: 'mic-b', cameraId: 'cam-b' };
+  await act(async () => h.current.applyChoices(preferences));
+  assert.equal(h.media.calls.length, 0); assert.deepEqual(h.current.choices, preferences);
+  await act(async () => h.current.capture('videoinput'));
+  assert.equal(h.media.captures[0].track.deviceId, 'cam-b');
+  await act(async () => h.current.applyChoices(preferences));
+  assert.equal(h.media.captures[0].track.readyState, 'ended');
+  assert.deepEqual(h.current.choices, preferences);
+  let choices; await act(async () => { choices = h.current.prepareJoin(); });
+  assert.deepEqual(choices, preferences);
+});
 test('joining snapshots chosen input devices and stops both preview tracks', async t => {
   const h = await mount(t);
   await act(async () => { h.current.select('audioinput', 'mic-b'); h.current.select('videoinput', 'cam-b'); await h.current.capture('audioinput'); await h.current.capture('videoinput'); });
