@@ -5,10 +5,16 @@
   "type": "module",
   "scripts": {
     "setup": "powershell -ExecutionPolicy Bypass -File .\\scripts\\setup.ps1",
+    "setup:linux": "bash ./scripts/setup.sh",
     "install:all": "npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
     "sfu": ".\\bin\\livekit-server.exe --dev",
     "server": "npm --prefix server run dev",
     "client": "npm --prefix client run dev",
+    "start:prod": "node server/index.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
     "test": "npm --prefix client test && npm --prefix server test"
   },
   "keywords": [
