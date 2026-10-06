@@ -502,13 +502,13 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isSummarizing={isSummarizing}
           />
         )}
-        
-        {view === 'summary' && summary && meetingId && token && (
+
+        {view === 'summary' && summary && (
           <SummaryView
             summary={summary}
             roomName={summaryRoomName || roomName}
-            meetingId={meetingId}
-            token={token}
+            meetingId={summaryMeetingId || meetingId || ''}
+            token={summaryToken || token || ''}
             transcripts={transcripts}
             copied={copied}
             onCopy={copyMarkdownSummary}
