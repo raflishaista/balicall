@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "timestamp": "2026-10-06T08:06:40.891Z",
+  "checks": [
+    "Overview, category search, planned integration labels and no-capture navigation",
+    "Explicit save, reload persistence, keyboard Space on switch, cancellation, reduced motion and media preferences survive reload",
+    "Overview, Audio & Video and Display have no horizontal overflow at 390px",
+    "Scheduling UI creates its own fixture via API, both sidebar menus and breadcrumbs work at desktop/mobile, saved settings survive navigation, scheduled join receives room code and media defaults",
+    "Saved devices enter actual LiveKit: no capture when defaults are off, output preference, camera cam-b, unmirrored local video, grid mode and cleanup on leave",
+    "Canceling the harness-owned schedule updates API and UI after a scheduled media session",
+    "Notulen loading/error/retry render correctly, call media unmounts before response, retry succeeds via demo and PDF export respects same API origin",
+    "A late summary from a previous meeting cannot overwrite a new meeting or restore stale recap navigation",
+    "Failed transcript flush keeps the meeting open with a retry; successful retry preserves pending speech before leaving",
+    "Blocked storage never reports save success or navigates to preview; unsupported output picker is disabled with explanatory text"
+  ],
+  "pageErrors": [],
+  "accessibility": [
+    {
+      "state": "overview-desktop",
+      "violations": [],
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "state": "audio-video-desktop",
+      "violations": [],
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "state": "display-desktop",
+      "violations": [],
+      "incomplete": [
+        "color-contrast"
+      ]
+    },
+    {
+      "state": "display-mobile",
+      "violations": [],
+      "incomplete": [
+        "color-contrast"
+      ]
+    }
+  ],
+  "source": "main ffbd333 scheduling + P1 settings integration",
+  "media": "synthetic",
+  "database": "disabled",
+  "llm": "demo / simulated responses"
+}

@@ -11,8 +11,8 @@ const idKey = { audioinput: 'microphoneId', videoinput: 'cameraId' } as const;
 const names = { audioinput: 'Mikrofon', videoinput: 'Kamera' };
 const kinds: InputKind[] = ['audioinput', 'videoinput'];
 
-export function usePreJoinMedia(inLobby: boolean) {
-  const [choices, setChoices] = useState<JoinMediaChoices>(defaults);
+export function usePreJoinMedia(inLobby: boolean, initialChoices: JoinMediaChoices = defaults) {
+  const [choices, setChoices] = useState<JoinMediaChoices>(() => ({ ...initialChoices }));
   const choiceRef = useRef(choices);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [streams, setStreams] = useState<Record<InputKind, MediaStream | null>>({ audioinput: null, videoinput: null });
@@ -134,6 +134,7 @@ export function usePreJoinMedia(inLobby: boolean) {
   return { choices, devices, streams, pending, errors, deviceError, refresh, capture, select, toggle,
     stopMicrophone: () => release('audioinput'), stopCamera: () => release('videoinput'), stopAll,
     resetLobby() { stopAll(); setErrors({ audioinput: null, videoinput: null }); setDeviceError(null); },
+    applyChoices(next: JoinMediaChoices) { stopAll(); patchChoices(next); setErrors({ audioinput: null, videoinput: null }); },
     prepareJoin() { const selected = { ...choiceRef.current }; stopAll(); return selected; },
   };
 }

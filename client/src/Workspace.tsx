@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, AudioLines, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 
 export interface WorkspaceHealth {
@@ -19,9 +19,9 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule }: {
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings }: {
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
-  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void;
+  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void;
 }) {
   return <aside className="workspace-sidebar">
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
@@ -32,6 +32,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
       <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwal rapat</span></button>
       <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} disabled={!hasSummary} title={!hasSummary ? 'Tersedia setelah kamu menyelesaikan rapat' : 'Lihat notulen terakhir'} onClick={onSummary}><FileText size={19} /><span>Notulen rapat</span></button>
+      <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
     <div className="sidebar-bottom">
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>

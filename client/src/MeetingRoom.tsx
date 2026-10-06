@@ -15,7 +15,7 @@ interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
 
-export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState }: {
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, autoSpotlight = true, mirrorLocalVideo = true }: {
   participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
   sttProvider: 'browser' | 'server'; sttConfigured: boolean; setSttProvider: (provider: 'browser' | 'server') => void;
@@ -28,6 +28,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   screenShareError: string | null; screenShareSupported: boolean; onToggleScreenShare: () => Promise<void>;
   devicePending: boolean; deviceError: string | null; onOpenDevices: () => void;
   spotlightIdentity: string | null; microphonePending: boolean; connectionState: ConnectionState;
+  autoSpotlight?: boolean; mirrorLocalVideo?: boolean;
 }) {
   const [manualText, setManualText] = useState('');
   const tabId = useId();
@@ -44,7 +45,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   const connectionLabel = connected ? 'Terhubung' : reconnecting ? 'Menyambungkan kembali' : connectionState === ConnectionState.Disconnected ? 'Koneksi terputus' : 'Menghubungkan';
   const camerasByIdentity = new Map(cameraTracks.map(track => [track.participant.identity, track]));
   const spotlight = participants.find(participant => participant.identity === spotlightIdentity) || participants[0];
-  const showingSpeaker = screenTracks.length === 0 && Boolean(spotlight);
+  const showingSpeaker = autoSpotlight && screenTracks.length === 0 && Boolean(spotlight);
   const isVoiceActive = connected && !isMuted && micVolume > 5;
   const finishLabel = !busy ? null : finishing && !isSummarizing ? 'Menyimpan transkrip…' : finishMode === 'summary' ? 'Menyiapkan notulen…' : 'Menyimpan rapat…';
   const requestFinish = (generate: boolean) => {
@@ -74,7 +75,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
         else if (event.key === 'End') node.scrollLeft = node.scrollWidth;
         else node.scrollLeft += event.key === 'ArrowRight' ? 180 : -180;
       }} className={`participant-grid ${showingSpeaker ? 'spotlight-grid' : ''} ${participants.length < 3 ? 'small-room' : ''}`} style={{ '--speaker-columns': Math.max(1, Math.min(3, participants.length - 1)) } as CSSProperties}>
-        {participants.map(participant => <ParticipantVideoTile key={participant.identity} spotlight={showingSpeaker && participant.identity === spotlight.identity} trackRef={camerasByIdentity.get(participant.identity) || { participant, source: Track.Source.Camera }} />)}
+        {participants.map(participant => <ParticipantVideoTile key={participant.identity} mirrorLocalVideo={mirrorLocalVideo} spotlight={showingSpeaker && participant.identity === spotlight.identity} trackRef={camerasByIdentity.get(participant.identity) || { participant, source: Track.Source.Camera }} />)}
         {!participants.length && <div className="waiting-participants"><Loader2 className="ui-spinner" size={30} aria-hidden="true" /><p>Menghubungkan peserta ke ruang rapat...</p></div>}
       </div>
       <div className="call-bottom-note"><span><AudioLines size={15} />Rapat audio &amp; video · Kamera bisa dimatikan kapan saja</span><span className="mic-level" role="meter" aria-label="Level mikrofon rapat" aria-valuemin={0} aria-valuemax={100} aria-valuenow={micVolume}><Mic size={14} /><i><b style={{ width: micVolume + '%' }} /></i></span></div>
