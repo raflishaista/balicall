@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +22,24 @@ import {
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const requestIdValid = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+
+const asArray = value => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return value.trim() ? [value] : [];
+    }
+  }
+  return [];
+};
+
+const pdfText = value => {
+  if (value === null || value === undefined) return '';
+  return String(value);
+};
 
 export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   const app = express();
@@ -284,6 +303,335 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
       return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });
     }
     res.json({ success: true, ...details });
+  }));
+
+    // Meeting report export authorization.
+  // Export routes are outside the single-segment /api/meetings/:id middleware,
+  // so they verify the meeting token explicitly.
+  async function authorizeExport(req, res, meetingId) {
+    const meeting = store.get(meetingId);
+
+    if (!meeting) {
+      res.status(404).json({ error: 'Meeting session not found' });
+      return null;
+    }
+
+    const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+
+    if (!token) {
+      res.status(401).json({ error: 'A meeting token is required' });
+      return null;
+    }
+
+    let claims;
+
+    try {
+      claims = await verifier.verify(token);
+    } catch {
+      res.status(401).json({ error: 'Meeting token is invalid or expired' });
+      return null;
+    }
+
+    if (
+      claims.video?.room !== meeting.livekitRoom ||
+      !claims.video?.roomJoin ||
+      !meeting.participants.has(claims.sub)
+    ) {
+      res.status(403).json({ error: 'This token cannot access the meeting' });
+      return null;
+    }
+
+    return meeting;
+  }
+
+  // Structured meeting report export.
+  app.get('/api/meetings/:meetingId/export/json', asyncRoute(async (req, res) => {
+    const meeting = await authorizeExport(req, res, req.params.meetingId);
+    if (!meeting) return;
+
+    const details = await getMeetingDetails(req.params.meetingId);
+
+    if (!details) {
+      return res.status(404).json({
+        error: 'Meeting report is not available in database',
+        meetingId: req.params.meetingId,
+      });
+    }
+
+    const filename = `balicall-meeting-${req.params.meetingId}.json`;
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    res.json({
+      exportType: 'meeting-report',
+      exportedAt: new Date().toISOString(),
+      meeting: details.meeting,
+      summary: details.summary,
+      attendees: details.attendees,
+      transcripts: details.transcripts,
+    });
+  }));
+
+  // Formal meeting minutes PDF export.
+  app.get('/api/meetings/:meetingId/export/pdf', asyncRoute(async (req, res) => {
+    const meeting = await authorizeExport(req, res, req.params.meetingId);
+    if (!meeting) return;
+
+    const details = await getMeetingDetails(req.params.meetingId);
+
+    if (!details) {
+      return res.status(404).json({
+        error: 'Meeting report is not available in database',
+        meetingId: req.params.meetingId,
+      });
+    }
+
+    const summary = details.summary || {};
+    const attendees = Array.isArray(details.attendees) ? details.attendees : [];
+    const transcripts = Array.isArray(details.transcripts) ? details.transcripts : [];
+
+    const discussionPoints = asArray(summary.key_discussion_points);
+    const decisions = asArray(summary.decisions);
+    const actionItems = asArray(summary.action_items);
+    const attendanceSummary = asArray(summary.attendance_summary);
+
+    const filename = `balicall-meeting-${req.params.meetingId}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({
+      size: 'A4',
+      margins: {
+        top: 50,
+        bottom: 50,
+        left: 55,
+        right: 55,
+      },
+      info: {
+        Title: pdfText(summary.title || `Notulen ${details.meeting?.room_name || 'Meeting'}`),
+        Author: 'BaliCall',
+        Subject: 'Formal Meeting Minutes',
+      },
+    });
+
+    doc.pipe(res);
+
+    const pageWidth = 485;
+
+    const heading = (title, level = 1) => {
+      if (level === 1) {
+        doc
+          .moveDown(0.8)
+          .font('Helvetica-Bold')
+          .fontSize(14)
+          .text(title)
+          .moveDown(0.35);
+      } else {
+        doc
+          .moveDown(0.45)
+          .font('Helvetica-Bold')
+          .fontSize(11)
+          .text(title)
+          .moveDown(0.2);
+      }
+    };
+
+    const bulletList = items => {
+      if (!items.length) {
+        doc.font('Helvetica').fontSize(10).text('Tidak ada data yang tercatat.');
+        return;
+      }
+
+      items.forEach(item => {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .text(`• ${pdfText(item)}`, {
+            width: pageWidth,
+            lineGap: 3,
+          });
+      });
+    };
+
+    const numberedList = items => {
+      if (!items.length) {
+        doc.font('Helvetica').fontSize(10).text('Tidak ada data yang tercatat.');
+        return;
+      }
+
+      items.forEach((item, index) => {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .text(`${index + 1}. ${pdfText(item)}`, {
+            width: pageWidth,
+            lineGap: 3,
+          });
+      });
+    };
+
+    // Header
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(20)
+      .text('BaliCall', { align: 'center' });
+
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .text('Bali Tower Sentra — Internal Meeting & AI Minutes', { align: 'center' })
+      .moveDown(0.8);
+
+    doc
+      .moveTo(55, doc.y)
+      .lineTo(540, doc.y)
+      .stroke()
+      .moveDown(0.8);
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(16)
+      .text(pdfText(summary.title || 'Notulen Rapat'), {
+        align: 'center',
+      })
+      .moveDown(0.7);
+
+    // Meeting metadata
+    const meetingDate = details.meeting?.created_at
+      ? new Date(details.meeting.created_at).toLocaleString('id-ID')
+      : '-';
+
+    const endedDate = details.meeting?.ended_at
+      ? new Date(details.meeting.ended_at).toLocaleString('id-ID')
+      : '-';
+
+    doc
+      .font('Helvetica')
+      .fontSize(10)
+      .text(`Ruang Rapat: ${pdfText(details.meeting?.room_name || meeting.roomName || '-')}`)
+      .text(`Meeting ID: ${req.params.meetingId}`)
+      .text(`Dimulai: ${meetingDate}`)
+      .text(`Selesai: ${endedDate}`)
+      .text(`Layanan AI: ${pdfText(summary.provider || 'Tidak diketahui')}`)
+      .text(`Jumlah Ucapan: ${transcripts.length}`)
+      .moveDown(0.5);
+
+    heading('1. Ringkasan Rapat');
+    doc
+      .font('Helvetica')
+      .fontSize(10)
+      .text(pdfText(summary.executive_summary || 'Belum tersedia.'), {
+        width: pageWidth,
+        align: 'justify',
+        lineGap: 3,
+      });
+
+    heading('2. Pokok Pembahasan');
+    bulletList(discussionPoints);
+
+    heading('3. Keputusan Rapat');
+    numberedList(decisions);
+
+    heading('4. Tindak Lanjut');
+
+    if (!actionItems.length) {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .text('Tidak ada tindak lanjut yang tercatat.');
+    } else {
+      actionItems.forEach((item, index) => {
+        const task = typeof item === 'object' ? item.task : item;
+        const assignee = typeof item === 'object' ? item.assignee : '';
+        const priority = typeof item === 'object' ? item.priority : '';
+        const deadline = typeof item === 'object' ? item.deadline : '';
+
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(10)
+          .text(`${index + 1}. ${pdfText(task || 'Tugas tidak ditentukan')}`);
+
+        doc
+          .font('Helvetica')
+          .fontSize(9)
+          .text(`   Penanggung jawab: ${pdfText(assignee || 'Belum ditentukan')}`)
+          .text(`   Prioritas: ${pdfText(priority || 'Belum ditentukan')}`)
+          .text(`   Tenggat: ${pdfText(deadline || 'Belum ditentukan')}`)
+          .moveDown(0.25);
+      });
+    }
+
+    heading('5. Kehadiran');
+
+    if (attendanceSummary.length) {
+      bulletList(attendanceSummary);
+    } else if (attendees.length) {
+      attendees.forEach(attendee => {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .text(
+            `• ${pdfText(attendee.employee_name || attendee.employee_id || 'Peserta')} — ${pdfText(attendee.department || 'Departemen tidak tersedia')}`,
+            { lineGap: 3 },
+          );
+      });
+    } else {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .text('Data peserta tidak tersedia.');
+    }
+
+    heading('6. Pengesahan');
+
+    doc
+      .font('Helvetica')
+      .fontSize(10)
+      .text(
+        'Dokumen ini merupakan hasil pencatatan rapat dan peringkasan berbantuan AI. ' +
+        'Dokumen dapat digunakan sebagai draft notulen untuk ditinjau dan disahkan oleh pihak yang berwenang.'
+      )
+      .moveDown(1.2);
+
+    // Signature area
+    const signatureY = doc.y;
+
+    doc
+      .font('Helvetica')
+      .fontSize(10)
+      .text('Disusun oleh,', 75, signatureY)
+      .text('Disetujui oleh,', 355, signatureY);
+
+    doc
+      .moveTo(75, signatureY + 65)
+      .lineTo(225, signatureY + 65)
+      .stroke();
+
+    doc
+      .moveTo(355, signatureY + 65)
+      .lineTo(505, signatureY + 65)
+      .stroke();
+
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .text('BaliCall / AI Meeting Assistant', 75, signatureY + 72)
+      .text('Pihak yang berwenang', 355, signatureY + 72);
+
+    doc
+      .font('Helvetica')
+      .fontSize(8)
+      .fillColor('#666666')
+      .text(
+        `Diekspor pada ${new Date().toLocaleString('id-ID')}`,
+        55,
+        780,
+        { width: pageWidth, align: 'center' },
+      );
+
+    doc.end();
   }));
 
   // Inbound LiveKit Webhook Receiver

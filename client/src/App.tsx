@@ -502,11 +502,13 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isSummarizing={isSummarizing}
           />
         )}
-
-        {view === 'summary' && (
+        
+        {view === 'summary' && summary && meetingId && token && (
           <SummaryView
             summary={summary}
             roomName={summaryRoomName || roomName}
+            meetingId={meetingId}
+            token={token}
             transcripts={transcripts}
             copied={copied}
             onCopy={copyMarkdownSummary}
@@ -678,6 +680,8 @@ function RoomContent({
 function SummaryView({
   summary,
   roomName,
+  meetingId,
+  token,
   transcripts,
   copied,
   onCopy,
@@ -688,6 +692,8 @@ function SummaryView({
 }: {
   summary: MeetingSummary | null;
   roomName: string;
+  meetingId: string;
+  token: string;
   transcripts: TranscriptEntry[];
   copied: boolean;
   onCopy: () => void;
@@ -698,6 +704,58 @@ function SummaryView({
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const [query, setQuery] = useState('');
+  const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const downloadExport = async (format: 'pdf' | 'json') => {
+    setExporting(format);
+    setExportError(null);
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE || 'http://localhost:3001/api'}/meetings/${encodeURIComponent(meetingId)}/export/${format}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        let message = `Gagal mengunduh ${format.toUpperCase()}.`;
+
+        try {
+          const errorData = await response.json();
+          if (errorData?.error) message = errorData.error;
+        } catch {
+          // Keep the default message when the server response is not JSON.
+        }
+
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+
+      anchor.href = url;
+      anchor.download = `balicall-meeting-${meetingId}.${format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(
+        error instanceof Error
+          ? error.message
+          : `Gagal mengunduh ${format.toUpperCase()}.`,
+      );
+    } finally {
+      setExporting(null);
+    }
+  };
   const filteredTranscripts = transcripts.filter(entry =>
     `${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID'))
   );
@@ -852,13 +910,33 @@ function SummaryView({
             </p>
           </div>
           <div className="summary-actions">
-            <button className="button-secondary" onClick={onCopy}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Tersalin' : 'Salin notulen'}</button>
-            <button className="button-primary" onClick={onNewCall}>Rapat baru <ArrowRight size={15} /></button>
+            <button className="button-secondary" onClick={onCopy}>
+              {copied ? <Check size={15} /> : <Copy size={15} />}
+              {copied ? 'Tersalin' : 'Salin notulen'}
+            </button>
+
+            <button className="button-secondary" onClick={() => void downloadExport('json')} disabled={exporting !== null}>
+              {exporting === 'json' ? <Loader2 className="ui-spinner" size={15} /> : null}
+              {exporting === 'json' ? 'Menyiapkan JSON...' : 'Export JSON'}
+            </button>
+
+            <button className="button-secondary" onClick={() => void downloadExport('pdf')} disabled={exporting !== null}>
+              {exporting === 'pdf' ? <Loader2 className="ui-spinner" size={15} /> : null}
+              {exporting === 'pdf' ? 'Menyiapkan PDF...' : 'Export PDF'}
+            </button>
+
+            <button className="button-primary" onClick={onNewCall}> Rapat baru <ArrowRight size={15} /></button>
           </div>
         </header>
 
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
 
+        {exportError && (
+          <div className="summary-note" role="alert">
+            <AlertCircle size={16} />
+            {exportError}
+          </div>
+        )}
         <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist">
           {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={`summary-tab ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}
         </nav>
