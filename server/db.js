@@ -397,12 +397,33 @@ export async function getEmployeeById(employeeId) {
 }
 
 /**
+ * Official Bali Tower Employee ID format: 'BT-' followed by 4 to 6 digits (e.g. BT-10492)
+ */
+export const EMPLOYEE_ID_REGEX = /^BT-\d{4,6}$/i;
+
+export function isValidEmployeeIdFormat(id) {
+  if (!id || typeof id !== 'string') return false;
+  return EMPLOYEE_ID_REGEX.test(id.trim());
+}
+
+/**
  * Verify whether an employee ID exists and is active in the company database
  */
 export async function verifyEmployeeId(employeeId) {
   const cleanId = (employeeId || '').trim();
   if (!cleanId) {
     return { checked: true, valid: false, reason: 'Empty employee ID' };
+  }
+
+  // 0. Format Validation Check (Rejects non-ID text such as "ns-12nsunauu")
+  if (!isValidEmployeeIdFormat(cleanId)) {
+    return {
+      checked: true,
+      valid: false,
+      formatError: true,
+      reason: 'Format ID Salah.',
+      employee: null,
+    };
   }
 
   // Path 1: Database is connected - check authoritative PostgreSQL balicall_employees table
@@ -457,5 +478,7 @@ export default {
   getEmployeeById,
   verifyEmployeeId,
   getAllEmployees,
+  isValidEmployeeIdFormat,
+  EMPLOYEE_ID_REGEX,
   DEFAULT_EMPLOYEE_PRESETS,
 };

@@ -184,6 +184,14 @@ export default function App() {
       setJoinError('Please complete all required fields.');
       return;
     }
+
+    // Format validation check (e.g. reject non-ID text such as "ns-12nsunauu")
+    const cleanId = employeeId.trim();
+    if (!/^BT-\d{4,6}$/i.test(cleanId)) {
+      setJoinError('Format ID Salah.');
+      return;
+    }
+
     setJoinError(null);
     setIsJoining(true);
 
@@ -1365,16 +1373,23 @@ function LobbyView({
                 padding: '12px 14px',
                 borderRadius: '8px',
                 backgroundColor: '#0f172a',
-                border: '1px solid #334155',
+                border: (employeeId.trim() && !/^BT-\d{4,6}$/i.test(employeeId.trim())) ? '1px solid #ef4444' : '1px solid #334155',
                 color: '#f8fafc',
                 fontSize: '14px',
                 outline: 'none',
               }}
             />
-            <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <ShieldCheck size={12} />
-              <span>Checked against company database (balicall_employees)</span>
-            </div>
+            {employeeId.trim() && !/^BT-\d{4,6}$/i.test(employeeId.trim()) ? (
+              <div style={{ fontSize: '12px', color: '#f87171', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
+                <AlertCircle size={13} />
+                <span>Format ID Salah. Gunakan format 'BT-XXXXX' (contoh: BT-10492).</span>
+              </div>
+            ) : (
+              <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <ShieldCheck size={12} />
+                <span>Checked against company database (balicall_employees)</span>
+              </div>
+            )}
           </div>
 
           <div>

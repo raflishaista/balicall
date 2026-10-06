@@ -118,9 +118,19 @@ app.post('/api/token', async (req, res) => {
       return res.status(400).json({ error: 'roomName and employeeId are required' });
     }
 
-    // 🔒 1. Check if the Employee ID exists and is active in company database
+    // 🔒 1. Check if the Employee ID format is valid and registered in company database
     const empCheck = await verifyEmployeeId(employeeId);
     if (!empCheck.valid) {
+      if (empCheck.formatError) {
+        console.warn(`[AUTH] ⚠️ Format ID Salah: "${employeeId}"`);
+        return res.status(400).json({
+          error: 'Format ID Salah.',
+          code: 'INVALID_ID_FORMAT',
+          employeeId,
+          hint: 'Format resmi ID karyawan harus berupa "BT-XXXXX" (contoh: BT-10492).',
+        });
+      }
+
       const errorMsg = empCheck.inactive
         ? `Akses ditolak: Status karyawan dengan ID "${employeeId}" sedang non-aktif.`
         : `Akses ditolak: Employee ID "${employeeId}" tidak terdaftar di database resmi perusahaan. Harap periksa kembali ID Anda atau hubungi admin.`;

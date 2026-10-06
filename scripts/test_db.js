@@ -51,8 +51,11 @@ async function run() {
   const validTest = await verifyEmployeeId('BT-10492');
   console.log(`   Testing Valid ID ("BT-10492"): ${validTest.valid ? '✅ PASSED (' + validTest.employee.name + ' - ' + validTest.employee.department + ')' : '❌ FAILED'}`);
 
-  const invalidTest = await verifyEmployeeId('FAKE-99999');
-  console.log(`   Testing Invalid ID ("FAKE-99999"): ${!invalidTest.valid ? '✅ PROPERLY REJECTED (' + invalidTest.reason + ')' : '❌ FAILED (Should have been rejected)'}`);
+  const formatTest = await verifyEmployeeId('ns-12nsunauu');
+  console.log(`   Testing Malformed Non-ID ("ns-12nsunauu"): ${!formatTest.valid && formatTest.formatError ? '✅ PROPERLY REJECTED ("' + formatTest.reason + '")' : '❌ FAILED'}`);
+
+  const invalidTest = await verifyEmployeeId('BT-99999');
+  console.log(`   Testing Unregistered ID ("BT-99999"): ${!invalidTest.valid ? '✅ PROPERLY REJECTED (' + invalidTest.reason + ')' : '❌ FAILED (Should have been rejected)'}`);
 
   const testMeetingId = `test-meet-${Date.now()}`;
   const testRoom = 'site-sync-tower-jakarta';
