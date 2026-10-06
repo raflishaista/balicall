@@ -13,6 +13,7 @@ const { Pool } = pg;
 
 let pool = null;
 let isConnected = false;
+const standbySchedules = new Map();
 
 export function getPool() {
   const url = process.env.DATABASE_URL || '';
@@ -147,17 +148,36 @@ export async function initDb(customUrl) {
         ON CONFLICT (employee_id) DO NOTHING;
       `);
 
-      // 6. Create performance indexes
+      // 6. Create balicall_schedules table (meeting scheduling & calendar)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS balicall_schedules (
+          id VARCHAR(128) PRIMARY KEY,
+          room_name VARCHAR(128) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          description TEXT,
+          host_id VARCHAR(64) NOT NULL,
+          host_name VARCHAR(128) NOT NULL,
+          department VARCHAR(128),
+          scheduled_start TIMESTAMP WITH TIME ZONE NOT NULL,
+          scheduled_end TIMESTAMP WITH TIME ZONE NOT NULL,
+          status VARCHAR(32) DEFAULT 'scheduled',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
+      // 7. Create performance indexes
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_balicall_summaries_meeting ON balicall_summaries(meeting_id);
         CREATE INDEX IF NOT EXISTS idx_balicall_summaries_room ON balicall_summaries(room_name);
         CREATE INDEX IF NOT EXISTS idx_balicall_transcripts_meeting ON balicall_transcripts(meeting_id);
         CREATE INDEX IF NOT EXISTS idx_balicall_attendees_meeting ON balicall_attendees(meeting_id);
         CREATE INDEX IF NOT EXISTS idx_balicall_employees_dept ON balicall_employees(department);
+        CREATE INDEX IF NOT EXISTS idx_balicall_schedules_start ON balicall_schedules(scheduled_start);
+        CREATE INDEX IF NOT EXISTS idx_balicall_schedules_room ON balicall_schedules(room_name);
       `);
 
       isConnected = true;
-      console.log('[DB] ✅ Balicall database schema (employees, meetings, summaries, transcripts, attendees) verified successfully.');
+      console.log('[DB] ✅ Balicall database schema (employees, meetings, summaries, transcripts, attendees, schedules) verified successfully.');
       return true;
     } finally {
       client.release();
@@ -486,6 +506,145 @@ export async function getAllEmployees() {
   return DEFAULT_EMPLOYEE_PRESETS;
 }
 
+/**
+ * Create a new scheduled meeting in PostgreSQL or standby store
+ */
+export async function createSchedule(schedule) {
+  const {
+    id = `sched-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    roomName,
+    title,
+    description = '',
+    hostId = '',
+    hostName = 'Penyelenggara BaliCall',
+    department = 'General',
+    scheduledStart,
+    scheduledEnd,
+  } = schedule;
+
+  const activePool = getPool();
+  if (activePool && isConnected) {
+    const query = `
+      INSERT INTO balicall_schedules (
+        id, room_name, title, description, host_id, host_name, department,
+        scheduled_start, scheduled_end, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'scheduled', NOW())
+      RETURNING *;
+    `;
+    try {
+      const res = await activePool.query(query, [
+        id,
+        roomName,
+        title,
+        description,
+        hostId,
+        hostName,
+        department,
+        new Date(scheduledStart).toISOString(),
+        new Date(scheduledEnd).toISOString(),
+      ]);
+      const row = res.rows[0];
+      return {
+        id: row.id,
+        roomName: row.room_name,
+        title: row.title,
+        description: row.description,
+        hostId: row.host_id,
+        hostName: row.host_name,
+        department: row.department,
+        scheduledStart: row.scheduled_start,
+        scheduledEnd: row.scheduled_end,
+        status: row.status,
+        createdAt: row.created_at,
+      };
+    } catch (err) {
+      console.error('[DB] ❌ Failed to insert schedule into PostgreSQL:', err.message);
+    }
+  }
+
+  // Fallback / Standby in-memory store
+  const record = {
+    id,
+    roomName,
+    title,
+    description,
+    hostId,
+    hostName,
+    department,
+    scheduledStart: new Date(scheduledStart).toISOString(),
+    scheduledEnd: new Date(scheduledEnd).toISOString(),
+    status: 'scheduled',
+    createdAt: new Date().toISOString(),
+  };
+  standbySchedules.set(id, record);
+  return record;
+}
+
+/**
+ * Get all upcoming and active scheduled meetings
+ */
+export async function getUpcomingSchedules() {
+  const activePool = getPool();
+  if (activePool && isConnected) {
+    try {
+      const res = await activePool.query(`
+        SELECT id, room_name, title, description, host_id, host_name, department,
+               scheduled_start, scheduled_end, status, created_at
+        FROM balicall_schedules
+        WHERE status != 'cancelled'
+          AND scheduled_end >= (NOW() - INTERVAL '2 hours')
+        ORDER BY scheduled_start ASC;
+      `);
+      return res.rows.map(row => ({
+        id: row.id,
+        roomName: row.room_name,
+        title: row.title,
+        description: row.description,
+        hostId: row.host_id,
+        hostName: row.host_name,
+        department: row.department,
+        scheduledStart: row.scheduled_start,
+        scheduledEnd: row.scheduled_end,
+        status: row.status,
+        createdAt: row.created_at,
+      }));
+    } catch (err) {
+      console.error('[DB] ❌ Failed to fetch schedules from PostgreSQL:', err.message);
+    }
+  }
+
+  // Standby in-memory store fallback
+  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+  return [...standbySchedules.values()]
+    .filter(s => s.status !== 'cancelled' && Date.parse(s.scheduledEnd) >= twoHoursAgo)
+    .sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart));
+}
+
+/**
+ * Cancel a scheduled meeting
+ */
+export async function cancelSchedule(id) {
+  const activePool = getPool();
+  if (activePool && isConnected) {
+    try {
+      const res = await activePool.query(
+        `UPDATE balicall_schedules SET status = 'cancelled' WHERE id = $1 RETURNING *`,
+        [id]
+      );
+      if (res.rows.length > 0) return true;
+    } catch (err) {
+      console.error(`[DB] ❌ Failed to cancel schedule ${id} in PostgreSQL:`, err.message);
+    }
+  }
+
+  if (standbySchedules.has(id)) {
+    const item = standbySchedules.get(id);
+    item.status = 'cancelled';
+    return true;
+  }
+  return false;
+}
+
 export { pool };
 
 export default {
@@ -504,4 +663,7 @@ export default {
   isValidEmployeeIdFormat,
   EMPLOYEE_ID_REGEX,
   DEFAULT_EMPLOYEE_PRESETS,
+  createSchedule,
+  getUpcomingSchedules,
+  cancelSchedule,
 };

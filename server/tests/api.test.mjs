@@ -276,3 +276,71 @@ test('GET /api/employees returns registered directory', async t => {
   assert.ok(res.data.employees.length > 0);
 });
 
+test('schedule API validates time, creates future room, lists and cancels', async t => {
+  const f = await fixture(t);
+
+  // 1. Rejects scheduling in the past
+  const pastStart = new Date(Date.now() - 3600000).toISOString(); // 1 hour ago
+  const pastEnd = new Date(Date.now() - 1800000).toISOString();
+  const pastRes = await f.request('/schedules', {
+    roomName: 'rapat-masa-lalu',
+    title: 'Rapat Masa Lalu',
+    scheduledStart: pastStart,
+    scheduledEnd: pastEnd,
+  });
+  assert.equal(pastRes.status, 400);
+  assert.equal(pastRes.data.code, 'PAST_TIME_NOT_ALLOWED');
+  assert.ok(pastRes.data.error.includes('masa lalu'));
+
+  // 2. Rejects end time earlier than start time
+  const futureStart = new Date(Date.now() + 3600000).toISOString(); // 1 hour in future
+  const invalidEnd = new Date(Date.now() + 1800000).toISOString(); // 30 min in future (< start)
+  const rangeRes = await f.request('/schedules', {
+    roomName: 'rapat-waktu-salah',
+    title: 'Rapat Waktu Salah',
+    scheduledStart: futureStart,
+    scheduledEnd: invalidEnd,
+  });
+  assert.equal(rangeRes.status, 400);
+  assert.equal(rangeRes.data.code, 'INVALID_TIME_RANGE');
+
+  // 3. Successfully creates a valid future schedule
+  const validStart = new Date(Date.now() + 7200000).toISOString(); // 2 hours in future
+  const validEnd = new Date(Date.now() + 10800000).toISOString(); // 3 hours in future
+  const createRes = await f.request('/schedules', {
+    roomName: 'koordinasi-fiber-q4',
+    title: 'Koordinasi Fiber Optic Q4',
+    description: 'Penyelarasan tim splicing',
+    hostId: 'BT-10492',
+    hostName: 'Rafli Aditya',
+    department: 'NOC & Core Network',
+    scheduledStart: validStart,
+    scheduledEnd: validEnd,
+  });
+  assert.equal(createRes.status, 201);
+  assert.ok(createRes.data.schedule.id);
+  assert.equal(createRes.data.schedule.roomName, 'koordinasi-fiber-q4');
+  assert.equal(createRes.data.schedule.title, 'Koordinasi Fiber Optic Q4');
+
+  const schedId = createRes.data.schedule.id;
+
+  // 4. GET /api/schedules includes the newly created schedule
+  const listRes = await f.request('/schedules', undefined, undefined, 'GET');
+  assert.equal(listRes.status, 200);
+  assert.ok(Array.isArray(listRes.data.schedules));
+  const found = listRes.data.schedules.find(s => s.id === schedId);
+  assert.ok(found);
+  assert.equal(found.title, 'Koordinasi Fiber Optic Q4');
+
+  // 5. DELETE /api/schedules/:id cancels the schedule
+  const delRes = await f.request(`/schedules/${schedId}`, undefined, undefined, 'DELETE');
+  assert.equal(delRes.status, 200);
+  assert.equal(delRes.data.success, true);
+
+  // 6. After cancellation, GET /api/schedules does not include cancelled schedule
+  const afterList = await f.request('/schedules', undefined, undefined, 'GET');
+  const foundCancelled = afterList.data.schedules.find(s => s.id === schedId);
+  assert.equal(foundCancelled, undefined);
+});
+
+

@@ -5,6 +5,7 @@ import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
+import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
 import { MeetingRoom } from './MeetingRoom';
 import { cameraErrorMessage, useCameraControl } from './useCameraControl';
@@ -81,9 +82,10 @@ const PRESET_PERSONAS = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary'>('home');
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule'>('home');
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
+  const [schedules, setSchedules] = useState<ScheduledMeeting[]>([]);
   
   // Lobby state
   const [employeeId, setEmployeeId] = useState('');
@@ -206,6 +208,53 @@ export default function App() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [pendingSaves]);
+
+  const fetchSchedules = useCallback(async () => {
+    try {
+      const data = await apiRequest<{ success: boolean; schedules: ScheduledMeeting[] }>('/schedules', { method: 'GET' }, 10000);
+      if (data && Array.isArray(data.schedules)) {
+        setSchedules(data.schedules);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch schedules:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSchedules();
+  }, [fetchSchedules]);
+
+  const handleCreateSchedule = async (scheduleData: {
+    title: string;
+    roomName: string;
+    description: string;
+    hostId: string;
+    hostName: string;
+    department: string;
+    scheduledStart: string;
+    scheduledEnd: string;
+  }) => {
+    const data = await apiRequest<{ success: boolean; schedule: ScheduledMeeting }>('/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scheduleData),
+    });
+    if (data.schedule) {
+      setSchedules(prev => [data.schedule, ...prev].sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart)));
+    }
+  };
+
+  const handleCancelSchedule = async (id: string) => {
+    await apiRequest<{ success: boolean }>(`/schedules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    setSchedules(prev => prev.filter(s => s.id !== id));
+  };
+
+  const handleJoinScheduledRoom = (scheduledRoomName: string) => {
+    setRoomName(scheduledRoomName);
+    openLobby('join');
+  };
 
   const handleJoin = async () => {
     if (joinPending.current) return;
@@ -423,10 +472,29 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''}`}>
-      {view !== 'in-call' && <WorkspaceSidebar view={view} intent={meetingIntent} employeeName={employeeName} hasSummary={Boolean(summary) || isSummarizing} onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }} onCreate={() => openLobby('create')} onJoin={() => openLobby('join')} onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('summary'); }} />}
+      {view !== 'in-call' && (
+        <WorkspaceSidebar
+          view={view}
+          intent={meetingIntent}
+          employeeName={employeeName}
+          hasSummary={Boolean(summary) || isSummarizing}
+          onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }}
+          onCreate={() => openLobby('create')}
+          onJoin={() => openLobby('join')}
+          onSchedule={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('schedule'); }}
+          onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('summary'); }}
+        />
+      )}
       <div className="workspace-body">
       <header className={`app-header ${view === 'in-call' ? 'app-header-call' : ''}`}>
-        {view === 'in-call' ? <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div> : <div className="page-identity"><span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : 'Notulen'}</span><strong>Internal Meeting & AI Minutes</strong></div>}
+        {view === 'in-call' ? (
+          <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
+        ) : (
+          <div className="page-identity">
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwal rapat' : 'Notulen'}</span>
+            <strong>Internal Meeting & AI Minutes</strong>
+          </div>
+        )}
 
         <div className="header-meta">
           {view === 'in-call' ? <div className="call-clock"><Clock size={15} />{callDuration}</div> : (
@@ -459,7 +527,21 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           employeeName={employeeName}
           onCreate={() => openLobby('create')}
           onJoin={(code?: string) => { if (code) setRoomName(code); openLobby('join'); }}
+          onSchedule={() => setView('schedule')}
+          upcomingSchedules={schedules}
         />}
+        {view === 'schedule' && (
+          <ScheduleView
+            schedules={schedules}
+            employeeId={employeeId}
+            employeeName={employeeName}
+            department={department}
+            onBack={() => setView('home')}
+            onCreateSchedule={handleCreateSchedule}
+            onCancelSchedule={handleCancelSchedule}
+            onJoinRoom={handleJoinScheduledRoom}
+          />
+        )}
         {view === 'lobby' && (
           <LobbyView
             intent={meetingIntent}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, AudioLines, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 
 export interface WorkspaceHealth {
@@ -19,9 +19,9 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary }: {
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule }: {
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
-  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void;
+  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void;
 }) {
   return <aside className="workspace-sidebar">
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
@@ -30,6 +30,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>
       <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
+      <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwal rapat</span></button>
       <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} disabled={!hasSummary} title={!hasSummary ? 'Tersedia setelah kamu menyelesaikan rapat' : 'Lihat notulen terakhir'} onClick={onSummary}><FileText size={19} /><span>Notulen rapat</span></button>
     </nav>
     <div className="sidebar-bottom">
@@ -66,9 +67,9 @@ function MeetingGuide({ onClose, onStart }: { onClose: () => void; onStart: () =
   </div>;
 }
 
-export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCreate, onJoin }: {
+export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCreate, onJoin, onSchedule, upcomingSchedules }: {
   backendHealth: WorkspaceHealth | null; lastMeeting: RecentMeeting | null; employeeName: string;
-  onCreate: () => void; onJoin: (code?: string) => void;
+  onCreate: () => void; onJoin: (code?: string) => void; onSchedule?: () => void; upcomingSchedules?: any[];
 }) {
   const [query, setQuery] = useState('');
   const [code, setCode] = useState('');
@@ -90,12 +91,32 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
     <div className="quick-actions">
       <button className="quick-action primary" onClick={onCreate}><span className="quick-action-icon"><Plus size={23} /></span><span><strong>Buat rapat</strong><small>Mulai ruang baru untuk tim</small></span><ChevronRight size={17} /></button>
       <button className="quick-action" onClick={() => onJoin()}><span className="quick-action-icon"><LogIn size={22} /></span><span><strong>Gabung rapat</strong><small>Masuk dengan kode ruang</small></span><ChevronRight size={17} /></button>
+      <button className="quick-action" onClick={onSchedule}><span className="quick-action-icon"><Calendar size={22} /></span><span><strong>Jadwal rapat</strong><small>Atur kalender & ruang masa depan</small></span><ChevronRight size={17} /></button>
       <button className="quick-action" onClick={() => setGuideOpen(true)}><span className="quick-action-icon"><FileText size={21} /></span><span><strong>Panduan rapat</strong><small>Persiapkan suara dan transkrip</small></span><ChevronRight size={17} /></button>
     </div>
 
     <div className="dashboard-columns">
       <section className="surface-card recent-card"><header className="card-heading"><div><span className="section-kicker">AKTIVITAS TIM</span><h2>Rapat terakhir</h2></div><span className="subtle-tag">Sesi ini</span></header>
         {recentMatches ? <article className="recent-meeting"><span className="recent-meeting-icon"><FileText size={23} /></span><div><strong>{lastMeeting.title}</strong><span>#{lastMeeting.roomName}</span><small>{new Date(lastMeeting.endedAt).toLocaleString('id-ID')} · {lastMeeting.transcriptCount} ucapan</small></div><Check size={18} /></article> : <div className="empty-meetings"><span className="empty-meetings-icon"><Users size={29} /></span><h3>{query ? 'Rapat tidak ditemukan' : 'Percakapan berikutnya dimulai di sini'}</h3><p>{query ? 'Coba nama ruang atau judul yang berbeda.' : 'Belum ada rapat selesai di sesi ini. Mulai rapat untuk membuat transkrip dan notulen.'}</p>{!query && <button className="text-action" onClick={onCreate}>Mulai rapat pertama <ArrowRight size={15} /></button>}</div>}
+        
+        {upcomingSchedules && upcomingSchedules.length > 0 && (
+          <div className="dashboard-upcoming-widget">
+            <div className="upcoming-widget-header">
+              <span className="upcoming-widget-title"><Calendar size={14} /> Agenda Rapat Terdekat</span>
+              {onSchedule && <button type="button" className="text-action" onClick={onSchedule}>Buka Kalender <ArrowRight size={12} /></button>}
+            </div>
+            <div className="upcoming-widget-item">
+              <div className="upcoming-widget-info">
+                <strong>{upcomingSchedules[0].title}</strong>
+                <span>#{upcomingSchedules[0].roomName} · {new Date(upcomingSchedules[0].scheduledStart).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}, {new Date(upcomingSchedules[0].scheduledStart).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</span>
+              </div>
+              <button type="button" className="button-primary compact-btn" onClick={() => onJoin(upcomingSchedules[0].roomName)}>
+                Masuk <ArrowRight size={13} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <form className="quick-join" onSubmit={event => { event.preventDefault(); if (code.trim()) onJoin(code.trim()); }}><label htmlFor="quick-meeting-code">Sudah punya kode ruang?</label><div><input id="quick-meeting-code" value={code} onChange={event => setCode(event.target.value)} placeholder="Masukkan kode / nama ruang" required /><button className="button-primary" type="submit">Gabung <ArrowRight size={15} /></button></div></form>
       </section>
 

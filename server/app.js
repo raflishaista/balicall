@@ -17,6 +17,9 @@ import {
   getMeetingDetails,
   verifyEmployeeId,
   getAllEmployees,
+  createSchedule,
+  getUpcomingSchedules,
+  cancelSchedule,
 } from './db.js';
 
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
@@ -167,6 +170,110 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
       metadata: JSON.stringify({ meetingId: meeting.id, department: department.trim(), employeeId: cleanId }) });
     at.addGrant({ room: meeting.livekitRoom, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
     res.json({ token: await at.toJwt(), url: config.livekitUrl, roomName: meeting.roomName, meetingId: meeting.id, sttProvider: config.sttProvider });
+  }));
+
+  // 4. Meeting scheduling & calendar endpoints
+  app.get('/api/schedules', asyncRoute(async (_req, res) => {
+    const schedules = await getUpcomingSchedules();
+    res.json({
+      success: true,
+      count: schedules.length,
+      schedules,
+    });
+  }));
+
+  app.post('/api/schedules', asyncRoute(async (req, res) => {
+    const {
+      roomName,
+      title,
+      description = '',
+      hostId = '',
+      hostName = '',
+      department = 'General',
+      scheduledStart,
+      scheduledEnd,
+    } = req.body || {};
+
+    if (!nonEmpty(title) || !nonEmpty(roomName)) {
+      return res.status(400).json({ error: 'Judul rapat dan nama ruang wajib diisi (maksimal 160 karakter).' });
+    }
+
+    if (!scheduledStart || !scheduledEnd) {
+      return res.status(400).json({ error: 'Waktu mulai dan waktu selesai rapat wajib ditentukan.' });
+    }
+
+    const startTime = Date.parse(scheduledStart);
+    const endTime = Date.parse(scheduledEnd);
+
+    if (isNaN(startTime) || isNaN(endTime)) {
+      return res.status(400).json({ error: 'Format tanggal atau waktu rapat tidak valid.' });
+    }
+
+    // Validation: Start time cannot be in the past (allow 60s tolerance for network latency)
+    if (startTime < Date.now() - 60000) {
+      return res.status(400).json({
+        error: 'Waktu mulai rapat tidak boleh di masa lalu. Harap pilih tanggal dan jam yang akan datang.',
+        code: 'PAST_TIME_NOT_ALLOWED',
+      });
+    }
+
+    // Validation: End time must be after start time
+    if (endTime <= startTime) {
+      return res.status(400).json({
+        error: 'Waktu selesai rapat harus setelah waktu mulai.',
+        code: 'INVALID_TIME_RANGE',
+      });
+    }
+
+    // Host Employee verification if provided and enabled
+    let finalHostName = hostName || 'Penyelenggara BaliCall';
+    let finalDepartment = department || 'General';
+    if (hostId && config.verifyEmployeeId) {
+      const cleanHostId = hostId.trim();
+      const empCheck = await verifyEmployeeId(cleanHostId);
+      if (!empCheck.valid) {
+        if (empCheck.formatError) {
+          return res.status(400).json({
+            error: 'Format ID Salah.',
+            code: 'INVALID_ID_FORMAT',
+            hostId: cleanHostId,
+          });
+        }
+        return res.status(403).json({
+          error: `Host ID "${cleanHostId}" tidak terdaftar di database karyawan.`,
+          code: 'EMPLOYEE_NOT_FOUND',
+        });
+      }
+      if (empCheck.employee) {
+        finalHostName = empCheck.employee.name;
+        finalDepartment = empCheck.employee.department;
+      }
+    }
+
+    const schedule = await createSchedule({
+      roomName: roomName.trim(),
+      title: title.trim(),
+      description: (description || '').trim(),
+      hostId: (hostId || '').trim(),
+      hostName: finalHostName,
+      department: finalDepartment,
+      scheduledStart,
+      scheduledEnd,
+    });
+
+    res.status(201).json({
+      success: true,
+      schedule,
+    });
+  }));
+
+  app.delete('/api/schedules/:id', asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const ok = await cancelSchedule(id);
+    if (!ok) {
+      return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
+    }
+    res.json({ success: true, message: 'Jadwal rapat berhasil dibatalkan.' });
   }));
 
   // Meeting authorization middleware
