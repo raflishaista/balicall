@@ -67,6 +67,7 @@ interface MeetingSummary {
   provider?: string;
   note?: string;
   generatedAt?: string;
+  dbSummaryId?: number;
 }
 
 const PRESET_PERSONAS = [
@@ -103,6 +104,10 @@ export default function App() {
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(null);
+  const [summaryToken, setSummaryToken] = useState<string | null>(null);
+  const [summaryRoomName, setSummaryRoomName] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -216,27 +221,115 @@ export default function App() {
         body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department }),
       });
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
-      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setView('in-call');
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now());
+      setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
+      setView('in-call');
     } catch (error) { setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
     finally { setIsJoining(false); }
   };
 
+  const triggerSummarize = async (
+    targetMeetingId: string,
+    targetToken: string,
+    targetRoomName: string,
+    fallbackTranscripts: TranscriptEntry[],
+    leavePromise?: Promise<{ status: string } | void>
+  ) => {
+    setIsSummarizing(true);
+    setSummaryError(null);
+    try {
+      const left = leavePromise ? await leavePromise : null;
+      const data = await apiRequest<{ summary: MeetingSummary; meetingStatus?: string }>(
+        meetingPath(targetMeetingId, 'summarize'),
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
+          body: '{}',
+        },
+        125000
+      );
+      setLastMeeting({
+        title: data.summary.title,
+        roomName: targetRoomName,
+        endedAt: data.summary.generatedAt || new Date().toISOString(),
+        transcriptCount: data.summary.transcriptCount || fallbackTranscripts.length,
+      });
+      const isOtherActive = left && typeof left === 'object' && 'status' in left && left.status === 'active';
+      setSummary(
+        isOtherActive
+          ? {
+              ...data.summary,
+              note: [
+                data.summary.note,
+                'Peserta lain masih berada di meeting. Ringkasan ini memakai transkrip saat permintaan ringkasan dikirim.',
+              ]
+                .filter(Boolean)
+                .join(' '),
+            }
+          : data.summary
+      );
+    } catch (error) {
+      setSummaryError(
+        error instanceof Error ? error.message : 'Gagal membuat notulen AI. Silakan coba lagi.'
+      );
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   const handleEndMeeting = async (generate = true) => {
     if (!meetingId || !token) return;
-    setIsSummarizing(true); setCallError(null);
+    const currentMeetingId = meetingId;
+    const currentToken = token;
+    const currentRoomName = roomName;
+    const capturedTranscripts = [...transcripts];
+
+    // Flush any pending utterances in the save queue
     try {
       await saveQueue.flush();
-      const options = { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' };
-      const data = generate ? await apiRequest<{ summary: MeetingSummary }>(meetingPath(meetingId, 'summarize'), options, 125000) : null;
-      const left = await apiRequest<{ status: string }>(meetingPath(meetingId, 'leave'), options);
-      if (data) {
-        setLastMeeting({ title: data.summary.title, roomName, endedAt: data.summary.generatedAt || new Date().toISOString(), transcriptCount: data.summary.transcriptCount || transcripts.length });
-        setSummary(left.status === 'active' ? { ...data.summary, note: [data.summary.note, 'Peserta lain masih berada di meeting. Ringkasan ini memakai transkrip saat permintaan ringkasan dikirim.'].filter(Boolean).join(' ') } : data.summary);
-        setView('summary');
-      } else { setToken(null); setMeetingId(null); setTranscripts([]); setView('home'); }
-    } catch (error) {
-      setCallError(error instanceof Error ? error.message : 'Gagal menyelesaikan meeting. Coba kembali.');
-    } finally { setIsSummarizing(false); }
+    } catch (flushErr) {
+      console.warn('Transcript flush note:', flushErr);
+    }
+
+    // 1. Terminate call media session immediately (turns off microphone, camera, and screen share)
+    setToken(null);
+    setMeetingStartTime(null);
+    setCallDuration('00:00');
+
+    // 2. Notify backend of leave in background
+    const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(err => {
+      console.warn('Leave request note:', err);
+      return { status: 'ended' };
+    });
+
+    if (!generate) {
+      setMeetingId(null);
+      setTranscripts([]);
+      setView('home');
+      return;
+    }
+
+    // 3. Immediately transition to summary view with loading card
+    setView('summary');
+    setIsSummarizing(true);
+    setSummary(null);
+    setSummaryError(null);
+    setSummaryMeetingId(currentMeetingId);
+    setSummaryToken(currentToken);
+    setSummaryRoomName(currentRoomName);
+
+    // 4. Request summary in the background
+    await triggerSummarize(currentMeetingId, currentToken, currentRoomName, capturedTranscripts, leavePromise);
+  };
+
+  const handleRetrySummarize = () => {
+    if (summaryMeetingId && summaryToken) {
+      void triggerSummarize(summaryMeetingId, summaryToken, summaryRoomName || roomName, transcripts);
+    }
   };
 
   const handleAddSpeechLine = (text: string) => {
@@ -308,7 +401,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''}`}>
-      {view !== 'in-call' && <WorkspaceSidebar view={view} intent={meetingIntent} employeeName={employeeName} hasSummary={Boolean(summary)} onHome={() => setView('home')} onCreate={() => openLobby('create')} onJoin={() => openLobby('join')} onSummary={() => setView('summary')} />}
+      {view !== 'in-call' && <WorkspaceSidebar view={view} intent={meetingIntent} employeeName={employeeName} hasSummary={Boolean(summary) || isSummarizing} onHome={() => setView('home')} onCreate={() => openLobby('create')} onJoin={() => openLobby('join')} onSummary={() => setView('summary')} />}
       <div className="workspace-body">
       <header className={`app-header ${view === 'in-call' ? 'app-header-call' : ''}`}>
         {view === 'in-call' ? <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div> : <div className="page-identity"><span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : 'Notulen'}</span><strong>Internal Meeting & AI Minutes</strong></div>}
@@ -387,19 +480,26 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           />
         )}
 
-        {view === 'summary' && summary && (
+        {view === 'summary' && (
           <SummaryView
             summary={summary}
-            roomName={roomName}
+            roomName={summaryRoomName || roomName}
             transcripts={transcripts}
             copied={copied}
             onCopy={copyMarkdownSummary}
+            isSummarizing={isSummarizing}
+            summaryError={summaryError}
+            onRetry={handleRetrySummarize}
             onNewCall={() => {
               setToken(null);
               setMeetingId(null);
               setCallError(null);
               setTranscripts([]);
               setSummary(null);
+              setSummaryError(null);
+              setSummaryMeetingId(null);
+              setSummaryToken(null);
+              setSummaryRoomName('');
               setView('home');
             }}
           />
@@ -643,23 +743,159 @@ function SummaryView({
   copied,
   onCopy,
   onNewCall,
+  isSummarizing = false,
+  summaryError = null,
+  onRetry,
 }: {
-  summary: MeetingSummary;
+  summary: MeetingSummary | null;
   roomName: string;
   transcripts: TranscriptEntry[];
   copied: boolean;
   onCopy: () => void;
   onNewCall: () => void;
+  isSummarizing?: boolean;
+  summaryError?: string | null;
+  onRetry?: () => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const [query, setQuery] = useState('');
   const filteredTranscripts = transcripts.filter(entry =>
     `${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID'))
   );
+
+  if (isSummarizing && !summary) {
+    return (
+      <div className="summary-page">
+        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <section className="summary-card">
+          <header className="summary-heading" style={{ borderBottom: '1px solid #e3ebf6', paddingBottom: '20px' }}>
+            <div>
+              <div className="ai-processing-pill">
+                <Loader2 size={14} className="ui-spinner" />
+                <span>MEMPROSES NOTULEN AI</span>
+              </div>
+              <h1 style={{ marginTop: '12px' }}>Menyusun Notulen & Ringkasan Rapat...</h1>
+              <p className="summary-meta">Panggilan telah diakhiri · Ruang <strong>#{roomName}</strong> · <strong>{transcripts.length} ucapan</strong> direkam</p>
+            </div>
+            <div className="summary-actions">
+              <button className="button-secondary" onClick={onNewCall}>Kembali ke beranda</button>
+            </div>
+          </header>
+
+          <div className="summary-processing-notice">
+            <Clock size={24} style={{ color: '#2563eb', flexShrink: 0 }} />
+            <div>
+              <strong>Kamera dan mikrofon Anda telah dinonaktifkan.</strong>
+              <p>
+                Panggilan telah selesai. AI sedang menganalisis seluruh percakapan yang terekam untuk menyusun
+                ringkasan eksekutif, pokok pembahasan, keputusan, dan daftar tindak lanjut (action items).
+              </p>
+            </div>
+          </div>
+
+          <section className="summary-section" style={{ marginTop: '20px' }}>
+            <div className="transcript-heading">
+              <div>
+                <h2>Transkrip Percakapan ({transcripts.length} ucapan)</h2>
+                <p>Pratinjau percakapan yang sedang diproses oleh AI</p>
+              </div>
+            </div>
+            {transcripts.length > 0 ? (
+              <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                {transcripts.map(entry => (
+                  <article className="recap-transcript-entry" key={entry.id}>
+                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                    <div>
+                      <strong>{entry.speakerName}</strong>
+                      <p>{entry.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-transcript">Belum ada transkrip ucapan yang terekam.</p>
+            )}
+          </section>
+        </section>
+      </div>
+    );
+  }
+
+  if (summaryError && !summary) {
+    return (
+      <div className="summary-page">
+        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <section className="summary-card">
+          <header className="summary-heading" style={{ borderBottom: '1px solid #fed7d7', paddingBottom: '20px' }}>
+            <div>
+              <div className="ai-error-pill">
+                <AlertCircle size={14} />
+                <span>GAGAL MEMBUAT NOTULEN</span>
+              </div>
+              <h1 style={{ marginTop: '12px', color: '#b91c1c' }}>Notulen Rapat Belum Dapat Dibuat</h1>
+              <p className="summary-meta">Ruang <strong>#{roomName}</strong> · Panggilan telah diakhiri · {transcripts.length} ucapan tersimpan</p>
+            </div>
+            <div className="summary-actions">
+              {onRetry && (
+                <button className="button-primary" onClick={onRetry}>
+                  🔄 Coba Buat Notulen Lagi
+                </button>
+              )}
+              <button className="button-secondary" onClick={onNewCall}>Kembali ke beranda</button>
+            </div>
+          </header>
+
+          <div className="summary-error-notice">
+            <AlertCircle size={22} style={{ color: '#dc2626', flexShrink: 0 }} />
+            <div>
+              <strong>Terjadi kendala saat menghubungi asisten AI:</strong>
+              <p>{summaryError}</p>
+            </div>
+          </div>
+
+          <section className="summary-section" style={{ marginTop: '20px' }}>
+            <div className="transcript-heading">
+              <div>
+                <h2>Transkrip Percakapan ({transcripts.length} ucapan)</h2>
+                <p>Transkrip Anda tetap aman dan dapat dibaca di bawah:</p>
+              </div>
+            </div>
+            {transcripts.length > 0 ? (
+              <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                {transcripts.map(entry => (
+                  <article className="recap-transcript-entry" key={entry.id}>
+                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                    <div>
+                      <strong>{entry.speakerName}</strong>
+                      <p>{entry.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-transcript">Tidak ada transkrip ucapan pada rapat ini.</p>
+            )}
+          </section>
+        </section>
+      </div>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <div className="summary-page">
+        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <section className="summary-card">
+          <p>Belum ada notulen yang tersedia.</p>
+        </section>
+      </div>
+    );
+  }
+
   const tabs = [
     { id: 'summary', label: 'Ringkasan' },
-    { id: 'decisions', label: `Keputusan (${summary.decisions.length})` },
-    { id: 'actions', label: `Tindak lanjut (${summary.actionItems.length})` },
+    { id: 'decisions', label: `Keputusan (${summary.decisions?.length || 0})` },
+    { id: 'actions', label: `Tindak lanjut (${summary.actionItems?.length || 0})` },
     { id: 'transcript', label: `Transkrip (${transcripts.length})` },
   ] as const;
 
@@ -671,7 +907,10 @@ function SummaryView({
           <div>
             <p className="eyebrow">NOTULEN RAPAT · {summary.provider || 'AI ASSISTANT'}</p>
             <h1>{summary.title}</h1>
-            <p className="summary-meta">Ruang <strong>#{roomName}</strong> · {summary.generatedAt ? new Date(summary.generatedAt).toLocaleString('id-ID') : 'Waktu tidak tersedia'} · {transcripts.length} ucapan</p>
+            <p className="summary-meta">
+              Ruang <strong>#{roomName}</strong> · {summary.generatedAt ? new Date(summary.generatedAt).toLocaleString('id-ID') : 'Waktu tidak tersedia'} · {transcripts.length} ucapan
+              {summary.dbSummaryId && <span className="db-badge">💾 Tersimpan di Database (ID: #{summary.dbSummaryId})</span>}
+            </p>
           </div>
           <div className="summary-actions">
             <button className="button-secondary" onClick={onCopy}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Tersalin' : 'Salin notulen'}</button>
@@ -688,16 +927,16 @@ function SummaryView({
         {tab === 'summary' && <div className="summary-panel">
           <section className="summary-section"><h2>Ringkasan rapat</h2><p>{summary.executiveSummary || 'Belum ada ringkasan yang tersedia.'}</p></section>
           <div className="summary-preview-grid">
-            <section className="summary-section"><h2>Keputusan</h2>{summary.decisions.length ? <ol className="summary-list">{summary.decisions.slice(0, 3).map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section>
-            <section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems.length ? <ol className="summary-list">{summary.actionItems.slice(0, 3).map((item, index) => <li key={index}><strong>{item.assignee}</strong> · {item.task}</li>)}</ol> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section>
+            <section className="summary-section"><h2>Keputusan</h2>{summary.decisions?.length ? <ol className="summary-list">{summary.decisions.slice(0, 3).map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section>
+            <section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <ol className="summary-list">{summary.actionItems.slice(0, 3).map((item, index) => <li key={index}><strong>{item.assignee}</strong> · {item.task}</li>)}</ol> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section>
           </div>
-          <section className="summary-section"><h2>Pokok pembahasan</h2>{summary.keyDiscussionPoints.length ? <ul className="summary-list">{summary.keyDiscussionPoints.map((point, index) => <li key={index}>{point}</li>)}</ul> : <p>Belum ada pokok pembahasan.</p>}</section>
-          <section className="summary-section"><h2>Peserta</h2><div className="attendee-list">{summary.attendanceSummary.length ? summary.attendanceSummary.map((attendee, index) => <span key={index}>{attendee}</span>) : <span>Data peserta tidak tersedia</span>}</div></section>
+          <section className="summary-section"><h2>Pokok pembahasan</h2>{summary.keyDiscussionPoints?.length ? <ul className="summary-list">{summary.keyDiscussionPoints.map((point, index) => <li key={index}>{point}</li>)}</ul> : <p>Belum ada pokok pembahasan.</p>}</section>
+          <section className="summary-section"><h2>Peserta</h2><div className="attendee-list">{summary.attendanceSummary?.length ? summary.attendanceSummary.map((attendee, index) => <span key={index}>{attendee}</span>) : <span>Data peserta tidak tersedia</span>}</div></section>
         </div>}
 
-        {tab === 'decisions' && <div className="summary-panel"><section className="summary-section"><h2>Keputusan rapat</h2>{summary.decisions.length ? <ol className="summary-list ordered">{summary.decisions.map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section></div>}
+        {tab === 'decisions' && <div className="summary-panel"><section className="summary-section"><h2>Keputusan rapat</h2>{summary.decisions?.length ? <ol className="summary-list ordered">{summary.decisions.map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section></div>}
 
-        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th>Tugas</th><th>Penanggung jawab</th><th>Prioritas</th><th>Tenggat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
+        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th>Tugas</th><th>Penanggung jawab</th><th>Prioritas</th><th>Tenggat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
 
         {tab === 'transcript' && <div className="summary-panel"><section className="summary-section">
           <div className="transcript-heading"><div><h2>Transkrip lengkap</h2><p>{filteredTranscripts.length} dari {transcripts.length} ucapan</p></div><label className="transcript-search"><Search size={15} /><input aria-label="Cari transkrip" value={query} onChange={event => setQuery(event.target.value)} placeholder="Cari nama atau isi ucapan" /></label></div>

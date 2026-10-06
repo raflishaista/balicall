@@ -1,31 +1,37 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
+// Load .env relative to server directory and current directory
+const __dbDir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: join(__dbDir, '.env') });
+dotenv.config({ path: join(__dbDir, '../.env') });
 dotenv.config();
 
 const { Pool } = pg;
 
-// Parse DATABASE_URL or individual PG connection parameters
-const connectionString = process.env.DATABASE_URL || '';
-
 let pool = null;
 let isConnected = false;
 
-if (connectionString) {
-  pool = new Pool({
-    connectionString,
-    // Sensible defaults for intranet PostgreSQL
-    connectionTimeoutMillis: 5000,
-    idleTimeoutMillis: 30000,
-    max: 10,
-  });
-
-  pool.on('error', (err) => {
-    console.error('[DB] ❌ Unexpected PostgreSQL client error:', err.message);
-  });
-} else {
-  console.log('[DB] ℹ️ DATABASE_URL not set in server/.env. Database persistence is currently in standby mode.');
+export function getPool() {
+  const url = process.env.DATABASE_URL || '';
+  if (!pool && url) {
+    pool = new Pool({
+      connectionString: url,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 30000,
+      max: 10,
+    });
+    pool.on('error', (err) => {
+      console.error('[DB] ❌ Unexpected PostgreSQL client error:', err.message);
+    });
+  }
+  return pool;
 }
+
+// Attempt initial pool creation if DATABASE_URL is present
+getPool();
 
 /**
  * Check if the database connection pool is active and ready
@@ -38,14 +44,18 @@ export function isDbConnected() {
  * Initialize database tables and schema with prefix `balicall_`
  * Does NOT require CREATE DATABASE permission, only table DDL in jds3_db.public.
  */
-export async function initDb() {
-  if (!pool) {
+export async function initDb(customUrl) {
+  if (customUrl && !process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = customUrl;
+  }
+  const activePool = getPool();
+  if (!activePool) {
     console.log('[DB] ℹ️ Skipping database initialization (no DATABASE_URL configured).');
     return false;
   }
 
   try {
-    const client = await pool.connect();
+    const client = await activePool.connect();
     try {
       const res = await client.query('SELECT current_user, current_database(), NOW() as server_time');
       const info = res.rows[0];
@@ -166,22 +176,25 @@ export async function initDb() {
  * Upsert meeting record
  */
 export async function saveMeeting(meeting) {
-  if (!pool || !isConnected) return null;
+  const activePool = getPool();
+  if (!activePool || !isConnected) return null;
+  const status = meeting.status || 'active';
+  const endedAt = meeting.endedAt || (status === 'ended' ? new Date().toISOString() : null);
   const query = `
     INSERT INTO balicall_meetings (id, room_name, status, created_at, ended_at)
     VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (id) DO UPDATE SET
       status = EXCLUDED.status,
-      ended_at = EXCLUDED.ended_at
+      ended_at = COALESCE(EXCLUDED.ended_at, balicall_meetings.ended_at)
     RETURNING *;
   `;
   try {
-    const res = await pool.query(query, [
+    const res = await activePool.query(query, [
       meeting.id,
       meeting.roomName,
-      meeting.status || 'active',
+      status,
       meeting.createdAt || new Date().toISOString(),
-      meeting.endedAt || null,
+      endedAt,
     ]);
     return res.rows[0];
   } catch (err) {
@@ -194,7 +207,8 @@ export async function saveMeeting(meeting) {
  * Insert structured AI meeting summary
  */
 export async function saveMeetingSummary(meetingId, roomName, summary) {
-  if (!pool || !isConnected) return null;
+  const activePool = getPool();
+  if (!activePool || !isConnected) return null;
   const query = `
     INSERT INTO balicall_summaries (
       meeting_id,
@@ -212,7 +226,7 @@ export async function saveMeetingSummary(meetingId, roomName, summary) {
   `;
 
   try {
-    const res = await pool.query(query, [
+    const res = await activePool.query(query, [
       meetingId,
       roomName,
       summary.title || `Meeting: ${roomName}`,
@@ -235,9 +249,10 @@ export async function saveMeetingSummary(meetingId, roomName, summary) {
  * Batch save dialogue transcripts with deduplication
  */
 export async function saveTranscripts(meetingId, roomName, transcripts) {
-  if (!pool || !isConnected || !transcripts || transcripts.length === 0) return [];
+  const activePool = getPool();
+  if (!activePool || !isConnected || !transcripts || transcripts.length === 0) return [];
   
-  const client = await pool.connect();
+  const client = await activePool.connect();
   try {
     await client.query('BEGIN');
     const insertQuery = `
@@ -274,7 +289,8 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
  * Upsert meeting attendees into attendance roster
  */
 export async function saveAttendees(meetingId, attendees) {
-  if (!pool || !isConnected || !attendees || attendees.length === 0) return [];
+  const activePool = getPool();
+  if (!activePool || !isConnected || !attendees || attendees.length === 0) return [];
 
   const query = `
     INSERT INTO balicall_attendees (meeting_id, employee_id, employee_name, department, joined_at, left_at)
@@ -286,7 +302,7 @@ export async function saveAttendees(meetingId, attendees) {
 
   try {
     for (const att of attendees) {
-      await pool.query(query, [
+      await activePool.query(query, [
         meetingId,
         att.employeeId || att.id,
         att.employeeName || att.name || 'Anonymous',
@@ -306,7 +322,8 @@ export async function saveAttendees(meetingId, attendees) {
  * Retrieve recent saved meeting summaries from PostgreSQL
  */
 export async function getMeetingSummaries(limit = 20) {
-  if (!pool || !isConnected) return [];
+  const activePool = getPool();
+  if (!activePool || !isConnected) return [];
 
   const query = `
     SELECT 
@@ -331,7 +348,7 @@ export async function getMeetingSummaries(limit = 20) {
   `;
 
   try {
-    const res = await pool.query(query, [limit]);
+    const res = await activePool.query(query, [limit]);
     return res.rows;
   } catch (err) {
     console.error('[DB] ❌ Failed to fetch meeting summaries:', err.message);
@@ -343,15 +360,16 @@ export async function getMeetingSummaries(limit = 20) {
  * Retrieve comprehensive meeting record with summary, transcripts, and attendees
  */
 export async function getMeetingDetails(meetingId) {
-  if (!pool || !isConnected) return null;
+  const activePool = getPool();
+  if (!activePool || !isConnected) return null;
 
   try {
-    const meetingRes = await pool.query('SELECT * FROM balicall_meetings WHERE id = $1', [meetingId]);
+    const meetingRes = await activePool.query('SELECT * FROM balicall_meetings WHERE id = $1', [meetingId]);
     if (meetingRes.rows.length === 0) return null;
 
-    const summaryRes = await pool.query('SELECT * FROM balicall_summaries WHERE meeting_id = $1 ORDER BY created_at DESC LIMIT 1', [meetingId]);
-    const transcriptsRes = await pool.query('SELECT * FROM balicall_transcripts WHERE meeting_id = $1 ORDER BY timestamp ASC', [meetingId]);
-    const attendeesRes = await pool.query('SELECT * FROM balicall_attendees WHERE meeting_id = $1 ORDER BY joined_at ASC', [meetingId]);
+    const summaryRes = await activePool.query('SELECT * FROM balicall_summaries WHERE meeting_id = $1 ORDER BY created_at DESC LIMIT 1', [meetingId]);
+    const transcriptsRes = await activePool.query('SELECT * FROM balicall_transcripts WHERE meeting_id = $1 ORDER BY timestamp ASC', [meetingId]);
+    const attendeesRes = await activePool.query('SELECT * FROM balicall_attendees WHERE meeting_id = $1 ORDER BY joined_at ASC', [meetingId]);
 
     return {
       meeting: meetingRes.rows[0],
@@ -383,9 +401,10 @@ export const DEFAULT_EMPLOYEE_PRESETS = [
  * Fetch employee details by ID from PostgreSQL
  */
 export async function getEmployeeById(employeeId) {
-  if (!pool || !isConnected || !employeeId) return null;
+  const activePool = getPool();
+  if (!activePool || !isConnected || !employeeId) return null;
   try {
-    const res = await pool.query(
+    const res = await activePool.query(
       'SELECT employee_id, name, email, department, position, status FROM balicall_employees WHERE employee_id = $1',
       [employeeId.trim()]
     );
@@ -427,7 +446,8 @@ export async function verifyEmployeeId(employeeId) {
   }
 
   // Path 1: Database is connected - check authoritative PostgreSQL balicall_employees table
-  if (pool && isConnected) {
+  const activePool = getPool();
+  if (activePool && isConnected) {
     const emp = await getEmployeeById(cleanId);
     if (!emp) {
       return { checked: true, valid: false, reason: 'Employee ID not found in database', employee: null };
@@ -451,9 +471,10 @@ export async function verifyEmployeeId(employeeId) {
  * Get list of all active registered employees
  */
 export async function getAllEmployees() {
-  if (pool && isConnected) {
+  const activePool = getPool();
+  if (activePool && isConnected) {
     try {
-      const res = await pool.query(
+      const res = await activePool.query(
         'SELECT employee_id, name, email, department, position, status FROM balicall_employees WHERE status = $1 ORDER BY employee_id ASC',
         ['active']
       );
@@ -464,6 +485,8 @@ export async function getAllEmployees() {
   }
   return DEFAULT_EMPLOYEE_PRESETS;
 }
+
+export { pool };
 
 export default {
   pool,

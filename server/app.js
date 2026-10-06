@@ -194,9 +194,19 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
     res.json({ participant: store.presence(req.meetingId, req.speakerId, req.body.connected) });
   });
 
-  app.post('/api/meetings/:id/leave', (req, res) => {
-    res.json({ success: true, status: store.leave(req.meetingId, req.speakerId).status });
-  });
+  app.post('/api/meetings/:id/leave', asyncRoute(async (req, res) => {
+    const updated = store.leave(req.meetingId, req.speakerId);
+    try {
+      await saveMeeting(updated);
+      await saveAttendees(updated.id, [...updated.participants.values()]);
+      if (updated.transcripts?.length) {
+        await saveTranscripts(updated.id, updated.roomName, updated.transcripts);
+      }
+    } catch (dbErr) {
+      console.warn('[DB] Could not update leave status in database:', dbErr.message);
+    }
+    res.json({ success: true, status: updated.status });
+  }));
 
   app.post('/api/meetings/:id/audio', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '5mb' }), asyncRoute(async (req, res) => {
     const requestId = req.get('X-Request-Id');

@@ -114,6 +114,25 @@ test('leaving one participant keeps others active; after all leave the next sess
   assert.equal((await a.get('transcript')).data.transcripts.length, 1);
 });
 
+test('participant can leave first to end call and then request summary', async t => {
+  const valid = { title: 'Notulen Rapat Selesai', executiveSummary: 'Ringkasan setelah selesai', keyDiscussionPoints: ['Poin 1'], decisions: [], actionItems: [], attendanceSummary: ['Tester'] };
+  const f = await fixture(t, { llmProvider: 'office', llmKey: 'test-key' }, {
+    fetchImpl: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })),
+  });
+  const a = await f.joinRoom();
+  await a.post('transcript', { text: 'Percakapan sebelum meeting selesai.' });
+  const leaveRes = await a.post('leave');
+  assert.equal(leaveRes.status, 200);
+  assert.equal(leaveRes.data.status, 'ended');
+
+  // Participant can still summarize after leaving
+  const sumRes = await a.post('summarize');
+  assert.equal(sumRes.status, 200);
+  assert.equal(sumRes.data.success, true);
+  assert.equal(sumRes.data.summary.title, 'Notulen Rapat Selesai');
+  assert.equal(sumRes.data.meetingStatus, 'ended');
+});
+
 test('empty meeting cannot be summarized; request bodies cannot inject fake transcript history', async t => {
   const f = await fixture(t); const a = await f.joinRoom();
   assert.equal((await a.post('summarize', { transcripts: [{ text: 'fake' }] })).status, 400);
