@@ -15,6 +15,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright')
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'docs/screenshots');
 await mkdir(output, { recursive: true });
+const verificationOutput = join(root, 'docs/verification');
+await mkdir(verificationOutput, { recursive: true });
 const data = await mkdtemp(join(tmpdir(), 'balicall-layout-'));
 const config = { ...loadConfig({ LLM_PROVIDER: 'demo', DATABASE_URL: '', VERIFY_EMPLOYEE_ID: 'false' }), dataFile: join(data, 'meetings.json') };
 const { app } = createApp(config);
@@ -227,7 +229,7 @@ try {
   if (pages[0] && !pages[0].isClosed()) await pages[0].screenshot({ path: join(output, 'meeting-layout-failure.png'), fullPage: true }).catch(() => {});
   throw error;
 } finally {
-  await writeFile(join(root, 'docs/MEETING_LAYOUT_VERIFICATION.json'), JSON.stringify(report, null, 2) + '\n');
+  await writeFile(join(verificationOutput, 'MEETING_LAYOUT_VERIFICATION.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ status: report.status, checks: report.checks, matrixCases: report.matrix.length, pageErrors: report.pageErrors, failure: report.failure }, null, 2));
   await browser?.close(); await new Promise(resolve => server.close(resolve)); sfu?.kill();
 }

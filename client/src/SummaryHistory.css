@@ -1,0 +1,9 @@
+.summary-history { padding: 16px 20px; margin-bottom: 16px; background: #fff; border: 1px solid #dce7f4; border-radius: 12px; }
+.summary-history h2 { margin: 0 0 6px; font-size: 17px; color: #082847; }
+.summary-history p { margin: 0 0 12px; color: #61758c; font-size: 12px; }
+.summary-history-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.summary-history-list button { border: 1px solid #dce7f4; border-radius: 8px; background: #f5f9ff; padding: 10px 12px; text-align: left; color: #082847; cursor: pointer; max-width: 100%; }
+.summary-history-list button[aria-pressed="true"] { border-color: #087cff; background: #eaf3ff; }
+.summary-history-list strong, .summary-history-list small { display: block; overflow-wrap: anywhere; }
+.summary-history-list small { margin-top: 4px; color: #61758c; }
+.summary-history-notice { color: #8b5012; padding: 8px 0; }
