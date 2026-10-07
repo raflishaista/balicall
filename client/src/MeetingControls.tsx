@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText } from 'lucide-react';
+import { AudioLines, Circle, Square, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish }: {
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
   speechEnabled: boolean; speechError: string | null; isListening: boolean; saveBlocked: boolean; finishLabel: string | null;
   onToggleMute: () => Promise<void>; onToggleCamera: () => Promise<void>; onToggleScreenShare: () => Promise<void>;
   transcriptOpen: boolean; onTranscript: () => void;
+  recording: boolean; recordingPending: boolean; onToggleRecording: () => Promise<void>;
   onToggleTranscription: () => void; onOpenDevices: () => void; onParticipants: () => void; onFinish: (generate: boolean) => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
@@ -34,6 +35,9 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       <div className="meeting-more" ref={more} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setMoreOpen(false); moreButton.current?.focus(); } }}>
         <button ref={moreButton} type="button" className="call-control" aria-label="Lainnya" aria-expanded={moreOpen} aria-controls="meeting-more-options" onClick={() => setMoreOpen(!moreOpen)}><MoreHorizontal size={22} /><span>Lainnya</span></button>
         <div className="meeting-more-menu" id="meeting-more-options" role="group" aria-label="Pilihan lainnya" hidden={!moreOpen}>
+          <button type="button" aria-label={recording ? 'Hentikan rekaman' : 'Mulai rekaman'} aria-pressed={recording} aria-busy={recordingPending} disabled={busy || recordingPending || !connected} onClick={() => void onToggleRecording()}>
+            {recordingPending ? <Loader2 className="ui-spinner" size={18} aria-hidden="true" /> : recording ? <Square size={18} /> : <Circle size={18} />}<span>{recordingPending ? 'Memproses rekaman…' : recording ? 'Hentikan rekaman' : 'Mulai rekaman'}</span>
+          </button>
           <button type="button" aria-label={speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkripsi' : 'Mulai transkripsi'} aria-pressed={speechEnabled && !speechError} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={18} /><span>{speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span>{isListening && <i className="status-dot online" />}</button>
           <button type="button" aria-label="Pengaturan perangkat" aria-haspopup="dialog" disabled={busy || !connected} onClick={() => { setMoreOpen(false); moreButton.current?.focus(); onOpenDevices(); }}><Settings2 size={18} /><span>Perangkat audio &amp; video</span></button>
         </div>

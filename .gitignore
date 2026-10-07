@@ -11,6 +11,12 @@ client/.env
 # Local meeting records and atomic-write temporary files
 server/data/
 
+# LiveKit Egress recordings
+infrastructure/livekit/recordings/
+
+# Temporary Egress test credentials
+test/egress/egress-test-token
+
 # Dependencies
 node_modules/
 */node_modules/

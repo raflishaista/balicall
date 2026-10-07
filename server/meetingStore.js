@@ -16,7 +16,19 @@ export class MeetingStore {
     if (data.version !== 1 || !Array.isArray(data.meetings)) throw new Error('Unsupported or corrupted meeting data; restore the data file before starting');
     this.meetings = new Map(data.meetings.map(meeting => {
       if (!meeting.id || !Array.isArray(meeting.transcripts) || !Array.isArray(meeting.participants)) throw new Error('Corrupted meeting record');
-      return [meeting.id, { ...meeting, participants: new Map(meeting.participants.map(participant => [participant.employeeId, participant])) }];
+      return [meeting.id, {
+        ...meeting,
+        recording: meeting.recording || {
+          egressId: null,
+          status: 'idle',
+          startedAt: null,
+          stoppedAt: null,
+          filepath: null,
+        },
+        participants: new Map(
+          meeting.participants.map(participant => [participant.employeeId, participant])
+        ),
+      }];
     }));
   }
   transact(change) {
@@ -43,7 +55,25 @@ export class MeetingStore {
       }
       if (!meeting) {
         const id = randomUUID();
-        meeting = { id, roomName, livekitRoom: `meeting-${id}`, status: 'active', createdAt: new Date().toISOString(), endedAt: null, participants: new Map(), transcripts: [], emptyAudioRequests: [], summary: null };
+        meeting = {
+          id,
+          roomName,
+          livekitRoom: `meeting-${id}`,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          endedAt: null,
+          participants: new Map(),
+          transcripts: [],
+          emptyAudioRequests: [],
+          summary: null,
+          recording: {
+            egressId: null,
+            status: 'idle',
+            startedAt: null,
+            stoppedAt: null,
+            filepath: null,
+          },
+        };
         this.meetings.set(id, meeting);
       }
       const previous = meeting.participants.get(participant.employeeId);

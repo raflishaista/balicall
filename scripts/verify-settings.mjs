@@ -186,6 +186,28 @@ try {
   assert.equal(await page.evaluate(() => window.__captureRequests.length), 0);
   assert.equal(await page.getByRole('button', { name: 'Grid', exact: true }).getAttribute('aria-pressed'), 'true');
   await page.getByRole('button', { name: 'Lainnya', exact: true }).click();
+  let releaseRecording;
+  const recordingHeld = new Promise(resolve => { releaseRecording = resolve; });
+  await page.route('**/recording/start', async route => {
+    assert.equal(route.request().headers().authorization, `Bearer ${first.token}`);
+    assert.equal(new URL(route.request().url()).pathname, `/api/meetings/${first.meetingId}/recording/start`);
+    await recordingHeld;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Recording fixture: Egress belum tersedia' }) });
+  });
+  const recordingRequest = page.waitForRequest(request => request.url().endsWith('/recording/start'));
+  await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).click(); await recordingRequest;
+  assert.equal(await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).isDisabled(), true);
+  await page.getByText('Tidak merekam', { exact: true }).waitFor();
+  releaseRecording(); await page.getByText('Recording fixture: Egress belum tersedia', { exact: true }).waitFor();
+  await page.unroute('**/recording/start');
+  await page.route('**/recording/start', async route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, recording: { status: 'active' } }) }));
+  const recordingResponse = page.waitForResponse(response => response.url().endsWith('/recording/start'));
+  await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).click(); await recordingResponse;
+  await page.waitForFunction(() => document.querySelector('[aria-label="Mulai rekaman"]').getAttribute('aria-busy') === 'false');
+  await page.getByText('Tidak merekam', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Recording fixture: Egress belum tersedia', { exact: true }).count(), 0);
+  await page.unroute('**/recording/start');
+  report.checks.push('Main recording control remains in More: authenticated start request, pending disable, error/retry; simulated API active response cannot override actual LiveKit recording state. Actual Egress recording not exercised');
   await page.getByRole('button', { name: 'Pengaturan perangkat', exact: true }).click();
   await page.getByLabel('Speaker / headphone', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Speaker / headphone', { exact: true }).inputValue(), 'speaker-b');

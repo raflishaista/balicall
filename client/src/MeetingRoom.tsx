@@ -18,7 +18,7 @@ interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
 
-export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true }: {
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording }: {
   participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
   sttProvider: 'browser' | 'server'; sttConfigured: boolean; setSttProvider: (provider: 'browser' | 'server') => void;
@@ -32,6 +32,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   devicePending: boolean; deviceError: string | null; onOpenDevices: () => void;
   spotlightIdentity: string | null; microphonePending: boolean; connectionState: ConnectionState;
   mirrorLocalVideo?: boolean;
+  recordingPending: boolean; recordingError: string | null; onToggleRecording: (enabled: boolean) => Promise<void>;
 }) {
   const room = useRoomContext();
   const subscribeRecording = useCallback((notify: () => void) => {
@@ -88,6 +89,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
       <StartAudio label="Aktifkan suara peserta" className="audio-playback-button" />
       {finishError && <div className="call-error" role="alert">{finishError}</div>}
       {deviceError && <div className="call-error" role="alert">{deviceError}</div>}
+      {recordingError && <div className="call-error" role="alert">{recordingError}</div>}
       {microphoneError && <div className="call-error" role="alert">{microphoneError}</div>}
       {cameraError && <div className="call-error camera-error" role="alert"><VideoOff size={17} /><span>{cameraError}</span><button type="button" disabled={busy || cameraPending || devicePending || !connected} onClick={() => void onToggleCamera()}>Coba kamera lagi</button></div>}
       {screenShareError && <div className="call-error" role="alert">{screenShareError}</div>}
@@ -122,6 +124,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
     <MeetingControls busy={busy} connected={connected} devicePending={devicePending} isMuted={isMuted} microphonePending={microphonePending}
       isCameraEnabled={isCameraEnabled} cameraPending={cameraPending} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenSharePending} screenShareSupported={screenShareSupported}
       speechEnabled={speechEnabled} speechError={speechError} isListening={isListening} saveBlocked={saveBlocked} finishLabel={finishLabel}
+      recording={recording} recordingPending={recordingPending} onToggleRecording={() => onToggleRecording(!recording)}
       onToggleMute={onToggleMute} onToggleCamera={onToggleCamera} onToggleScreenShare={onToggleScreenShare} onToggleTranscription={onToggleTranscription}
       onOpenDevices={onOpenDevices} onParticipants={() => { setPanelOpen(true); setActiveTab('attendance'); }} transcriptOpen={panelOpen && activeTab === 'transcript'} onTranscript={() => { setPanelOpen(!panelOpen || activeTab !== 'transcript'); setActiveTab('transcript'); }} onFinish={requestFinish} />
   </div>;

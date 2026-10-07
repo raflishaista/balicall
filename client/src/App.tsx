@@ -113,6 +113,8 @@ export default function App() {
   const [pendingSaves, setPendingSaves] = useState(0);
   const [callError, setCallError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [recordingPending, setRecordingPending] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null }>({
     onSaved: ({ entry }) => { if (entry) setTranscripts(previous => mergeTranscripts(previous, [entry])); },
     onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
@@ -321,7 +323,7 @@ export default function App() {
       setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
-      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now());
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
@@ -404,6 +406,7 @@ export default function App() {
     setToken(null);
     setMeetingStartTime(null);
     setCallDuration('00:00');
+    setRecordingPending(false); setRecordingError(null);
 
     // 2. Notify backend of leave in background
     const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
@@ -474,6 +477,23 @@ export default function App() {
     try { await apiRequest(meetingPath(meetingId, 'presence'), {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
     }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
+  };
+  const handleToggleRecording = async (enabled: boolean) => {
+    if (!meetingId || !token || recordingPending) return;
+    const generation = joinGeneration.current;
+    setRecordingPending(true); setRecordingError(null);
+    try {
+      const action = enabled ? 'start' : 'stop';
+      await apiRequest<{ success: boolean; recording: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: '{}',
+      }, 15000);
+    } catch (error) {
+      if (generation === joinGeneration.current) setRecordingError(error instanceof Error ? error.message : `Gagal ${enabled ? 'memulai' : 'menghentikan'} rekaman.`);
+    } finally {
+      if (generation === joinGeneration.current) setRecordingPending(false);
+    }
   };
 
   const copyMarkdownSummary = () => {
@@ -619,6 +639,9 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView
             joinMedia={joinMedia}
+            recordingPending={recordingPending}
+            recordingError={recordingError}
+            onToggleRecording={handleToggleRecording}
             callPreferences={callPreferences}
             token={token}
             sttProvider={sttProvider}
@@ -685,6 +708,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
 function InCallView({
   joinMedia, callPreferences,
+  recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
@@ -725,6 +749,9 @@ function InCallView({
       <RoomAudioRenderer />
       <RoomContent
         startWithCamera={joinMedia.cameraEnabled}
+        recordingPending={recordingPending}
+        recordingError={recordingError}
+        onToggleRecording={onToggleRecording}
         callPreferences={callPreferences}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
@@ -744,7 +771,7 @@ function InCallView({
 }
 
 function RoomContent({
-  startWithCamera, callPreferences,
+  startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -823,6 +850,7 @@ function RoomContent({
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
     setSttProvider={setSttProvider} speechLanguage={speechLanguage} setSpeechLanguage={setSpeechLanguage}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
+    recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
   />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }

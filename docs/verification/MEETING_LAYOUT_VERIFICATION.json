@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "date": "2026-10-07T04:23:05.564Z",
+  "date": "2026-10-07T05:51:41.195Z",
   "media": "Synthetic canvas video, oscillator audio and display capture; actual LiveKit SFU, browser recognition stub; demo LLM, no company DB",
   "checks": [
     "1, 2, 3, 4, 6, 8 and 10 participants: four viewport sizes, equal 16:9 tiles, centered rows, no horizontal overflow, reachable controls",

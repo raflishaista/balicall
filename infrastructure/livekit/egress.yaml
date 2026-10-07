@@ -1,0 +1,11 @@
+log_level: debug
+
+api_key: devkey
+api_secret: c35dce5eb68185c1ba3b140ab408da916a75c0d297f42c96cbbe5aa362f7b082
+
+ws_url: ws://livekit:7880
+
+insecure: true
+
+redis:
+  address: redis:6379

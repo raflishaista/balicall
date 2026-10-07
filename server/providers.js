@@ -62,7 +62,12 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
   if (provider === 'office') {
     const data = await fetchJson(`${config.llmBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llmKey}` },
-      body: JSON.stringify({ model: config.llmModel, messages: [{ role: 'user', content: prompt }], temperature: 0.2 }),
+      body: JSON.stringify({
+        model: config.llmModel,
+        messages: [{ role: 'user', content: prompt }],
+        chat_template_kwargs: { enable_thinking: false },
+        temperature: 0.2,
+      }),
     }, config.llmTimeoutMs, fetchImpl);
     content = data.choices?.[0]?.message?.content;
   } else {
