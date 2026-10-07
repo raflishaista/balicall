@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Calendar,
   Clock,
@@ -15,14 +15,10 @@ import {
 } from 'lucide-react';
 
 import {
-  pad2,
-  formatDateToInput,
-  formatTimeToInput,
   slugify,
   DURATION_PRESETS,
-  calculateEndTime,
-  validateScheduleTime,
 } from './scheduleValidation';
+import { useScheduleForm } from './useScheduleForm';
 
 export interface ScheduledMeeting {
   id: string;
@@ -68,26 +64,7 @@ export function ScheduleView({
   onCancelSchedule,
   onJoinRoom,
 }: ScheduleViewProps) {
-  // Current time reference
-  const now = new Date();
-  // Round to next 15-minute slot for pleasant UX
-  const defaultStart = new Date(now.getTime() + (15 - (now.getMinutes() % 15 || 15)) * 60000);
-  if (defaultStart.getTime() <= now.getTime()) {
-    defaultStart.setMinutes(defaultStart.getMinutes() + 15);
-  }
-  const defaultEnd = new Date(defaultStart.getTime() + 60 * 60000);
-
-  const [date, setDate] = useState(formatDateToInput(defaultStart));
-  const [startTime, setStartTime] = useState(formatTimeToInput(defaultStart));
-  const [endTime, setEndTime] = useState(formatTimeToInput(defaultEnd));
-  const [durationMinutes, setDurationMinutes] = useState(60);
-
-  const [title, setTitle] = useState('');
-  const [roomSlug, setRoomSlug] = useState('');
-  const [description, setDescription] = useState('');
-  const [activeHostId, setActiveHostId] = useState(employeeId || 'BT-10492');
-  const [activeHostName, setActiveHostName] = useState(employeeName || 'Rafli Aditya');
-  const [activeDept, setActiveDept] = useState(department || 'NOC & Core Network');
+  const form = useScheduleForm({ employeeId, employeeName, department });
 
   const [filterTab, setFilterTab] = useState<'all' | 'today' | 'upcoming'>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,88 +72,41 @@ export function ScheduleView({
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Sync with user's persona if it was updated from outside
-  useEffect(() => {
-    if (employeeId && !title) {
-      setActiveHostId(employeeId);
-      setActiveHostName(employeeName);
-      setActiveDept(department);
-    }
-  }, [employeeId, employeeName, department, title]);
-
-  // Minimum allowed date string: YYYY-MM-DD
-  const todayDateStr = formatDateToInput(new Date());
-
-  // Check if chosen date is today
-  const isSelectedDateToday = date === todayDateStr;
-
-  // Minimum allowed time for today: HH:MM
-  const currentHourMinuteStr = formatTimeToInput(new Date());
-
-  // Date and Time Validation Check
-  const validation = useMemo(() => {
-    return validateScheduleTime(date, startTime, endTime);
-  }, [date, startTime, endTime]);
-
-  // When start time or duration preset changes, automatically recalculate end time
-  const handleDurationPreset = (minutes: number) => {
-    setDurationMinutes(minutes);
-    if (!startTime) return;
-    setEndTime(calculateEndTime(startTime, minutes));
-  };
-
-  const handleStartTimeChange = (newStartTime: string) => {
-    setStartTime(newStartTime);
-    if (!newStartTime) return;
-    setEndTime(calculateEndTime(newStartTime, durationMinutes));
-  };
-
-  // Auto-slugify title for roomName recommendation
-  const handleTitleChange = (newTitle: string) => {
-    setTitle(newTitle);
-    if (!roomSlug || roomSlug === slugify(title)) {
-      const slug = slugify(newTitle);
-      setRoomSlug(slug ? `${slug}-${pad2(new Date().getDate())}` : '');
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     setFormSuccess(null);
 
-    if (!title.trim()) {
+    if (!form.title.trim()) {
       setFormError('Judul rapat wajib diisi.');
       return;
     }
 
-    if (!roomSlug.trim()) {
+    if (!form.roomSlug.trim()) {
       setFormError('Nama ruang rapat wajib diisi.');
       return;
     }
 
-    if (!validation.valid || !validation.startDateTime || !validation.endDateTime) {
-      setFormError(validation.error || 'Periksa kembali tanggal dan waktu rapat.');
+    if (!form.validation.valid || !form.validation.startDateTime || !form.validation.endDateTime) {
+      setFormError(form.validation.error || 'Periksa kembali tanggal dan waktu rapat.');
       return;
     }
 
     setIsSubmitting(true);
     try {
       await onCreateSchedule({
-        title: title.trim(),
-        roomName: slugify(roomSlug.trim()),
-        description: description.trim(),
-        hostId: activeHostId.trim(),
-        hostName: activeHostName.trim(),
-        department: activeDept.trim(),
-        scheduledStart: validation.startDateTime.toISOString(),
-        scheduledEnd: validation.endDateTime.toISOString(),
+        title: form.title.trim(),
+        roomName: slugify(form.roomSlug.trim()),
+        description: form.description.trim(),
+        hostId: form.activeHostId.trim(),
+        hostName: form.activeHostName.trim(),
+        department: form.activeDept.trim(),
+        scheduledStart: form.validation.startDateTime.toISOString(),
+        scheduledEnd: form.validation.endDateTime.toISOString(),
       });
 
-      setFormSuccess(`Jadwal rapat "${title.trim()}" berhasil dibuat! Ruang: #${slugify(roomSlug.trim())}`);
-      setTitle('');
-      setRoomSlug('');
-      setDescription('');
+      setFormSuccess(`Jadwal rapat "${form.title.trim()}" berhasil dibuat! Ruang: #${slugify(form.roomSlug.trim())}`);
+      form.resetForm();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Gagal membuat jadwal rapat. Silakan coba lagi.');
     } finally {
@@ -185,7 +115,13 @@ export function ScheduleView({
   };
 
   const copyToClipboard = (sched: ScheduledMeeting) => {
-    const text = `Rapat BaliCall: ${sched.title}\nRuang: #${sched.roomName}\nWaktu: ${new Date(sched.scheduledStart).toLocaleString('id-ID')}\nPenyelenggara: ${sched.hostName} (${sched.department})`;
+    const start = new Date(sched.scheduledStart);
+    const end = new Date(sched.scheduledEnd);
+    const isCrossDay = end.toDateString() !== start.toDateString();
+    const timeFormatted = isCrossDay
+      ? `${start.toLocaleString('id-ID')} - ${end.toLocaleString('id-ID')}`
+      : `${start.toLocaleString('id-ID')} - ${end.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
+    const text = `Rapat BaliCall: ${sched.title}\nRuang: #${sched.roomName}\nWaktu: ${timeFormatted}\nPenyelenggara: ${sched.hostName} (${sched.department})`;
     navigator.clipboard.writeText(text).then(() => {
       setCopiedId(sched.id);
       setTimeout(() => setCopiedId(null), 2000);
@@ -251,8 +187,8 @@ export function ScheduleView({
               Judul / Topik Pertemuan
               <input
                 type="text"
-                value={title}
-                onChange={e => handleTitleChange(e.target.value)}
+                value={form.title}
+                onChange={e => form.handleTitleChange(e.target.value)}
                 placeholder="Contoh: Evaluasi Kinerja Fiber Q4"
                 required
               />
@@ -263,9 +199,9 @@ export function ScheduleView({
                 Tanggal Rapat
                 <input
                   type="date"
-                  value={date}
-                  min={todayDateStr}
-                  onChange={e => setDate(e.target.value)}
+                  value={form.date}
+                  min={form.todayDateStr}
+                  onChange={e => form.handleDateChange(e.target.value)}
                   required
                 />
               </label>
@@ -274,8 +210,8 @@ export function ScheduleView({
                 Nama / Kode Ruang
                 <input
                   type="text"
-                  value={roomSlug}
-                  onChange={e => setRoomSlug(e.target.value)}
+                  value={form.roomSlug}
+                  onChange={e => form.handleRoomSlugChange(e.target.value)}
                   placeholder="Contoh: evaluasi-fiber-q4"
                   required
                 />
@@ -293,9 +229,9 @@ export function ScheduleView({
                   Waktu Mulai
                   <input
                     type="time"
-                    value={startTime}
-                    min={isSelectedDateToday ? currentHourMinuteStr : undefined}
-                    onChange={e => handleStartTimeChange(e.target.value)}
+                    value={form.startTime}
+                    min={form.isSelectedDateToday ? form.currentHourMinuteStr : undefined}
+                    onChange={e => form.handleStartTimeChange(e.target.value)}
                     required
                   />
                 </label>
@@ -304,8 +240,8 @@ export function ScheduleView({
                   Waktu Selesai
                   <input
                     type="time"
-                    value={endTime}
-                    onChange={e => setEndTime(e.target.value)}
+                    value={form.endTime}
+                    onChange={e => form.setEndTime(e.target.value)}
                     required
                   />
                 </label>
@@ -318,21 +254,26 @@ export function ScheduleView({
                   <button
                     key={preset.minutes}
                     type="button"
-                    className={`preset-pill ${durationMinutes === preset.minutes ? 'active' : ''}`}
-                    onClick={() => handleDurationPreset(preset.minutes)}
+                    className={`preset-pill ${form.durationMinutes === preset.minutes ? 'active' : ''}`}
+                    onClick={() => form.handleDurationPreset(preset.minutes)}
                   >
                     {preset.label}
                   </button>
                 ))}
               </div>
 
-              {/* Dynamic validation warning */}
-              {!validation.valid && (
+              {/* Dynamic validation warning or midnight info */}
+              {!form.validation.valid ? (
                 <div className="time-validation-alert" role="alert">
                   <AlertCircle size={15} />
-                  <span>{validation.error}</span>
+                  <span>{form.validation.error}</span>
                 </div>
-              )}
+              ) : form.validation.crossesMidnight ? (
+                <div className="time-midnight-note" role="status">
+                  <Info size={14} />
+                  <span>Rapat melewati tengah malam (berakhir keesokan harinya).</span>
+                </div>
+              ) : null}
             </div>
 
             {/* Host Information */}
@@ -341,8 +282,8 @@ export function ScheduleView({
                 NIK Penyelenggara
                 <input
                   type="text"
-                  value={activeHostId}
-                  onChange={e => setActiveHostId(e.target.value)}
+                  value={form.activeHostId}
+                  onChange={e => form.setActiveHostId(e.target.value)}
                   placeholder="BT-10492"
                   required
                 />
@@ -352,8 +293,8 @@ export function ScheduleView({
                 Nama Penyelenggara
                 <input
                   type="text"
-                  value={activeHostName}
-                  onChange={e => setActiveHostName(e.target.value)}
+                  value={form.activeHostName}
+                  onChange={e => form.setActiveHostName(e.target.value)}
                   placeholder="Nama lengkap"
                   required
                 />
@@ -363,8 +304,8 @@ export function ScheduleView({
             <label className="form-field">
               Departemen
               <select
-                value={activeDept}
-                onChange={e => setActiveDept(e.target.value)}
+                value={form.activeDept}
+                onChange={e => form.setActiveDept(e.target.value)}
                 required
               >
                 <option>NOC & Core Network</option>
@@ -380,8 +321,8 @@ export function ScheduleView({
             <label className="form-field">
               Agenda / Catatan (Opsional)
               <textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
+                value={form.description}
+                onChange={e => form.setDescription(e.target.value)}
                 placeholder="Rangkuman agenda pembahasan atau persiapan peserta..."
                 rows={2}
               />
@@ -390,7 +331,7 @@ export function ScheduleView({
             <button
               type="submit"
               className="button-primary full-width schedule-submit"
-              disabled={isSubmitting || !validation.valid}
+              disabled={isSubmitting || !form.validation.valid}
             >
               <Plus size={16} />
               {isSubmitting ? 'Menyimpan Jadwal...' : 'Jadwalkan Rapat Sekarang'}
@@ -446,6 +387,7 @@ export function ScheduleView({
                 const start = new Date(item.scheduledStart);
                 const end = new Date(item.scheduledEnd);
                 const isToday = start.toDateString() === new Date().toDateString();
+                const isCrossDay = end.toDateString() !== start.toDateString();
                 const isStartingSoon =
                   start.getTime() - Date.now() <= 15 * 60000 &&
                   end.getTime() >= Date.now();
@@ -473,6 +415,7 @@ export function ScheduleView({
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
+                          {isCrossDay && ' (+1 hari)'}
                         </span>
                       </div>
 
