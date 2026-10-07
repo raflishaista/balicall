@@ -677,6 +677,19 @@ input::placeholder { color: #a1b1c6; }
   animation: alert-in .2s ease-out;
 }
 
+.time-midnight-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f0f7ff;
+  color: #0d5bb5;
+  font-size: 11px;
+  font-weight: 550;
+  animation: alert-in .2s ease-out;
+}
+
 .form-success {
   display: flex;
   align-items: center;

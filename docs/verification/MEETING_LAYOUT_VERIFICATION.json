@@ -1,0 +1,4391 @@
+{
+  "status": "passed",
+  "date": "2026-10-07T05:51:41.195Z",
+  "media": "Synthetic canvas video, oscillator audio and display capture; actual LiveKit SFU, browser recognition stub; demo LLM, no company DB",
+  "checks": [
+    "1, 2, 3, 4, 6, 8 and 10 participants: four viewport sizes, equal 16:9 tiles, centered rows, no horizontal overflow, reachable controls",
+    "Pagination: nine on first page, tenth participant on next page",
+    "Drag and keyboard divider clamp panel; closing panel expands video and recalculates grid",
+    "Actual SFU active-speaker event changes border/badge only in Grid; Speaker follows active participant",
+    "Screen share takes main area with contain, thumbnail strip and optional transcript; restores selected Grid/Speaker",
+    "Transcript retained after toggle; More pause/resume/devices; mic/camera; mobile drawer Escape, close and focus return",
+    "No false recording label; Keluar stops tracks; Selesai & notulen still generates demo recap"
+  ],
+  "matrix": [
+    {
+      "state": "grid-1-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1430,
+        "height": 803.6875,
+        "right": 1430,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1430,
+        "height": 72,
+        "right": 1430,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 180.21875,
+          "width": 1390,
+          "height": 781.875,
+          "right": 1410,
+          "bottom": 962.09375,
+          "name": "Rafli Aditya (Kamu)"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 180.21875,
+            "width": 1390,
+            "height": 781.875,
+            "right": 1410,
+            "bottom": 962.09375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-1-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1014.5,
+        "height": 491.6875,
+        "right": 1014.5,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1014.5,
+        "height": 72,
+        "right": 1014.5,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 70.1875,
+          "y": 169.3125,
+          "width": 874.109375,
+          "height": 491.671875,
+          "right": 944.296875,
+          "bottom": 660.984375,
+          "name": "Rafli Aditya (Kamu)"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 70.1875,
+            "y": 169.3125,
+            "width": 874.109375,
+            "height": 491.671875,
+            "right": 944.296875,
+            "bottom": 660.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-1-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 401.78125,
+          "width": 780,
+          "height": 438.75,
+          "right": 800,
+          "bottom": 840.53125,
+          "name": "Rafli Aditya (Kamu)"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 401.78125,
+            "width": 780,
+            "height": 438.75,
+            "right": 800,
+            "bottom": 840.53125
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-1-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 335.609375,
+          "width": 366,
+          "height": 205.875,
+          "right": 378,
+          "bottom": 541.484375,
+          "name": "Rafli Aditya (Kamu)"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 335.609375,
+            "width": 366,
+            "height": 205.875,
+            "right": 378,
+            "bottom": 541.484375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-2-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 803.6875,
+        "right": 1920,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 308.46875,
+          "width": 934,
+          "height": 525.375,
+          "right": 954,
+          "bottom": 833.84375,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 966,
+          "y": 308.46875,
+          "width": 934,
+          "height": 525.375,
+          "right": 1900,
+          "bottom": 833.84375,
+          "name": "Budi Santoso"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 308.46875,
+            "width": 934,
+            "height": 525.375,
+            "right": 954,
+            "bottom": 833.84375
+          },
+          {
+            "x": 966,
+            "y": 308.46875,
+            "width": 934,
+            "height": 525.375,
+            "right": 1900,
+            "bottom": 833.84375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-2-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 491.6875,
+        "right": 1366,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 230.375,
+          "width": 657,
+          "height": 369.5625,
+          "right": 677,
+          "bottom": 599.9375,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 689,
+          "y": 230.375,
+          "width": 657,
+          "height": 369.5625,
+          "right": 1346,
+          "bottom": 599.9375,
+          "name": "Budi Santoso"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 230.375,
+            "width": 657,
+            "height": 369.5625,
+            "right": 677,
+            "bottom": 599.9375
+          },
+          {
+            "x": 689,
+            "y": 230.375,
+            "width": 657,
+            "height": 369.5625,
+            "right": 1346,
+            "bottom": 599.9375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-2-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 513.15625,
+          "width": 384,
+          "height": 216,
+          "right": 404,
+          "bottom": 729.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 416,
+          "y": 513.15625,
+          "width": 384,
+          "height": 216,
+          "right": 800,
+          "bottom": 729.15625,
+          "name": "Budi Santoso"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 513.15625,
+            "width": 384,
+            "height": 216,
+            "right": 404,
+            "bottom": 729.15625
+          },
+          {
+            "x": 416,
+            "y": 513.15625,
+            "width": 384,
+            "height": 216,
+            "right": 800,
+            "bottom": 729.15625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-2-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 388.765625,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 488.328125,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 388.765625,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 488.328125,
+          "name": "Budi Santoso"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 388.765625,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 488.328125
+          },
+          {
+            "x": 201,
+            "y": 388.765625,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 488.328125
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-3-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 803.6875,
+        "right": 1920,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 250.28125,
+          "y": 169.328125,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 954,
+          "bottom": 565.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 966,
+          "y": 169.328125,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 1669.71875,
+          "bottom": 565.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 608.140625,
+          "y": 577.15625,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 1311.859375,
+          "bottom": 972.984375,
+          "name": "Siti Rahma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 250.28125,
+            "y": 169.328125,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 954,
+            "bottom": 565.15625
+          },
+          {
+            "x": 966,
+            "y": 169.328125,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 1669.71875,
+            "bottom": 565.15625
+          }
+        ],
+        [
+          {
+            "x": 608.140625,
+            "y": 577.15625,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 1311.859375,
+            "bottom": 972.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-3-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 491.6875,
+        "right": 1366,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 250.625,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 677,
+          "bottom": 409.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 689,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 1115.375,
+          "bottom": 409.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 469.8125,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 896.1875,
+          "bottom": 660.984375,
+          "name": "Siti Rahma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 250.625,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 677,
+            "bottom": 409.15625
+          },
+          {
+            "x": 689,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 1115.375,
+            "bottom": 409.15625
+          }
+        ],
+        [
+          {
+            "x": 469.8125,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 896.1875,
+            "bottom": 660.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-3-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 399.15625,
+          "width": 384,
+          "height": 216,
+          "right": 404,
+          "bottom": 615.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 416,
+          "y": 399.15625,
+          "width": 384,
+          "height": 216,
+          "right": 800,
+          "bottom": 615.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 218,
+          "y": 627.15625,
+          "width": 384,
+          "height": 216,
+          "right": 602,
+          "bottom": 843.15625,
+          "name": "Siti Rahma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 399.15625,
+            "width": 384,
+            "height": 216,
+            "right": 404,
+            "bottom": 615.15625
+          },
+          {
+            "x": 416,
+            "y": 399.15625,
+            "width": 384,
+            "height": 216,
+            "right": 800,
+            "bottom": 615.15625
+          }
+        ],
+        [
+          {
+            "x": 218,
+            "y": 627.15625,
+            "width": 384,
+            "height": 216,
+            "right": 602,
+            "bottom": 843.15625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-3-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 432.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 432.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 106.5,
+          "y": 444.546875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 283.5,
+          "bottom": 544.109375,
+          "name": "Siti Rahma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 432.546875
+          },
+          {
+            "x": 201,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 432.546875
+          }
+        ],
+        [
+          {
+            "x": 106.5,
+            "y": 444.546875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 283.5,
+            "bottom": 544.109375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-4-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 803.6875,
+        "right": 1920,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 250.28125,
+          "y": 169.328125,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 954,
+          "bottom": 565.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 966,
+          "y": 169.328125,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 1669.71875,
+          "bottom": 565.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 250.28125,
+          "y": 577.15625,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 954,
+          "bottom": 972.984375,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 966,
+          "y": 577.15625,
+          "width": 703.71875,
+          "height": 395.828125,
+          "right": 1669.71875,
+          "bottom": 972.984375,
+          "name": "Agus Pratama"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 250.28125,
+            "y": 169.328125,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 954,
+            "bottom": 565.15625
+          },
+          {
+            "x": 966,
+            "y": 169.328125,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 1669.71875,
+            "bottom": 565.15625
+          }
+        ],
+        [
+          {
+            "x": 250.28125,
+            "y": 577.15625,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 954,
+            "bottom": 972.984375
+          },
+          {
+            "x": 966,
+            "y": 577.15625,
+            "width": 703.71875,
+            "height": 395.828125,
+            "right": 1669.71875,
+            "bottom": 972.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-4-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 491.6875,
+        "right": 1366,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 250.625,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 677,
+          "bottom": 409.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 689,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 1115.375,
+          "bottom": 409.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 250.625,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 677,
+          "bottom": 660.984375,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 689,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 1115.375,
+          "bottom": 660.984375,
+          "name": "Agus Pratama"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 250.625,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 677,
+            "bottom": 409.15625
+          },
+          {
+            "x": 689,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 1115.375,
+            "bottom": 409.15625
+          }
+        ],
+        [
+          {
+            "x": 250.625,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 677,
+            "bottom": 660.984375
+          },
+          {
+            "x": 689,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 1115.375,
+            "bottom": 660.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-4-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 399.15625,
+          "width": 384,
+          "height": 216,
+          "right": 404,
+          "bottom": 615.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 416,
+          "y": 399.15625,
+          "width": 384,
+          "height": 216,
+          "right": 800,
+          "bottom": 615.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 20,
+          "y": 627.15625,
+          "width": 384,
+          "height": 216,
+          "right": 404,
+          "bottom": 843.15625,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 416,
+          "y": 627.15625,
+          "width": 384,
+          "height": 216,
+          "right": 800,
+          "bottom": 843.15625,
+          "name": "Agus Pratama"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 399.15625,
+            "width": 384,
+            "height": 216,
+            "right": 404,
+            "bottom": 615.15625
+          },
+          {
+            "x": 416,
+            "y": 399.15625,
+            "width": 384,
+            "height": 216,
+            "right": 800,
+            "bottom": 615.15625
+          }
+        ],
+        [
+          {
+            "x": 20,
+            "y": 627.15625,
+            "width": 384,
+            "height": 216,
+            "right": 404,
+            "bottom": 843.15625
+          },
+          {
+            "x": 416,
+            "y": 627.15625,
+            "width": 384,
+            "height": 216,
+            "right": 800,
+            "bottom": 843.15625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-4-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 432.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 432.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 12,
+          "y": 444.546875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 544.109375,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 201,
+          "y": 444.546875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 544.109375,
+          "name": "Agus Pratama"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 432.546875
+          },
+          {
+            "x": 201,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 432.546875
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 444.546875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 544.109375
+          },
+          {
+            "x": 201,
+            "y": 444.546875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 544.109375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-6-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 803.6875,
+        "right": 1920,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 20.015625,
+          "y": 217.171875,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 638.671875,
+          "bottom": 565.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 650.671875,
+          "y": 217.171875,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 1269.328125,
+          "bottom": 565.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 1281.328125,
+          "y": 217.171875,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 1899.984375,
+          "bottom": 565.15625,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 20.015625,
+          "y": 577.15625,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 638.671875,
+          "bottom": 925.140625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 650.671875,
+          "y": 577.15625,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 1269.328125,
+          "bottom": 925.140625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 1281.328125,
+          "y": 577.15625,
+          "width": 618.65625,
+          "height": 347.984375,
+          "right": 1899.984375,
+          "bottom": 925.140625,
+          "name": "Dewi Lestari"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20.015625,
+            "y": 217.171875,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 638.671875,
+            "bottom": 565.15625
+          },
+          {
+            "x": 650.671875,
+            "y": 217.171875,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 1269.328125,
+            "bottom": 565.15625
+          },
+          {
+            "x": 1281.328125,
+            "y": 217.171875,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 1899.984375,
+            "bottom": 565.15625
+          }
+        ],
+        [
+          {
+            "x": 20.015625,
+            "y": 577.15625,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 638.671875,
+            "bottom": 925.140625
+          },
+          {
+            "x": 650.671875,
+            "y": 577.15625,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 1269.328125,
+            "bottom": 925.140625
+          },
+          {
+            "x": 1281.328125,
+            "y": 577.15625,
+            "width": 618.65625,
+            "height": 347.984375,
+            "right": 1899.984375,
+            "bottom": 925.140625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-6-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 491.6875,
+        "right": 1366,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 31.4375,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 457.8125,
+          "bottom": 409.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 469.8125,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 896.1875,
+          "bottom": 409.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 908.1875,
+          "y": 169.328125,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 1334.5625,
+          "bottom": 409.15625,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 31.4375,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 457.8125,
+          "bottom": 660.984375,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 469.8125,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 896.1875,
+          "bottom": 660.984375,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 908.1875,
+          "y": 421.15625,
+          "width": 426.375,
+          "height": 239.828125,
+          "right": 1334.5625,
+          "bottom": 660.984375,
+          "name": "Dewi Lestari"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 31.4375,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 457.8125,
+            "bottom": 409.15625
+          },
+          {
+            "x": 469.8125,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 896.1875,
+            "bottom": 409.15625
+          },
+          {
+            "x": 908.1875,
+            "y": 169.328125,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 1334.5625,
+            "bottom": 409.15625
+          }
+        ],
+        [
+          {
+            "x": 31.4375,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 457.8125,
+            "bottom": 660.984375
+          },
+          {
+            "x": 469.8125,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 896.1875,
+            "bottom": 660.984375
+          },
+          {
+            "x": 908.1875,
+            "y": 421.15625,
+            "width": 426.375,
+            "height": 239.828125,
+            "right": 1334.5625,
+            "bottom": 660.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-6-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 473.40625,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 615.15625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 284,
+          "y": 473.40625,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 615.15625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 548,
+          "y": 473.40625,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 615.15625,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 20,
+          "y": 627.15625,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 768.90625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 284,
+          "y": 627.15625,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 768.90625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 548,
+          "y": 627.15625,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 768.90625,
+          "name": "Dewi Lestari"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 473.40625,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 615.15625
+          },
+          {
+            "x": 284,
+            "y": 473.40625,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 615.15625
+          },
+          {
+            "x": 548,
+            "y": 473.40625,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 615.15625
+          }
+        ],
+        [
+          {
+            "x": 20,
+            "y": 627.15625,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 768.90625
+          },
+          {
+            "x": 284,
+            "y": 627.15625,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 768.90625
+          },
+          {
+            "x": 548,
+            "y": 627.15625,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 768.90625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-6-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 277.203125,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 376.765625,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 277.203125,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 376.765625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 12,
+          "y": 388.765625,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 488.328125,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 201,
+          "y": 388.765625,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 488.328125,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 12,
+          "y": 500.328125,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 599.890625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 201,
+          "y": 500.328125,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 599.890625,
+          "name": "Dewi Lestari"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 277.203125,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 376.765625
+          },
+          {
+            "x": 201,
+            "y": 277.203125,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 376.765625
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 388.765625,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 488.328125
+          },
+          {
+            "x": 201,
+            "y": 388.765625,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 488.328125
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 500.328125,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 599.890625
+          },
+          {
+            "x": 201,
+            "y": 500.328125,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 599.890625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-8-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 803.6875,
+        "right": 1920,
+        "bottom": 973
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 254.953125,
+          "y": 169.3125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 716.984375,
+          "bottom": 429.203125,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 728.984375,
+          "y": 169.3125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 1191.015625,
+          "bottom": 429.203125,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 1203.015625,
+          "y": 169.3125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 1665.046875,
+          "bottom": 429.203125,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 254.953125,
+          "y": 441.203125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 716.984375,
+          "bottom": 701.09375,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 728.984375,
+          "y": 441.203125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 1191.015625,
+          "bottom": 701.09375,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 1203.015625,
+          "y": 441.203125,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 1665.046875,
+          "bottom": 701.09375,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 491.96875,
+          "y": 713.09375,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 954,
+          "bottom": 972.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 966,
+          "y": 713.09375,
+          "width": 462.03125,
+          "height": 259.890625,
+          "right": 1428.03125,
+          "bottom": 972.984375,
+          "name": "Linda Kusuma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 254.953125,
+            "y": 169.3125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 716.984375,
+            "bottom": 429.203125
+          },
+          {
+            "x": 728.984375,
+            "y": 169.3125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 1191.015625,
+            "bottom": 429.203125
+          },
+          {
+            "x": 1203.015625,
+            "y": 169.3125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 1665.046875,
+            "bottom": 429.203125
+          }
+        ],
+        [
+          {
+            "x": 254.953125,
+            "y": 441.203125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 716.984375,
+            "bottom": 701.09375
+          },
+          {
+            "x": 728.984375,
+            "y": 441.203125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 1191.015625,
+            "bottom": 701.09375
+          },
+          {
+            "x": 1203.015625,
+            "y": 441.203125,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 1665.046875,
+            "bottom": 701.09375
+          }
+        ],
+        [
+          {
+            "x": 491.96875,
+            "y": 713.09375,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 954,
+            "bottom": 972.984375
+          },
+          {
+            "x": 966,
+            "y": 713.09375,
+            "width": 462.03125,
+            "height": 259.890625,
+            "right": 1428.03125,
+            "bottom": 972.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-8-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 491.6875,
+        "right": 1366,
+        "bottom": 661
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 255.28125,
+          "y": 169.3125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 532.421875,
+          "bottom": 325.203125,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 544.421875,
+          "y": 169.3125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 821.5625,
+          "bottom": 325.203125,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 833.5625,
+          "y": 169.3125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 1110.703125,
+          "bottom": 325.203125,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 255.28125,
+          "y": 337.203125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 532.421875,
+          "bottom": 493.09375,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 544.421875,
+          "y": 337.203125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 821.5625,
+          "bottom": 493.09375,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 833.5625,
+          "y": 337.203125,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 1110.703125,
+          "bottom": 493.09375,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 399.859375,
+          "y": 505.09375,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 677,
+          "bottom": 660.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 689,
+          "y": 505.09375,
+          "width": 277.140625,
+          "height": 155.890625,
+          "right": 966.140625,
+          "bottom": 660.984375,
+          "name": "Linda Kusuma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 255.28125,
+            "y": 169.3125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 532.421875,
+            "bottom": 325.203125
+          },
+          {
+            "x": 544.421875,
+            "y": 169.3125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 821.5625,
+            "bottom": 325.203125
+          },
+          {
+            "x": 833.5625,
+            "y": 169.3125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 1110.703125,
+            "bottom": 325.203125
+          }
+        ],
+        [
+          {
+            "x": 255.28125,
+            "y": 337.203125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 532.421875,
+            "bottom": 493.09375
+          },
+          {
+            "x": 544.421875,
+            "y": 337.203125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 821.5625,
+            "bottom": 493.09375
+          },
+          {
+            "x": 833.5625,
+            "y": 337.203125,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 1110.703125,
+            "bottom": 493.09375
+          }
+        ],
+        [
+          {
+            "x": 399.859375,
+            "y": 505.09375,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 677,
+            "bottom": 660.984375
+          },
+          {
+            "x": 689,
+            "y": 505.09375,
+            "width": 277.140625,
+            "height": 155.890625,
+            "right": 966.140625,
+            "bottom": 660.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-8-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 903.6875,
+        "right": 820,
+        "bottom": 1073
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 396.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 538.28125,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 284,
+          "y": 396.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 538.28125,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 548,
+          "y": 396.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 538.28125,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 20,
+          "y": 550.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 692.03125,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 284,
+          "y": 550.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 692.03125,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 548,
+          "y": 550.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 692.03125,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 152,
+          "y": 704.03125,
+          "width": 252,
+          "height": 141.75,
+          "right": 404,
+          "bottom": 845.78125,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 416,
+          "y": 704.03125,
+          "width": 252,
+          "height": 141.75,
+          "right": 668,
+          "bottom": 845.78125,
+          "name": "Linda Kusuma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 396.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 538.28125
+          },
+          {
+            "x": 284,
+            "y": 396.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 538.28125
+          },
+          {
+            "x": 548,
+            "y": 396.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 538.28125
+          }
+        ],
+        [
+          {
+            "x": 20,
+            "y": 550.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 692.03125
+          },
+          {
+            "x": 284,
+            "y": 550.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 692.03125
+          },
+          {
+            "x": 548,
+            "y": 550.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 692.03125
+          }
+        ],
+        [
+          {
+            "x": 152,
+            "y": 704.03125,
+            "width": 252,
+            "height": 141.75,
+            "right": 404,
+            "bottom": 845.78125
+          },
+          {
+            "x": 416,
+            "y": 704.03125,
+            "width": 252,
+            "height": 141.75,
+            "right": 668,
+            "bottom": 845.78125
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-8-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 522.890625,
+        "right": 390,
+        "bottom": 700
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 221.421875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 320.984375,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 221.421875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 320.984375,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 12,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 432.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 201,
+          "y": 332.984375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 432.546875,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 12,
+          "y": 444.546875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 544.109375,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 201,
+          "y": 444.546875,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 544.109375,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 12,
+          "y": 556.109375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 189,
+          "bottom": 655.671875,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 201,
+          "y": 556.109375,
+          "width": 177,
+          "height": 99.5625,
+          "right": 378,
+          "bottom": 655.671875,
+          "name": "Linda Kusuma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 221.421875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 320.984375
+          },
+          {
+            "x": 201,
+            "y": 221.421875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 320.984375
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 432.546875
+          },
+          {
+            "x": 201,
+            "y": 332.984375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 432.546875
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 444.546875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 544.109375
+          },
+          {
+            "x": 201,
+            "y": 444.546875,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 544.109375
+          }
+        ],
+        [
+          {
+            "x": 12,
+            "y": 556.109375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 189,
+            "bottom": 655.671875
+          },
+          {
+            "x": 201,
+            "y": 556.109375,
+            "width": 177,
+            "height": 99.5625,
+            "right": 378,
+            "bottom": 655.671875
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-10-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 759.6875,
+        "right": 1920,
+        "bottom": 929
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 294.0625,
+          "y": 169.328125,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 730.015625,
+          "bottom": 414.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 742.015625,
+          "y": 169.328125,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1177.96875,
+          "bottom": 414.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 1189.96875,
+          "y": 169.328125,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1625.921875,
+          "bottom": 414.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 294.0625,
+          "y": 426.546875,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 730.015625,
+          "bottom": 671.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 742.015625,
+          "y": 426.546875,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1177.96875,
+          "bottom": 671.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 1189.96875,
+          "y": 426.546875,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1625.921875,
+          "bottom": 671.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 294.0625,
+          "y": 683.765625,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 730.015625,
+          "bottom": 928.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 742.015625,
+          "y": 683.765625,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1177.96875,
+          "bottom": 928.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 1189.96875,
+          "y": 683.765625,
+          "width": 435.953125,
+          "height": 245.21875,
+          "right": 1625.921875,
+          "bottom": 928.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 294.0625,
+            "y": 169.328125,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 730.015625,
+            "bottom": 414.546875
+          },
+          {
+            "x": 742.015625,
+            "y": 169.328125,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1177.96875,
+            "bottom": 414.546875
+          },
+          {
+            "x": 1189.96875,
+            "y": 169.328125,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1625.921875,
+            "bottom": 414.546875
+          }
+        ],
+        [
+          {
+            "x": 294.0625,
+            "y": 426.546875,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 730.015625,
+            "bottom": 671.765625
+          },
+          {
+            "x": 742.015625,
+            "y": 426.546875,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1177.96875,
+            "bottom": 671.765625
+          },
+          {
+            "x": 1189.96875,
+            "y": 426.546875,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1625.921875,
+            "bottom": 671.765625
+          }
+        ],
+        [
+          {
+            "x": 294.0625,
+            "y": 683.765625,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 730.015625,
+            "bottom": 928.984375
+          },
+          {
+            "x": 742.015625,
+            "y": 683.765625,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1177.96875,
+            "bottom": 928.984375
+          },
+          {
+            "x": 1189.96875,
+            "y": 683.765625,
+            "width": 435.953125,
+            "height": 245.21875,
+            "right": 1625.921875,
+            "bottom": 928.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-10-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 294.40625,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 310.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 557.46875,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 310.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 820.53125,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 310.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 294.40625,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 463.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 557.46875,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 463.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 820.53125,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 463.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 294.40625,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 616.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 557.46875,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 616.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 820.53125,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 616.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 294.40625,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 310.546875
+          },
+          {
+            "x": 557.46875,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 310.546875
+          },
+          {
+            "x": 820.53125,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 310.546875
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 463.765625
+          },
+          {
+            "x": 557.46875,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 463.765625
+          },
+          {
+            "x": 820.53125,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 463.765625
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 616.984375
+          },
+          {
+            "x": 557.46875,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 616.984375
+          },
+          {
+            "x": 820.53125,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-10-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 859.6875,
+        "right": 820,
+        "bottom": 1029
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 374.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 516.28125,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 284,
+          "y": 374.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 516.28125,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 548,
+          "y": 374.53125,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 516.28125,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 20,
+          "y": 528.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 670.03125,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 284,
+          "y": 528.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 670.03125,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 548,
+          "y": 528.28125,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 670.03125,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 20,
+          "y": 682.03125,
+          "width": 252,
+          "height": 141.75,
+          "right": 272,
+          "bottom": 823.78125,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 284,
+          "y": 682.03125,
+          "width": 252,
+          "height": 141.75,
+          "right": 536,
+          "bottom": 823.78125,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 548,
+          "y": 682.03125,
+          "width": 252,
+          "height": 141.75,
+          "right": 800,
+          "bottom": 823.78125,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 374.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 516.28125
+          },
+          {
+            "x": 284,
+            "y": 374.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 516.28125
+          },
+          {
+            "x": 548,
+            "y": 374.53125,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 516.28125
+          }
+        ],
+        [
+          {
+            "x": 20,
+            "y": 528.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 670.03125
+          },
+          {
+            "x": 284,
+            "y": 528.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 670.03125
+          },
+          {
+            "x": 548,
+            "y": 528.28125,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 670.03125
+          }
+        ],
+        [
+          {
+            "x": 20,
+            "y": 682.03125,
+            "width": 252,
+            "height": 141.75,
+            "right": 272,
+            "bottom": 823.78125
+          },
+          {
+            "x": 284,
+            "y": 682.03125,
+            "width": 252,
+            "height": 141.75,
+            "right": 536,
+            "bottom": 823.78125
+          },
+          {
+            "x": 548,
+            "y": 682.03125,
+            "width": 252,
+            "height": 141.75,
+            "right": 800,
+            "bottom": 823.78125
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-10-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 478.890625,
+        "right": 390,
+        "bottom": 656
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 35.796875,
+          "y": 177.125,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 189,
+          "bottom": 263.296875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 201,
+          "y": 177.125,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 354.203125,
+          "bottom": 263.296875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 35.796875,
+          "y": 275.296875,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 189,
+          "bottom": 361.46875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 201,
+          "y": 275.296875,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 354.203125,
+          "bottom": 361.46875,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 35.796875,
+          "y": 373.46875,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 189,
+          "bottom": 459.640625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 201,
+          "y": 373.46875,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 354.203125,
+          "bottom": 459.640625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 35.796875,
+          "y": 471.640625,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 189,
+          "bottom": 557.8125,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 201,
+          "y": 471.640625,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 354.203125,
+          "bottom": 557.8125,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 118.390625,
+          "y": 569.8125,
+          "width": 153.203125,
+          "height": 86.171875,
+          "right": 271.59375,
+          "bottom": 655.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 35.796875,
+            "y": 177.125,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 189,
+            "bottom": 263.296875
+          },
+          {
+            "x": 201,
+            "y": 177.125,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 354.203125,
+            "bottom": 263.296875
+          }
+        ],
+        [
+          {
+            "x": 35.796875,
+            "y": 275.296875,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 189,
+            "bottom": 361.46875
+          },
+          {
+            "x": 201,
+            "y": 275.296875,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 354.203125,
+            "bottom": 361.46875
+          }
+        ],
+        [
+          {
+            "x": 35.796875,
+            "y": 373.46875,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 189,
+            "bottom": 459.640625
+          },
+          {
+            "x": 201,
+            "y": 373.46875,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 354.203125,
+            "bottom": 459.640625
+          }
+        ],
+        [
+          {
+            "x": 35.796875,
+            "y": 471.640625,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 189,
+            "bottom": 557.8125
+          },
+          {
+            "x": 201,
+            "y": 471.640625,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 354.203125,
+            "bottom": 557.8125
+          }
+        ],
+        [
+          {
+            "x": 118.390625,
+            "y": 569.8125,
+            "width": 153.203125,
+            "height": 86.171875,
+            "right": 271.59375,
+            "bottom": 655.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "grid-page-two",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 285.0625,
+          "y": 169.3125,
+          "width": 795.875,
+          "height": 447.671875,
+          "right": 1080.9375,
+          "bottom": 616.984375,
+          "name": "Peserta 10"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 285.0625,
+            "y": 169.3125,
+            "width": 795.875,
+            "height": 447.671875,
+            "right": 1080.9375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "resized-panel-grid",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 854.5,
+        "height": 447.6875,
+        "right": 854.5,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 854.5,
+        "height": 72,
+        "right": 854.5,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 38.65625,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 289.71875,
+          "bottom": 310.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 301.71875,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 552.78125,
+          "bottom": 310.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 564.78125,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 815.84375,
+          "bottom": 310.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 38.65625,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 289.71875,
+          "bottom": 463.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 301.71875,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 552.78125,
+          "bottom": 463.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 564.78125,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 815.84375,
+          "bottom": 463.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 38.65625,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 289.71875,
+          "bottom": 616.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 301.71875,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 552.78125,
+          "bottom": 616.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 564.78125,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 815.84375,
+          "bottom": 616.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 38.65625,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 289.71875,
+            "bottom": 310.546875
+          },
+          {
+            "x": 301.71875,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 552.78125,
+            "bottom": 310.546875
+          },
+          {
+            "x": 564.78125,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 815.84375,
+            "bottom": 310.546875
+          }
+        ],
+        [
+          {
+            "x": 38.65625,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 289.71875,
+            "bottom": 463.765625
+          },
+          {
+            "x": 301.71875,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 552.78125,
+            "bottom": 463.765625
+          },
+          {
+            "x": 564.78125,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 815.84375,
+            "bottom": 463.765625
+          }
+        ],
+        [
+          {
+            "x": 38.65625,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 289.71875,
+            "bottom": 616.984375
+          },
+          {
+            "x": 301.71875,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 552.78125,
+            "bottom": 616.984375
+          },
+          {
+            "x": 564.78125,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 815.84375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "panel-closed-grid",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 294.40625,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 310.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 557.46875,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 310.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 820.53125,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 310.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 294.40625,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 463.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 557.46875,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 463.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 820.53125,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 463.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 294.40625,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 616.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 557.46875,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 616.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 820.53125,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 616.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 294.40625,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 310.546875
+          },
+          {
+            "x": 557.46875,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 310.546875
+          },
+          {
+            "x": 820.53125,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 310.546875
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 463.765625
+          },
+          {
+            "x": 557.46875,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 463.765625
+          },
+          {
+            "x": 820.53125,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 463.765625
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 616.984375
+          },
+          {
+            "x": 557.46875,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 616.984375
+          },
+          {
+            "x": 820.53125,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "before-real-speaker-change",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 294.40625,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 310.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 557.46875,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 310.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 820.53125,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 310.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 294.40625,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 463.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 557.46875,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 463.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 820.53125,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 463.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 294.40625,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 616.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 557.46875,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 616.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 820.53125,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 616.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 294.40625,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 310.546875
+          },
+          {
+            "x": 557.46875,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 310.546875
+          },
+          {
+            "x": 820.53125,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 310.546875
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 463.765625
+          },
+          {
+            "x": 557.46875,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 463.765625
+          },
+          {
+            "x": 820.53125,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 463.765625
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 616.984375
+          },
+          {
+            "x": 557.46875,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 616.984375
+          },
+          {
+            "x": 820.53125,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "after-real-speaker-change",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 294.40625,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 310.546875,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 557.46875,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 310.546875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 820.53125,
+          "y": 169.328125,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 310.546875,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 294.40625,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 463.765625,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 557.46875,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 463.765625,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 820.53125,
+          "y": 322.546875,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 463.765625,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 294.40625,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 545.46875,
+          "bottom": 616.984375,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 557.46875,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 808.53125,
+          "bottom": 616.984375,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 820.53125,
+          "y": 475.765625,
+          "width": 251.0625,
+          "height": 141.21875,
+          "right": 1071.59375,
+          "bottom": 616.984375,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 294.40625,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 310.546875
+          },
+          {
+            "x": 557.46875,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 310.546875
+          },
+          {
+            "x": 820.53125,
+            "y": 169.328125,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 310.546875
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 463.765625
+          },
+          {
+            "x": 557.46875,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 463.765625
+          },
+          {
+            "x": 820.53125,
+            "y": 322.546875,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 463.765625
+          }
+        ],
+        [
+          {
+            "x": 294.40625,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 545.46875,
+            "bottom": 616.984375
+          },
+          {
+            "x": 557.46875,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 808.53125,
+            "bottom": 616.984375
+          },
+          {
+            "x": 820.53125,
+            "y": 475.765625,
+            "width": 251.0625,
+            "height": 141.21875,
+            "right": 1071.59375,
+            "bottom": 616.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "speaker-1920",
+      "viewport": [
+        1920,
+        1080
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1920,
+        "height": 759.6875,
+        "right": 1920,
+        "bottom": 929
+      },
+      "controls": {
+        "x": 0,
+        "y": 1008,
+        "width": 1920,
+        "height": 72,
+        "right": 1920,
+        "bottom": 1080
+      },
+      "tiles": [
+        {
+          "x": 387.828125,
+          "y": 169.3125,
+          "width": 1144.328125,
+          "height": 643.671875,
+          "right": 1532.15625,
+          "bottom": 812.984375,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 221,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 397,
+          "bottom": 924,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 407,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 583,
+          "bottom": 924,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 593,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 769,
+          "bottom": 924,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 779,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 955,
+          "bottom": 924,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 965,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 1141,
+          "bottom": 924,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 1151,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 1327,
+          "bottom": 924,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 1337,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 1513,
+          "bottom": 924,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 1523,
+          "y": 825,
+          "width": 176,
+          "height": 99,
+          "right": 1699,
+          "bottom": 924,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 387.828125,
+            "y": 169.3125,
+            "width": 1144.328125,
+            "height": 643.671875,
+            "right": 1532.15625,
+            "bottom": 812.984375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "speaker-1366",
+      "viewport": [
+        1366,
+        768
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 1366,
+        "height": 447.6875,
+        "right": 1366,
+        "bottom": 617
+      },
+      "controls": {
+        "x": 0,
+        "y": 696,
+        "width": 1366,
+        "height": 72,
+        "right": 1366,
+        "bottom": 768
+      },
+      "tiles": [
+        {
+          "x": 378.671875,
+          "y": 169.3125,
+          "width": 608.65625,
+          "height": 342.359375,
+          "right": 987.328125,
+          "bottom": 511.671875,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 20,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 177,
+          "bottom": 612,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 187,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 344,
+          "bottom": 612,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 354,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 511,
+          "bottom": 612,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 521,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 678,
+          "bottom": 612,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 688,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 845,
+          "bottom": 612,
+          "name": "Dewi Lestari"
+        },
+        {
+          "x": 855,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 1012,
+          "bottom": 612,
+          "name": "Hendra Wijaya"
+        },
+        {
+          "x": 1022,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 1179,
+          "bottom": 612,
+          "name": "Linda Kusuma"
+        },
+        {
+          "x": 1189,
+          "y": 523.6875,
+          "width": 157,
+          "height": 88.3125,
+          "right": 1346,
+          "bottom": 612,
+          "name": "Peserta 09"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 378.671875,
+            "y": 169.3125,
+            "width": 608.65625,
+            "height": 342.359375,
+            "right": 987.328125,
+            "bottom": 511.671875
+          }
+        ]
+      ]
+    },
+    {
+      "state": "speaker-820",
+      "viewport": [
+        820,
+        1180
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 169.3125,
+        "width": 820,
+        "height": 859.6875,
+        "right": 820,
+        "bottom": 1029
+      },
+      "controls": {
+        "x": 0,
+        "y": 1108,
+        "width": 820,
+        "height": 72,
+        "right": 820,
+        "bottom": 1180
+      },
+      "tiles": [
+        {
+          "x": 20,
+          "y": 329.65625,
+          "width": 780,
+          "height": 438.75,
+          "right": 800,
+          "bottom": 768.40625,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 20,
+          "y": 940.75,
+          "width": 148,
+          "height": 83.25,
+          "right": 168,
+          "bottom": 1024,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 178,
+          "y": 940.75,
+          "width": 148,
+          "height": 83.25,
+          "right": 326,
+          "bottom": 1024,
+          "name": "Siti Rahma"
+        },
+        {
+          "x": 336,
+          "y": 940.75,
+          "width": 148,
+          "height": 83.25,
+          "right": 484,
+          "bottom": 1024,
+          "name": "Agus Pratama"
+        },
+        {
+          "x": 494,
+          "y": 940.75,
+          "width": 148,
+          "height": 83.25,
+          "right": 642,
+          "bottom": 1024,
+          "name": "Eko Prasetyo"
+        },
+        {
+          "x": 652,
+          "y": 940.75,
+          "width": 148,
+          "height": 83.25,
+          "right": 800,
+          "bottom": 1024,
+          "name": "Dewi Lestari"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 20,
+            "y": 329.65625,
+            "width": 780,
+            "height": 438.75,
+            "right": 800,
+            "bottom": 768.40625
+          }
+        ]
+      ]
+    },
+    {
+      "state": "speaker-390",
+      "viewport": [
+        390,
+        844
+      ],
+      "overflow": 0,
+      "stage": {
+        "x": 0,
+        "y": 177.109375,
+        "width": 390,
+        "height": 478.890625,
+        "right": 390,
+        "bottom": 656
+      },
+      "controls": {
+        "x": 0,
+        "y": 727,
+        "width": 390,
+        "height": 117,
+        "right": 390,
+        "bottom": 844
+      },
+      "tiles": [
+        {
+          "x": 12,
+          "y": 257.609375,
+          "width": 366,
+          "height": 205.875,
+          "right": 378,
+          "bottom": 463.484375,
+          "name": "Budi Santoso"
+        },
+        {
+          "x": 14,
+          "y": 552,
+          "width": 176,
+          "height": 99,
+          "right": 190,
+          "bottom": 651,
+          "name": "Rafli Aditya (Kamu)"
+        },
+        {
+          "x": 200,
+          "y": 552,
+          "width": 176,
+          "height": 99,
+          "right": 376,
+          "bottom": 651,
+          "name": "Siti Rahma"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "x": 12,
+            "y": 257.609375,
+            "width": 366,
+            "height": 205.875,
+            "right": 378,
+            "bottom": 463.484375
+          }
+        ]
+      ]
+    },
+    {
+      "state": "share-1920",
+      "screen": {
+        "x": 20,
+        "y": 169.3125,
+        "width": 1880,
+        "height": 643.6875
+      }
+    },
+    {
+      "state": "share-1366",
+      "screen": {
+        "x": 20,
+        "y": 169.3125,
+        "width": 1326,
+        "height": 342.375
+      }
+    },
+    {
+      "state": "share-820",
+      "screen": {
+        "x": 20,
+        "y": 169.3125,
+        "width": 780,
+        "height": 759.4375
+      }
+    },
+    {
+      "state": "share-390",
+      "screen": {
+        "x": 12,
+        "y": 177.109375,
+        "width": 366,
+        "height": 366.890625
+      }
+    }
+  ],
+  "pageErrors": []
+}

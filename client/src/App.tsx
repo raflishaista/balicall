@@ -9,6 +9,9 @@ import { createSaveQueue } from './saveQueue';
 import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
+import './SummaryHistory.css';
+import { readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor, upsertSummary, validSummary } from './summaryHistory';
+import type { MeetingSummary, TranscriptEntry, SummaryRecord } from './summaryHistory';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
@@ -50,35 +53,6 @@ function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[
   return [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
-interface TranscriptEntry {
-  id: string;
-  speakerId: string;
-  speakerName: string;
-  text: string;
-  timestamp: string;
-}
-
-interface ActionItem {
-  task: string;
-  assignee: string;
-  priority: 'High' | 'Medium' | 'Low';
-  deadline: string;
-}
-
-interface MeetingSummary {
-  title: string;
-  executiveSummary: string;
-  keyDiscussionPoints: string[];
-  decisions: string[];
-  actionItems: ActionItem[];
-  attendanceSummary: string[];
-  transcriptCount?: number;
-  provider?: string;
-  note?: string;
-  generatedAt?: string;
-  dbSummaryId?: number;
-}
-
 const PRESET_PERSONAS = [
   { id: 'BT-10492', name: 'Rafli Aditya', dept: 'NOC & Core Network' },
   { id: 'BT-10214', name: 'Budi Santoso', dept: 'Field Transmission' },
@@ -87,7 +61,15 @@ const PRESET_PERSONAS = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>('home');
+  const [initialSummaryState] = useState(() => {
+    const history = readSummaryHistory();
+    const session = readSummarySession();
+    const selected = session?.open ? history.find(item => item.meetingId === session.meetingId) : undefined;
+    return { history, session: session?.open ? session : null, selected };
+  });
+  const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(initialSummaryState.session ? 'summary' : 'home');
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
   const [schedules, setSchedules] = useState<ScheduledMeeting[]>([]);
@@ -116,28 +98,71 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
   // Active call state
-  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(initialSummaryState.selected?.transcripts || initialSummaryState.session?.transcripts || []);
   const [activeTab, setActiveTab] = useState<'transcript' | 'attendance'>('transcript');
   const [callDuration, setCallDuration] = useState('00:00');
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
-  const [isSummarizing, setIsSummarizing] = useState(false);
-  const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected));
+  const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(null);
-  const [summaryToken, setSummaryToken] = useState<string | null>(null);
-  const [summaryRoomName, setSummaryRoomName] = useState<string>('');
+  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialSummaryState.session?.meetingId || null);
+  const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || null);
+  const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || '');
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
   const [callError, setCallError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
   const [recordingPending, setRecordingPending] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null }>({
     onSaved: ({ entry }) => { if (entry) setTranscripts(previous => mergeTranscripts(previous, [entry])); },
     onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
   }));
+
+  useEffect(() => {
+    const session = readSummarySession();
+    if (session) saveSummarySession({ ...session, open: view === 'summary' });
+  }, [view]);
+
+  useEffect(() => {
+    const session = initialSummaryState.session;
+    if (!session || initialSummaryState.selected) return;
+    const controller = new AbortController();
+    const generation = ++summaryGeneration.current;
+    void apiRequest<{ summary: MeetingSummary | null; transcripts: TranscriptEntry[] }>(meetingPath(session.meetingId, 'transcript'), {
+      headers: { Authorization: 'Bearer ' + session.token }, signal: controller.signal,
+    }).then(data => {
+      if (controller.signal.aborted || generation !== summaryGeneration.current) return;
+      if (!validSummary(data.summary)) {
+        setSummaryError('Notulen belum selesai saat halaman dimuat ulang. Coba ambil atau buat notulen lagi.');
+        return;
+      }
+      setSummary(data.summary); setTranscripts(data.transcripts);
+      const record: SummaryRecord = { meetingId: session.meetingId, roomName: session.roomName, savedAt: data.summary.generatedAt || new Date().toISOString(), summary: data.summary, transcripts: data.transcripts };
+      const next = upsertSummary(readSummaryHistory(), record);
+      setSummaryHistory(next);
+      if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
+    }).catch(error => {
+      if (!controller.signal.aborted && generation === summaryGeneration.current) setSummaryError(error instanceof Error ? error.message : 'Gagal memulihkan notulen.');
+    }).finally(() => {
+      if (!controller.signal.aborted && generation === summaryGeneration.current) setIsSummarizing(false);
+    });
+    return () => controller.abort();
+  }, [initialSummaryState]);
+
+  const openSavedSummary = (record: SummaryRecord) => {
+    summaryGeneration.current++;
+    setIsSummarizing(false); setSummaryError(null); setCopied(false);
+    setSummary(record.summary); setTranscripts(record.transcripts);
+    setSummaryMeetingId(record.meetingId); setSummaryRoomName(record.roomName);
+    const savedToken = summaryTokenFor(record.meetingId);
+    setSummaryToken(savedToken);
+    if (!saveSummarySession({ meetingId: record.meetingId, roomName: record.roomName, token: savedToken, transcripts: record.transcripts, open: true })) {
+      setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
+    }
+    setView('summary');
+  };
 
   // Backend Health and LLM status
   const [backendHealth, setBackendHealth] = useState<{
@@ -298,7 +323,7 @@ export default function App() {
       setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
-      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecording(false); setRecordingError(null);
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
@@ -334,7 +359,7 @@ export default function App() {
         transcriptCount: data.summary.transcriptCount || fallbackTranscripts.length,
       });
       const isOtherActive = left && typeof left === 'object' && 'status' in left && left.status === 'active';
-      setSummary(
+      const completedSummary =
         isOtherActive
           ? {
               ...data.summary,
@@ -345,8 +370,12 @@ export default function App() {
                 .filter(Boolean)
                 .join(' '),
             }
-          : data.summary
-      );
+          : data.summary;
+      setSummary(completedSummary);
+      const record: SummaryRecord = { meetingId: targetMeetingId, roomName: targetRoomName, savedAt: data.summary.generatedAt || new Date().toISOString(), summary: completedSummary, transcripts: fallbackTranscripts };
+      const next = upsertSummary(readSummaryHistory(), record);
+      setSummaryHistory(next);
+      if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
     } catch (error) {
       if (generation !== summaryGeneration.current) return;
       setSummaryError(
@@ -377,7 +406,7 @@ export default function App() {
     setToken(null);
     setMeetingStartTime(null);
     setCallDuration('00:00');
-    setRecording(false); setRecordingPending(false); setRecordingError(null);
+    setRecordingPending(false); setRecordingError(null);
 
     // 2. Notify backend of leave in background
     const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
@@ -397,6 +426,9 @@ export default function App() {
     }
 
     // 3. Immediately transition to summary view with loading card
+    if (!saveSummarySession({ meetingId: currentMeetingId, roomName: currentRoomName, token: currentToken, transcripts: capturedTranscripts, open: true })) {
+      setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
+    }
     setView('summary');
     setIsSummarizing(true);
     setSummary(null);
@@ -416,6 +448,8 @@ export default function App() {
   const handleRetrySummarize = () => {
     if (summaryMeetingId && summaryToken) {
       void triggerSummarize(summaryMeetingId, summaryToken, summaryRoomName || roomName, transcripts);
+    } else {
+      setSummaryError('Sesi akses rapat sudah tidak tersedia. Hasil yang tersimpan masih dapat dibaca dan disalin dari riwayat.');
     }
   };
 
@@ -444,21 +478,21 @@ export default function App() {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
     }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
-  const handleToggleRecording = async () => {
+  const handleToggleRecording = async (enabled: boolean) => {
     if (!meetingId || !token || recordingPending) return;
+    const generation = joinGeneration.current;
     setRecordingPending(true); setRecordingError(null);
     try {
-      const action = recording ? 'stop' : 'start';
-      const data = await apiRequest<{ success: boolean; recording: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
+      const action = enabled ? 'start' : 'stop';
+      await apiRequest<{ success: boolean; recording: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: '{}',
       }, 15000);
-      setRecording(data.recording?.status === 'active');
     } catch (error) {
-      setRecordingError(error instanceof Error ? error.message : `Gagal ${recording ? 'menghentikan' : 'memulai'} rekaman.`);
+      if (generation === joinGeneration.current) setRecordingError(error instanceof Error ? error.message : `Gagal ${enabled ? 'memulai' : 'menghentikan'} rekaman.`);
     } finally {
-      setRecordingPending(false);
+      if (generation === joinGeneration.current) setRecordingPending(false);
     }
   };
 
@@ -466,7 +500,7 @@ export default function App() {
     if (!summary) return;
     const md = `
 # Notulen BaliTower Sentra: ${summary.title}
-**Tanggal:** ${new Date().toLocaleDateString('id-ID')} | **Ruang:** ${roomName}
+**Tanggal:** ${new Date(summary?.generatedAt || Date.now()).toLocaleDateString('id-ID')} | **Ruang:** ${summaryRoomName || roomName}
 **Peserta:** ${summary.attendanceSummary?.join(', ') || 'Belum tercatat'}
 **Layanan ringkasan:** ${summary.provider || 'Tidak diketahui'}
 
@@ -514,13 +548,13 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          hasSummary={Boolean(summary) || isSummarizing || Boolean(summaryError)}
+          hasSummary={summaryHistory.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
           onSchedule={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('schedule'); }}
           onSettings={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('settings'); }}
-          onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('summary'); }}
+          onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); if (!summary && !isSummarizing && !summaryError && summaryHistory[0]) openSavedSummary(summaryHistory[0]); else setView('summary'); }}
         />
       )}
       <div className="workspace-body">
@@ -605,7 +639,6 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView
             joinMedia={joinMedia}
-            recording={recording}
             recordingPending={recordingPending}
             recordingError={recordingError}
             onToggleRecording={handleToggleRecording}
@@ -630,8 +663,17 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           />
         )}
 
+        {view === 'summary' && <div className="summary-history">
+          <h2>Riwayat notulen</h2>
+          <p>20 hasil terakhir tersimpan di browser ini. Buka kembali untuk membaca atau menyalin notulen.</p>
+          {historyNotice && <div className="summary-history-notice" role="status">{historyNotice}</div>}
+          <div className="summary-history-list">{summaryHistory.map(record => <button type="button" key={record.meetingId} aria-pressed={record.meetingId === summaryMeetingId} onClick={() => openSavedSummary(record)}>
+            <strong>{record.summary.title}</strong><small>{record.roomName} · {new Date(record.savedAt).toLocaleString('id-ID')}</small>
+          </button>)}</div>
+        </div>}
         {view === 'summary' && (
           <SummaryView
+            key={summaryMeetingId || 'no-summary'}
             summary={summary}
             roomName={summaryRoomName || roomName}
             meetingId={summaryMeetingId || meetingId || ''}
@@ -666,7 +708,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
 function InCallView({
   joinMedia, callPreferences,
-  recording, recordingPending, recordingError, onToggleRecording,
+  recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
@@ -692,7 +734,7 @@ function InCallView({
   }, []);
   const onConnected = useCallback(() => setConnectionError(null), []);
   return (
-    <div style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
+    <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
     {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
     <LiveKitRoom
       serverUrl={serverUrl}
@@ -702,12 +744,11 @@ function InCallView({
       onConnected={onConnected}
       audio={joinMedia.microphoneEnabled}
       options={mediaOptions}
-      style={{ display: 'flex', flex: 1, overflow: 'hidden' }}
+      style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
       <RoomContent
         startWithCamera={joinMedia.cameraEnabled}
-        recording={recording}
         recordingPending={recordingPending}
         recordingError={recordingError}
         onToggleRecording={onToggleRecording}
@@ -730,7 +771,7 @@ function InCallView({
 }
 
 function RoomContent({
-  startWithCamera, callPreferences, recording, recordingPending, recordingError, onToggleRecording,
+  startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -803,13 +844,13 @@ function RoomContent({
     screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
     screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
     devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error || preferredOutputError} onOpenDevices={() => setDevicesOpen(true)}
-    spotlightIdentity={spotlightIdentity} autoSpotlight={callPreferences.autoSpotlight} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
+    spotlightIdentity={spotlightIdentity} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
     setSttProvider={setSttProvider} speechLanguage={speechLanguage} setSpeechLanguage={setSpeechLanguage}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
-    recording={recording} recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
+    recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
   />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }
@@ -849,6 +890,14 @@ function SummaryView({
     setExportError(null);
 
     try {
+      if (!token && format === 'json') {
+        const blob = new Blob([JSON.stringify({ meetingId, roomName, summary, transcripts, source: 'browser-history' }, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a'); anchor.href = url; anchor.download = `balicall-meeting-${meetingId}.json`;
+        document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+        return;
+      }
+      if (!token) throw new Error('Sesi akses unduhan server sudah berakhir. Salin notulen atau unduh JSON dari riwayat browser.');
       const response = await fetch(
         `${API_BASE}${meetingPath(meetingId, `export/${format}`)}`,
         {
@@ -1067,6 +1116,7 @@ function SummaryView({
         </header>
 
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
+        {!token && <div className="summary-note">Hasil ini dibuka dari riwayat browser. Salin notulen atau unduh JSON; PDF server memerlukan sesi akses rapat yang masih berlaku.</div>}
 
         {exportError && (
           <div className="summary-note" role="alert">

@@ -9,4 +9,3 @@ insecure: true
 
 redis:
   address: redis:6379
-

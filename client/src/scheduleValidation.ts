@@ -3,6 +3,7 @@ export interface ScheduleValidationResult {
   error: string | null;
   startDateTime?: Date;
   endDateTime?: Date;
+  crossesMidnight?: boolean;
 }
 
 export function pad2(num: number): string {
@@ -24,6 +25,38 @@ export function slugify(text: string): string {
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Generates recommended room slug from meeting title with day-of-month suffix.
+ * Returns empty string if title has no slugifiable characters.
+ */
+export function generateRecommendedSlug(
+  title: string,
+  dateOrDay: Date | number | string = new Date()
+): string {
+  const baseSlug = slugify(title);
+  if (!baseSlug) return '';
+
+  let dayStr = '';
+  if (typeof dateOrDay === 'number') {
+    dayStr = pad2(dateOrDay);
+  } else if (typeof dateOrDay === 'string') {
+    const parts = dateOrDay.split('-');
+    if (parts.length === 3 && parts[2]) {
+      const parsedDay = Number(parts[2]);
+      dayStr = isNaN(parsedDay) ? pad2(new Date().getDate()) : pad2(parsedDay);
+    } else {
+      const parsed = new Date(dateOrDay);
+      dayStr = isNaN(parsed.getDate()) ? pad2(new Date().getDate()) : pad2(parsed.getDate());
+    }
+  } else if (dateOrDay instanceof Date && !isNaN(dateOrDay.getTime())) {
+    dayStr = pad2(dateOrDay.getDate());
+  } else {
+    dayStr = pad2(new Date().getDate());
+  }
+
+  return `${baseSlug}-${dayStr}`;
 }
 
 export const DURATION_PRESETS = [
@@ -63,7 +96,8 @@ export function validateScheduleTime(
   const [eHours, eMins] = endTimeStr.split(':').map(Number);
 
   const startDateTime = new Date(sYear, sMonth - 1, sDay, sHours, sMins, 0);
-  const endDateTime = new Date(sYear, sMonth - 1, sDay, eHours, eMins, 0);
+  let endDateTime = new Date(sYear, sMonth - 1, sDay, eHours, eMins, 0);
+  let crossesMidnight = false;
 
   // 1. Check if date is in the past
   const now = new Date(currentEpoch);
@@ -84,13 +118,29 @@ export function validateScheduleTime(
     };
   }
 
-  // 3. Check if end time is after start time
+  // 3. Check if end time is after start time or qualifies as a cross-midnight meeting
   if (endDateTime.getTime() <= startDateTime.getTime()) {
-    return {
-      valid: false,
-      error: 'Waktu selesai harus lebih lambat dari waktu mulai rapat.',
-    };
+    if (endDateTime.getTime() === startDateTime.getTime()) {
+      return {
+        valid: false,
+        error: 'Waktu selesai harus lebih lambat dari waktu mulai rapat.',
+      };
+    }
+
+    const nextDayEnd = new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000);
+    const durationMinutes = (nextDayEnd.getTime() - startDateTime.getTime()) / (60 * 1000);
+
+    // Overnight meetings starting in the evening/night with a realistic duration (<= 8 hours)
+    if (sHours >= 17 && durationMinutes <= 8 * 60) {
+      endDateTime = nextDayEnd;
+      crossesMidnight = true;
+    } else {
+      return {
+        valid: false,
+        error: 'Waktu selesai harus lebih lambat dari waktu mulai rapat.',
+      };
+    }
   }
 
-  return { valid: true, error: null, startDateTime, endDateTime };
+  return { valid: true, error: null, startDateTime, endDateTime, crossesMidnight };
 }

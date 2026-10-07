@@ -2,9 +2,9 @@
 // Media and recognition are fixtures. No company DB or Office LLM requests.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 process.env.DATABASE_URL = '';
 const { createApp } = await import('../server/app.js');
@@ -12,8 +12,10 @@ const { loadConfig } = await import('../server/config.js');
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const key = 'sentra.meeting-preferences.v1';
-const output = fileURLToPath(new URL('../docs/screenshots/', import.meta.url));
+const output = process.env.SETTINGS_SCREENSHOT_DIR || fileURLToPath(new URL('../docs/screenshots/', import.meta.url));
 await mkdir(output, { recursive: true });
+const reportPath = process.env.SETTINGS_REPORT_PATH || fileURLToPath(new URL('../docs/verification/SETTINGS_VERIFICATION.json', import.meta.url));
+await mkdir(dirname(reportPath), { recursive: true });
 const dataDirectory = await mkdtemp(join(tmpdir(), 'balicall-settings-test-'));
 const config = { ...loadConfig({ LLM_PROVIDER: 'demo' }), dataFile: join(dataDirectory, 'meetings.json') };
 const { app, store } = createApp(config);
@@ -21,7 +23,7 @@ const server = app.listen(0, '127.0.0.1');
 await new Promise(resolve => server.once('listening', resolve));
 const url = `http://127.0.0.1:${server.address().port}`;
 config.corsOrigins.push(url);
-const report = { status: 'failed', timestamp: new Date().toISOString(), checks: [], pageErrors: [], accessibility: [], source: 'main ffbd333 scheduling + P1 settings integration', media: 'synthetic', database: 'disabled', llm: 'demo / simulated responses' };
+const report = { status: 'failed', timestamp: new Date().toISOString(), checks: [], pageErrors: [], accessibility: [], source: 'workspace settings, scheduling and grid-first media layout', media: 'synthetic', database: 'disabled', llm: 'demo / simulated responses' };
 let browser;
 const sessions = [];
 async function fixture(context) {
@@ -113,20 +115,19 @@ try {
   await accessibility(page, 'audio-video-desktop');
   await page.screenshot({ path: join(output, 'settings-audio-video-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Tampilan Rapat', exact: true }).click();
-  await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).uncheck();
   await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).uncheck();
   await page.getByRole('switch', { name: /Kurangi animasi/ }).check();
   await page.getByRole('button', { name: 'Simpan perubahan', exact: true }).click();
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
-  assert.equal(saved.preferences.outputId, 'speaker-b'); assert.equal(saved.preferences.autoSpotlight, false);
+  assert.equal(saved.preferences.outputId, 'speaker-b'); assert.equal(saved.preferences.mirrorLocalVideo, false);
   await page.reload(); await page.getByRole('button', { name: 'Pengaturan', exact: true }).click();
   await page.getByRole('button', { name: /Tampilan Rapat.*Tersedia/ }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
-  await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).focus();
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
+  await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).focus();
   await page.keyboard.press('Space');
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), true);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), true);
   await page.getByRole('button', { name: 'Batal', exact: true }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
   assert.equal(await page.locator('.app-root.reduce-motion').count(), 1);
   await accessibility(page, 'display-desktop');
   await page.screenshot({ path: join(output, 'settings-display-desktop.png'), fullPage: true });
@@ -170,7 +171,7 @@ try {
   await page.locator('.workspace-sidebar').getByRole('button', { name: 'Pengaturan', exact: true }).click();
   await page.getByText('Workspace / Pengaturan', { exact: true }).waitFor();
   await page.getByRole('button', { name: /Tampilan Rapat.*Tersedia/ }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
   await page.locator('.workspace-sidebar').getByRole('button', { name: 'Jadwal rapat', exact: true }).click();
   await checkLayout(page);
   await page.screenshot({ path: join(output, 'settings-schedule-mobile.png'), fullPage: true });
@@ -183,7 +184,30 @@ try {
   report.checks.push('Scheduling UI creates its own fixture via API, both sidebar menus and breadcrumbs work at desktop/mobile, saved settings survive navigation, scheduled join receives room code and media defaults');
   const first = await joinRoom(page, scheduledRoom);
   assert.equal(await page.evaluate(() => window.__captureRequests.length), 0);
-  assert.equal(await page.locator('.spotlight-grid').count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Grid', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.getByRole('button', { name: 'Lainnya', exact: true }).click();
+  let releaseRecording;
+  const recordingHeld = new Promise(resolve => { releaseRecording = resolve; });
+  await page.route('**/recording/start', async route => {
+    assert.equal(route.request().headers().authorization, `Bearer ${first.token}`);
+    assert.equal(new URL(route.request().url()).pathname, `/api/meetings/${first.meetingId}/recording/start`);
+    await recordingHeld;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Recording fixture: Egress belum tersedia' }) });
+  });
+  const recordingRequest = page.waitForRequest(request => request.url().endsWith('/recording/start'));
+  await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).click(); await recordingRequest;
+  assert.equal(await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).isDisabled(), true);
+  await page.getByText('Tidak merekam', { exact: true }).waitFor();
+  releaseRecording(); await page.getByText('Recording fixture: Egress belum tersedia', { exact: true }).waitFor();
+  await page.unroute('**/recording/start');
+  await page.route('**/recording/start', async route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, recording: { status: 'active' } }) }));
+  const recordingResponse = page.waitForResponse(response => response.url().endsWith('/recording/start'));
+  await page.getByRole('button', { name: 'Mulai rekaman', exact: true }).click(); await recordingResponse;
+  await page.waitForFunction(() => document.querySelector('[aria-label="Mulai rekaman"]').getAttribute('aria-busy') === 'false');
+  await page.getByText('Tidak merekam', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Recording fixture: Egress belum tersedia', { exact: true }).count(), 0);
+  await page.unroute('**/recording/start');
+  report.checks.push('Main recording control remains in More: authenticated start request, pending disable, error/retry; simulated API active response cannot override actual LiveKit recording state. Actual Egress recording not exercised');
   await page.getByRole('button', { name: 'Pengaturan perangkat', exact: true }).click();
   await page.getByLabel('Speaker / headphone', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Speaker / headphone', { exact: true }).inputValue(), 'speaker-b');
@@ -220,6 +244,32 @@ try {
   await page.getByRole('button', { name: 'Export PDF' }).click(); await page.getByText('DB export fixture unavailable', { exact: true }).waitFor();
   assert.equal(new URL(exportUrl).origin, url);
   report.checks.push('Notulen loading/error/retry render correctly, call media unmounts before response, retry succeeds via demo and PDF export respects same API origin');
+  const savedTitle = await page.locator('.summary-heading h1').innerText();
+  await page.reload(); await page.getByRole('heading', { name: savedTitle, exact: true }).waitFor();
+  await page.locator('.workspace-sidebar').getByRole('button', { name: 'Beranda', exact: true }).click();
+  await page.reload(); assert.equal(await page.locator('.summary-page').count(), 0);
+  await page.getByRole('button', { name: 'Notulen rapat', exact: true }).click();
+  await page.getByRole('heading', { name: savedTitle, exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Export PDF', exact: true }).click();
+  await page.getByText('DB export fixture unavailable', { exact: true }).waitFor();
+  await page.screenshot({ path: join(output, 'summary-history-reload.png'), fullPage: true });
+  report.checks.push('Completed end-call summary survives refresh, home navigation stays home on refresh, sidebar reopens saved recap and retains tab export access');
+  await page.evaluate(() => localStorage.removeItem('balicall.summary-history.v1'));
+  await page.reload(); await page.getByRole('heading', { name: savedTitle, exact: true }).waitFor();
+  assert.equal(await page.locator('.summary-history-list button').count(), 1);
+  await page.evaluate(() => localStorage.removeItem('balicall.summary-history.v1'));
+  await page.route('**/transcript', async route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ summary: null, transcripts: [] }) }));
+  let recoveryPosts = 0;
+  const countRecovery = request => { if (request.method() === 'POST' && request.url().endsWith('/summarize')) recoveryPosts++; };
+  page.on('request', countRecovery);
+  await page.reload();
+  await page.getByText('Notulen belum selesai saat halaman dimuat ulang. Coba ambil atau buat notulen lagi.', { exact: true }).waitFor();
+  assert.equal(recoveryPosts, 0);
+  await page.unroute('**/transcript');
+  await page.getByRole('button', { name: /Coba Buat Notulen Lagi/ }).click();
+  await page.getByRole('button', { name: 'Export PDF', exact: true }).waitFor();
+  assert.equal(recoveryPosts, 1); page.off('request', countRecovery);
+  report.checks.push('Reload without local result fetches existing server summary; unfinished result shows manual retry without automatically issuing duplicate AI requests');
 
   await page.getByRole('button', { name: 'Buat rapat', exact: true }).click(); const third = await joinRoom(page); await addLine(page, third);
   let releaseOld, startOld; const oldHeld = new Promise(resolve => { releaseOld = resolve; }); const oldStarted = new Promise(resolve => { startOld = resolve; });
@@ -236,7 +286,8 @@ try {
   assert.equal(await page.locator('.call-room').count(), 1);
   await page.getByRole('button', { name: 'Keluar', exact: true }).click();
   await page.getByRole('button', { name: 'Pengaturan', exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Notulen rapat', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Notulen rapat', exact: true }).isDisabled(), false);
+  assert.equal(await page.evaluate(() => localStorage.getItem('balicall.summary-history.v1').includes('STALE SUMMARY')), false);
   assert.equal(store.get(fourth.meetingId).status, 'ended');
   report.checks.push('A late summary from a previous meeting cannot overwrite a new meeting or restore stale recap navigation');
 
@@ -255,9 +306,24 @@ try {
   await page.unroute('**/transcript');
   await page.getByRole('button', { name: 'Coba simpan lagi', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.live-transcript-entry').length === 2);
-  await page.getByRole('button', { name: 'Keluar', exact: true }).click();
+  await page.getByRole('button', { name: 'Selesai & notulen', exact: true }).click();
+  await page.getByRole('button', { name: 'Export PDF', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Pengaturan', exact: true }).waitFor();
   report.checks.push('Failed transcript flush keeps the meeting open with a retry; successful retry preserves pending speech before leaving');
+  assert.equal(await page.locator('.summary-history-list button').count(), 2);
+  await page.locator('.summary-history-list button').last().click();
+  assert.equal(await page.locator('.summary-heading h1').innerText(), savedTitle);
+  await page.reload(); assert.equal(await page.locator('.summary-heading h1').innerText(), savedTitle);
+  const archiveContext = await browser.newContext({ storageState: await context.storageState() });
+  const archivePage = await archiveContext.newPage();
+  await archivePage.goto(url); await archivePage.getByRole('button', { name: 'Notulen rapat', exact: true }).click();
+  const downloadPromise = archivePage.waitForEvent('download');
+  await archivePage.getByRole('button', { name: 'Export JSON', exact: true }).click();
+  const download = await downloadPromise;
+  const archived = JSON.parse(await readFile(await download.path(), 'utf8'));
+  assert.equal(archived.source, 'browser-history'); assert.ok(archived.summary.title); assert.ok(archived.transcripts.length);
+  await archiveContext.close();
+  report.checks.push('Two completed recaps remain selectable; selected older recap survives refresh; a new browser session reads history and downloads local JSON without bearer credentials');
 
   const blockedContext = await browser.newContext(); await fixture(blockedContext);
   await blockedContext.addInitScript(() => { Storage.prototype.setItem = () => { throw new DOMException('Storage blocked', 'QuotaExceededError'); }; });
@@ -286,5 +352,5 @@ finally {
     try { await fetch(`${url}/api/meetings/${session.meetingId}/leave`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
   }
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  await writeFile(new URL('../docs/SETTINGS_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2));
+  await writeFile(reportPath, JSON.stringify(report, null, 2));
 }
