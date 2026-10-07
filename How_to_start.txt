@@ -1,0 +1,97 @@
+# BaliCall Local Setup
+
+## 1. Docker
+
+### Install
+
+```text
+https://www.docker.com/products/docker-desktop/
+```
+
+### WSL
+
+```powershell
+wsl --install
+```
+
+### Restart Windows
+
+### Jalankan Docker Desktop
+
+### Verifikasi
+
+```powershell
+docker --version
+docker compose version
+```
+
+---
+
+## 2. Setup Project
+
+```powershell
+npm run setup
+```
+
+---
+
+## 3. Terminal 1 — LiveKit + Egress + Redis
+
+```powershell
+cd infrastructure/livekit
+docker compose up -d
+```
+
+---
+
+## 4. Terminal 2 — Backend API
+
+```powershell
+npm run server
+```
+
+Output:
+
+```text
+Backend API: http://localhost:3001
+```
+
+---
+
+## 5. Terminal 3 — Frontend Client
+
+```powershell
+npm run client
+```
+
+Output:
+
+```text
+Frontend: http://localhost:5187
+```
+
+---
+
+## 6. Open Application
+
+```text
+http://localhost:5187
+```
+
+---
+
+## 7. Stop LiveKit
+
+```powershell
+cd infrastructure/livekit
+docker compose down
+```
+
+---
+
+## 8. Start LiveKit Again
+
+```powershell
+cd infrastructure/livekit
+docker compose up -d
+```
