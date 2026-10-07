@@ -55,7 +55,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   const webhookLogs = [];
 
   app.use(cors({ origin(origin, callback) {
-    callback(null, !origin || config.corsOrigins.includes(origin));
+    if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
+    try {
+      const url = new URL(origin);
+      if (url.port === '5187' && (/^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(url.hostname))) {
+        return callback(null, true);
+      }
+    } catch {}
+    callback(null, false);
   } }));
 
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
