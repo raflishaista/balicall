@@ -4,7 +4,7 @@ import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
+import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
 import {
@@ -50,6 +50,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   const verifier = new TokenVerifier(config.livekitKey, config.livekitSecret);
   const webhookReceiver = new WebhookReceiver(config.livekitKey, config.livekitSecret);
   const roomService = new RoomServiceClient(config.livekitInternalUrl.replace(/^ws/, 'http'), config.livekitKey, config.livekitSecret, { requestTimeout: 1.5 });
+  const egressClient = new EgressClient(config.livekitInternalUrl.replace(/^ws/, 'http'), config.livekitKey, config.livekitSecret);
   const probe = livekitProbe || (() => roomService.listRooms());
   const inFlightAudio = new Map();
   const webhookLogs = [];
@@ -320,18 +321,124 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
     res.json({ participant: store.presence(req.meetingId, req.speakerId, req.body.connected) });
   });
 
+  app.post('/api/meetings/:id/recording/start', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+
+    if (meeting.status !== 'active') {
+      return res.status(409).json({ error: 'Meeting sudah selesai.' });
+    }
+
+    if (meeting.recording?.status === 'active') {
+      return res.status(409).json({
+        error: 'Recording sudah berjalan.',
+        recording: meeting.recording,
+      });
+    }
+
+    const filepath = `/out/${meeting.livekitRoom}.mp4`;
+
+    const result = await egressClient.startRoomCompositeEgress(
+      meeting.livekitRoom,
+      {
+        file: {
+          filepath,
+          fileType: 1,
+        },
+      },
+    );
+
+    const recording = {
+      egressId: result.egressId,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+      stoppedAt: null,
+      filepath,
+    };
+
+    store.transact(() => {
+      store.get(req.meetingId).recording = recording;
+    });
+
+    res.json({
+      success: true,
+      recording,
+    });
+  }));
+
   app.post('/api/meetings/:id/leave', asyncRoute(async (req, res) => {
     const updated = store.leave(req.meetingId, req.speakerId);
+
+    if (
+      updated.status === 'ended' &&
+      updated.recording?.egressId &&
+      updated.recording.status === 'active'
+    ) {
+      try {
+        await egressClient.stopEgress(updated.recording.egressId);
+
+        store.transact(() => {
+          const meeting = store.get(req.meetingId);
+
+          if (meeting.recording?.status === 'active') {
+            meeting.recording = {
+              ...meeting.recording,
+              status: 'stopped',
+              stoppedAt: new Date().toISOString(),
+            };
+          }
+        });
+      } catch (recordingError) {
+        console.warn(
+          '[RECORDING] Could not stop Egress:',
+          recordingError.message,
+        );
+      }
+    }
+
     try {
       await saveMeeting(updated);
       await saveAttendees(updated.id, [...updated.participants.values()]);
+
       if (updated.transcripts?.length) {
         await saveTranscripts(updated.id, updated.roomName, updated.transcripts);
       }
     } catch (dbErr) {
       console.warn('[DB] Could not update leave status in database:', dbErr.message);
     }
-    res.json({ success: true, status: updated.status });
+
+    res.json({
+      success: true,
+      status: updated.status,
+      recording: store.get(req.meetingId).recording,
+    });
+  }));
+
+  app.post('/api/meetings/:id/recording/stop', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    const recording = meeting.recording;
+
+    if (!recording?.egressId || recording.status !== 'active') {
+      return res.status(409).json({
+        error: 'Tidak ada recording yang sedang berjalan.',
+      });
+    }
+
+    await egressClient.stopEgress(recording.egressId);
+
+    const stoppedAt = new Date().toISOString();
+
+    store.transact(() => {
+      store.get(req.meetingId).recording = {
+        ...recording,
+        status: 'stopped',
+        stoppedAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      recording: store.get(req.meetingId).recording,
+    });
   }));
 
   app.post('/api/meetings/:id/audio', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '5mb' }), asyncRoute(async (req, res) => {

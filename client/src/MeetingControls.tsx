@@ -1,11 +1,12 @@
-import { AudioLines, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff } from 'lucide-react';
+import { AudioLines, Circle, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Square, Users, Video, VideoOff } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, onFinish }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onToggleRecording, onOpenDevices, onParticipants, onFinish }: {
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
   speechEnabled: boolean; speechError: string | null; isListening: boolean; saveBlocked: boolean; finishLabel: string | null;
+  recording: boolean; recordingPending: boolean;
   onToggleMute: () => Promise<void>; onToggleCamera: () => Promise<void>; onToggleScreenShare: () => Promise<void>;
-  onToggleTranscription: () => void; onOpenDevices: () => void; onParticipants: () => void; onFinish: (generate: boolean) => void;
+  onToggleTranscription: () => void; onToggleRecording: () => Promise<void>; onOpenDevices: () => void; onParticipants: () => void; onFinish: (generate: boolean) => void;
 }) {
   return <footer className="call-control-bar" role="group" aria-label="Kontrol rapat" id="meeting-controls">
     <div className="call-controls">
@@ -18,13 +19,24 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       <button type="button" className={`call-control ${isScreenShareEnabled ? 'control-active' : ''}`} aria-label={isScreenShareEnabled ? 'Hentikan berbagi layar' : 'Bagikan layar'} aria-pressed={isScreenShareEnabled} aria-busy={screenSharePending} disabled={busy || screenSharePending || !connected || (!screenShareSupported && !isScreenShareEnabled)} onClick={() => void onToggleScreenShare()}>
         {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
       </button>
-      <button type="button" className={`call-control ${isListening ? 'control-active' : ''}`} aria-label={speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkripsi' : 'Mulai transkripsi'} aria-pressed={speechEnabled && !speechError} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={22} /><span>{speechError ? 'Coba transkrip' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span></button>
-      <button type="button" className="call-control" aria-label="Pengaturan perangkat" aria-haspopup="dialog" disabled={busy || !connected} onClick={onOpenDevices}><Settings2 size={22} /><span>Perangkat</span></button>
-      <button type="button" className="call-control" onClick={onParticipants}><Users size={22} /><span>Peserta</span></button>
+      <button type="button" className={`call-control ${isListening ? 'control-active' : ''}`} aria-label={speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkripsi' : 'Mulai transkripsi'} aria-pressed={speechEnabled && !speechError} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}>
+        <AudioLines size={22} /><span>{speechError ? 'Coba transkrip' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span>
+      </button>
+      <button type="button" className={`call-control ${recording ? 'control-active' : ''}`} aria-label={recording ? 'Hentikan rekaman' : 'Mulai rekaman'} aria-pressed={recording} aria-busy={recordingPending} disabled={busy || recordingPending || !connected} onClick={() => void onToggleRecording()}>
+        {recordingPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : recording ? <Square size={22} /> : <Circle size={22} />}<span>{recordingPending ? 'Memproses…' : recording ? 'Hentikan rekaman' : 'Rekam'}</span>
+      </button>
+      <button type="button" className="call-control" aria-label="Pengaturan perangkat" aria-haspopup="dialog" disabled={busy || !connected} onClick={onOpenDevices}>
+        <Settings2 size={22} /><span>Perangkat</span>
+      </button>
+      <button type="button" className="call-control" onClick={onParticipants}>
+        <Users size={22} /><span>Peserta</span>
+      </button>
     </div>
     <div className="leave-controls">
       <button type="button" className="leave-simple" disabled={busy} onClick={() => onFinish(false)}>Keluar</button>
-      <button type="button" className="leave-button" disabled={busy} onClick={() => onFinish(true)} aria-busy={busy}>{busy && <Loader2 className="ui-spinner" size={16} aria-hidden="true" />}{busy ? finishLabel : <><PhoneOff size={18} />Selesai &amp; notulen</>}</button>
+      <button type="button" className="leave-button" disabled={busy} onClick={() => onFinish(true)} aria-busy={busy}>
+        {busy && <Loader2 className="ui-spinner" size={16} aria-hidden="true" />}{busy ? finishLabel : <><PhoneOff size={18} />Selesai &amp; notulen</>}
+      </button>
     </div>
   </footer>;
 }
