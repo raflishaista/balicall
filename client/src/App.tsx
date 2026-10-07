@@ -280,6 +280,23 @@ export default function App() {
     setSchedules(prev => prev.filter(s => s.id !== id));
   };
 
+  const handleReschedule = async (id: string, updateData: {
+    scheduledStart: string;
+    scheduledEnd: string;
+    title?: string;
+    description?: string;
+    roomName?: string;
+  }) => {
+    const data = await apiRequest<{ success: boolean; schedule: ScheduledMeeting }>(`/schedules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updateData),
+    });
+    if (data.schedule) {
+      setSchedules(prev => prev.map(s => s.id === id ? data.schedule : s).sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart)));
+    }
+  };
+
   const handleJoinScheduledRoom = (scheduledRoomName: string) => {
     setRoomName(scheduledRoomName);
     openLobby('join');
@@ -556,7 +573,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwal rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -603,6 +620,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             department={department}
             onBack={() => setView('home')}
             onCreateSchedule={handleCreateSchedule}
+            onReschedule={handleReschedule}
             onCancelSchedule={handleCancelSchedule}
             onJoinRoom={handleJoinScheduledRoom}
           />

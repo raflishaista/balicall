@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ========================================================
-echo   Bali Tower Voice Call, Video & AI Workspace
+echo   Bali Tower Voice Call, Video ^& AI Workspace
 echo ========================================================
 echo.
 
@@ -59,14 +59,19 @@ echo   Launching BaliCall Services...
 echo ========================================================
 echo.
 
-:: Launch 1: SFU Server (with webhook config if present)
-echo [1/3] Starting LiveKit SFU Server on Port 7880...
-if exist "livekit.yaml" (
-    start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
+:: Launch 1: SFU Server (skip if Docker or another instance is already running)
+netstat -ano | findstr ":7880" >nul
+if errorlevel 1 (
+    echo [1/3] Starting LiveKit SFU Server on Port 7880...
+    if exist "livekit.yaml" (
+        start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
+    ) else (
+        start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
+    )
+    ping -n 3 127.0.0.1 >nul
 ) else (
-    start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --dev"
+    echo [1/3] Port 7880 is already in use [Docker or background SFU is active]. Skipping native launch.
 )
-ping -n 3 127.0.0.1 >nul
 
 :: Launch 2: Backend Server
 echo [2/3] Starting Backend Server on Port 3001...

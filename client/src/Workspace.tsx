@@ -30,7 +30,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>
       <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
-      <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwal rapat</span></button>
+      <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>
       <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} disabled={!hasSummary} title={!hasSummary ? 'Tersedia setelah kamu menyelesaikan rapat' : 'Lihat notulen terakhir'} onClick={onSummary}><FileText size={19} /><span>Notulen rapat</span></button>
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
@@ -92,7 +92,7 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
     <div className="quick-actions">
       <button className="quick-action primary" onClick={onCreate}><span className="quick-action-icon"><Plus size={23} /></span><span><strong>Buat rapat</strong><small>Mulai ruang baru untuk tim</small></span><ChevronRight size={17} /></button>
       <button className="quick-action" onClick={() => onJoin()}><span className="quick-action-icon"><LogIn size={22} /></span><span><strong>Gabung rapat</strong><small>Masuk dengan kode ruang</small></span><ChevronRight size={17} /></button>
-      <button className="quick-action" onClick={onSchedule}><span className="quick-action-icon"><Calendar size={22} /></span><span><strong>Jadwal rapat</strong><small>Atur kalender & ruang masa depan</small></span><ChevronRight size={17} /></button>
+      <button className="quick-action" onClick={onSchedule}><span className="quick-action-icon"><Calendar size={22} /></span><span><strong>Jadwalkan rapat</strong><small>Atur kalender & ruang masa depan</small></span><ChevronRight size={17} /></button>
       <button className="quick-action" onClick={() => setGuideOpen(true)}><span className="quick-action-icon"><FileText size={21} /></span><span><strong>Panduan rapat</strong><small>Persiapkan suara dan transkrip</small></span><ChevronRight size={17} /></button>
     </div>
 

@@ -20,6 +20,7 @@ import {
   createSchedule,
   getUpcomingSchedules,
   cancelSchedule,
+  updateSchedule,
 } from './db.js';
 
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
@@ -282,6 +283,62 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
       return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
     }
     res.json({ success: true, message: 'Jadwal rapat berhasil dibatalkan.' });
+  }));
+
+  app.put('/api/schedules/:id', asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const {
+      scheduledStart,
+      scheduledEnd,
+      title,
+      description,
+      roomName,
+    } = req.body || {};
+
+    if (!scheduledStart || !scheduledEnd) {
+      return res.status(400).json({ error: 'Waktu mulai dan waktu selesai rapat baru wajib ditentukan.' });
+    }
+
+    const startTime = Date.parse(scheduledStart);
+    const endTime = Date.parse(scheduledEnd);
+
+    if (isNaN(startTime) || isNaN(endTime)) {
+      return res.status(400).json({ error: 'Format tanggal atau waktu rapat tidak valid.' });
+    }
+
+    // Validation: Start time cannot be in the past (allow 60s tolerance for network latency)
+    if (startTime < Date.now() - 60000) {
+      return res.status(400).json({
+        error: 'Waktu mulai rapat tidak boleh di masa lalu. Harap pilih tanggal dan jam yang akan datang.',
+        code: 'PAST_TIME_NOT_ALLOWED',
+      });
+    }
+
+    // Validation: End time must be after start time
+    if (endTime <= startTime) {
+      return res.status(400).json({
+        error: 'Waktu selesai rapat harus setelah waktu mulai.',
+        code: 'INVALID_TIME_RANGE',
+      });
+    }
+
+    const updated = await updateSchedule(id, {
+      scheduledStart,
+      scheduledEnd,
+      title: title ? title.trim() : undefined,
+      description: description !== undefined ? description.trim() : undefined,
+      roomName: roomName ? roomName.trim() : undefined,
+    });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Jadwal rapat berhasil diperbarui.',
+      schedule: updated,
+    });
   }));
 
   // Meeting authorization middleware
