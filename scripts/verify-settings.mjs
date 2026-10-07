@@ -12,7 +12,7 @@ const { loadConfig } = await import('../server/config.js');
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const key = 'sentra.meeting-preferences.v1';
-const output = fileURLToPath(new URL('../docs/screenshots/', import.meta.url));
+const output = process.env.SETTINGS_SCREENSHOT_DIR || fileURLToPath(new URL('../docs/screenshots/', import.meta.url));
 await mkdir(output, { recursive: true });
 const dataDirectory = await mkdtemp(join(tmpdir(), 'balicall-settings-test-'));
 const config = { ...loadConfig({ LLM_PROVIDER: 'demo' }), dataFile: join(dataDirectory, 'meetings.json') };
@@ -21,7 +21,7 @@ const server = app.listen(0, '127.0.0.1');
 await new Promise(resolve => server.once('listening', resolve));
 const url = `http://127.0.0.1:${server.address().port}`;
 config.corsOrigins.push(url);
-const report = { status: 'failed', timestamp: new Date().toISOString(), checks: [], pageErrors: [], accessibility: [], source: 'main ffbd333 scheduling + P1 settings integration', media: 'synthetic', database: 'disabled', llm: 'demo / simulated responses' };
+const report = { status: 'failed', timestamp: new Date().toISOString(), checks: [], pageErrors: [], accessibility: [], source: 'workspace settings, scheduling and grid-first media layout', media: 'synthetic', database: 'disabled', llm: 'demo / simulated responses' };
 let browser;
 const sessions = [];
 async function fixture(context) {
@@ -113,20 +113,19 @@ try {
   await accessibility(page, 'audio-video-desktop');
   await page.screenshot({ path: join(output, 'settings-audio-video-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Tampilan Rapat', exact: true }).click();
-  await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).uncheck();
   await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).uncheck();
   await page.getByRole('switch', { name: /Kurangi animasi/ }).check();
   await page.getByRole('button', { name: 'Simpan perubahan', exact: true }).click();
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
-  assert.equal(saved.preferences.outputId, 'speaker-b'); assert.equal(saved.preferences.autoSpotlight, false);
+  assert.equal(saved.preferences.outputId, 'speaker-b'); assert.equal(saved.preferences.mirrorLocalVideo, false);
   await page.reload(); await page.getByRole('button', { name: 'Pengaturan', exact: true }).click();
   await page.getByRole('button', { name: /Tampilan Rapat.*Tersedia/ }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
-  await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).focus();
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
+  await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).focus();
   await page.keyboard.press('Space');
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), true);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), true);
   await page.getByRole('button', { name: 'Batal', exact: true }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
   assert.equal(await page.locator('.app-root.reduce-motion').count(), 1);
   await accessibility(page, 'display-desktop');
   await page.screenshot({ path: join(output, 'settings-display-desktop.png'), fullPage: true });
@@ -170,7 +169,7 @@ try {
   await page.locator('.workspace-sidebar').getByRole('button', { name: 'Pengaturan', exact: true }).click();
   await page.getByText('Workspace / Pengaturan', { exact: true }).waitFor();
   await page.getByRole('button', { name: /Tampilan Rapat.*Tersedia/ }).click();
-  assert.equal(await page.getByRole('switch', { name: /Sorotan pembicara otomatis/ }).isChecked(), false);
+  assert.equal(await page.getByRole('switch', { name: /Cerminkan video kamera sendiri/ }).isChecked(), false);
   await page.locator('.workspace-sidebar').getByRole('button', { name: 'Jadwal rapat', exact: true }).click();
   await checkLayout(page);
   await page.screenshot({ path: join(output, 'settings-schedule-mobile.png'), fullPage: true });
@@ -183,7 +182,8 @@ try {
   report.checks.push('Scheduling UI creates its own fixture via API, both sidebar menus and breadcrumbs work at desktop/mobile, saved settings survive navigation, scheduled join receives room code and media defaults');
   const first = await joinRoom(page, scheduledRoom);
   assert.equal(await page.evaluate(() => window.__captureRequests.length), 0);
-  assert.equal(await page.locator('.spotlight-grid').count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Grid', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.getByRole('button', { name: 'Lainnya', exact: true }).click();
   await page.getByRole('button', { name: 'Pengaturan perangkat', exact: true }).click();
   await page.getByLabel('Speaker / headphone', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Speaker / headphone', { exact: true }).inputValue(), 'speaker-b');
@@ -286,5 +286,5 @@ finally {
     try { await fetch(`${url}/api/meetings/${session.meetingId}/leave`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
   }
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  await writeFile(new URL('../docs/SETTINGS_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2));
+  await writeFile(process.env.SETTINGS_REPORT_PATH || new URL('../docs/SETTINGS_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2));
 }

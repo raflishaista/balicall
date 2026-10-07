@@ -666,7 +666,7 @@ function InCallView({
   }, []);
   const onConnected = useCallback(() => setConnectionError(null), []);
   return (
-    <div style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
+    <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
     {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
     <LiveKitRoom
       serverUrl={serverUrl}
@@ -676,7 +676,7 @@ function InCallView({
       onConnected={onConnected}
       audio={joinMedia.microphoneEnabled}
       options={mediaOptions}
-      style={{ display: 'flex', flex: 1, overflow: 'hidden' }}
+      style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
       <RoomContent
@@ -773,7 +773,7 @@ function RoomContent({
     screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
     screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
     devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error || preferredOutputError} onOpenDevices={() => setDevicesOpen(true)}
-    spotlightIdentity={spotlightIdentity} autoSpotlight={callPreferences.autoSpotlight} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
+    spotlightIdentity={spotlightIdentity} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
