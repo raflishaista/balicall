@@ -1,6 +1,7 @@
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
 import { apiRequest, meetingPath, API_BASE } from './api';
 import { SettingsPage } from './SettingsPage';
+import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { usePreferences } from './usePreferences';
 import { mediaChoices } from './preferences';
 import type { MeetingPreferences } from './preferences';
@@ -946,11 +947,8 @@ function SummaryView({
         <section className="summary-card">
           <header className="summary-heading" style={{ borderBottom: '1px solid #e3ebf6', paddingBottom: '20px' }}>
             <div>
-              <div className="ai-processing-pill">
-                <Loader2 size={14} className="ui-spinner" />
-                <span>MEMPROSES NOTULEN AI</span>
-              </div>
-              <h1 style={{ marginTop: '12px' }}>Menyusun Notulen & Ringkasan Rapat...</h1>
+              <AIProcessingIndicator />
+              <h1 style={{ marginTop: '12px' }}>AI sedang menyusun notulen</h1>
               <p className="summary-meta">Panggilan telah diakhiri · Ruang <strong>#{roomName}</strong> · <strong>{transcripts.length} ucapan</strong> direkam</p>
             </div>
             <div className="summary-actions">
