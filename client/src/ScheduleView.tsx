@@ -130,17 +130,17 @@ export function ScheduleView({
 
   // Filtered upcoming schedules
   const filteredSchedules = useMemo(() => {
-    const today = new Date().toDateString();
+    const today = new Date(form.currentEpoch).toDateString();
     return schedules.filter(s => {
       if (filterTab === 'today') {
         return new Date(s.scheduledStart).toDateString() === today;
       }
       if (filterTab === 'upcoming') {
-        return new Date(s.scheduledStart).getTime() > Date.now();
+        return new Date(s.scheduledStart).getTime() > form.currentEpoch;
       }
       return true;
     });
-  }, [schedules, filterTab]);
+  }, [schedules, filterTab, form.currentEpoch]);
 
   return (
     <div className="schedule-page">
@@ -386,11 +386,11 @@ export function ScheduleView({
               filteredSchedules.map(item => {
                 const start = new Date(item.scheduledStart);
                 const end = new Date(item.scheduledEnd);
-                const isToday = start.toDateString() === new Date().toDateString();
+                const isToday = start.toDateString() === new Date(form.currentEpoch).toDateString();
                 const isCrossDay = end.toDateString() !== start.toDateString();
                 const isStartingSoon =
-                  start.getTime() - Date.now() <= 15 * 60000 &&
-                  end.getTime() >= Date.now();
+                  start.getTime() - form.currentEpoch <= 15 * 60000 &&
+                  end.getTime() >= form.currentEpoch;
 
                 return (
                   <article key={item.id} className="schedule-card-item">

@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
+import { useClock } from './useClock.ts';
 import {
   formatDateToInput,
   formatTimeToInput,
@@ -16,6 +17,7 @@ export interface UseScheduleFormParams {
 }
 
 export interface UseScheduleFormReturn {
+  currentEpoch: number;
   date: string;
   setDate: (value: string) => void;
   startTime: string;
@@ -56,7 +58,9 @@ export function useScheduleForm({
   department = 'NOC & Core Network',
   initialDate,
 }: UseScheduleFormParams = {}): UseScheduleFormReturn {
-  const now = initialDate || new Date();
+  const currentEpoch = useClock(initialDate?.getTime());
+  const [initialEpoch] = useState(() => currentEpoch);
+  const now = new Date(initialEpoch);
   const defaultStart = new Date(now.getTime() + (15 - (now.getMinutes() % 15 || 15)) * 60000);
   if (defaultStart.getTime() <= now.getTime()) {
     defaultStart.setMinutes(defaultStart.getMinutes() + 15);
@@ -72,27 +76,21 @@ export function useScheduleForm({
   const [roomSlug, setRoomSlug] = useState('');
   const [isSlugManual, setIsSlugManual] = useState(false);
   const [description, setDescription] = useState('');
-  const [activeHostId, setActiveHostId] = useState(employeeId);
-  const [activeHostName, setActiveHostName] = useState(employeeName);
-  const [activeDept, setActiveDept] = useState(department);
-
-  // Sync with user's persona if it was updated from outside
-  useEffect(() => {
-    if (employeeId && !title) {
-      setActiveHostId(employeeId);
-      setActiveHostName(employeeName);
-      setActiveDept(department);
-    }
-  }, [employeeId, employeeName, department, title]);
+  const [hostIdOverride, setActiveHostId] = useState<string | null>(null);
+  const [hostNameOverride, setActiveHostName] = useState<string | null>(null);
+  const [deptOverride, setActiveDept] = useState<string | null>(null);
+  const activeHostId = hostIdOverride ?? employeeId;
+  const activeHostName = hostNameOverride ?? employeeName;
+  const activeDept = deptOverride ?? department;
 
   // Minimum allowed date string: YYYY-MM-DD
-  const todayDateStr = formatDateToInput(new Date());
+  const todayDateStr = formatDateToInput(new Date(currentEpoch));
   const isSelectedDateToday = date === todayDateStr;
-  const currentHourMinuteStr = formatTimeToInput(new Date());
+  const currentHourMinuteStr = formatTimeToInput(new Date(currentEpoch));
 
   const validation = useMemo(() => {
-    return validateScheduleTime(date, startTime, endTime);
-  }, [date, startTime, endTime]);
+    return validateScheduleTime(date, startTime, endTime, currentEpoch);
+  }, [date, startTime, endTime, currentEpoch]);
 
   const handleDurationPreset = (minutes: number) => {
     setDurationMinutes(minutes);
@@ -114,6 +112,9 @@ export function useScheduleForm({
   };
 
   const handleTitleChange = (newTitle: string) => {
+    if (!title && newTitle) {
+      setActiveHostId(activeHostId); setActiveHostName(activeHostName); setActiveDept(activeDept);
+    }
     setTitle(newTitle);
     if (!isSlugManual || !roomSlug || roomSlug === generateRecommendedSlug(title, date)) {
       setRoomSlug(generateRecommendedSlug(newTitle, date));
@@ -135,9 +136,11 @@ export function useScheduleForm({
     setRoomSlug('');
     setDescription('');
     setIsSlugManual(false);
+    setActiveHostId(null); setActiveHostName(null); setActiveDept(null);
   };
 
   return {
+    currentEpoch,
     date,
     setDate,
     startTime,

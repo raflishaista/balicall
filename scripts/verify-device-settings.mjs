@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const baseUrl = process.env.DEVICE_TEST_URL || 'http://127.0.0.1:5187';
-const output = new URL('../docs/screenshots/', import.meta.url);
+const output = new URL('../artifacts/screenshots/', import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.DEVICE_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : undefined), args: ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
 const pages = [], checks = [], errors = [], uploads = [];
@@ -198,7 +198,7 @@ try {
   checks.push('leaving during a pending camera switch releases late capture, all previously acquired media, and the remote participant');
   assert.deepEqual(errors, []); checks.push('no uncaught browser errors');
   const report = { date: new Date().toISOString(), status: 'passed', media: 'synthetic enumerated devices, canvas video, oscillator microphones, simulated output sinks/permission failure/hotplug; real local LiveKit WebRTC and MediaRecorder; audio API responses stubbed; physical devices and speakers not tested', checks, errors };
-  await writeFile(new URL('../docs/DEVICE_SETTINGS_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
+  await writeFile(new URL('../artifacts/DEVICE_SETTINGS_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   for (const [index, page] of pages.entries()) {

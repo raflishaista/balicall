@@ -44,3 +44,6 @@ pnpm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local-only generated verification reports and screenshots
+/artifacts/

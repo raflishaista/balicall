@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const url = process.env.PREJOIN_TEST_URL || 'http://127.0.0.1:5187';
-const output = new URL('../docs/screenshots/', import.meta.url);
+const output = new URL('../artifacts/screenshots/', import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.PREJOIN_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : undefined), args: ['--autoplay-policy=no-user-gesture-required'] });
 const pages = [], errors = [], checks = [], runId = Date.now(), room = `prejoin-check-${runId}`;
@@ -189,7 +189,7 @@ try {
   checks.push('leaving all participants releases call media; no uncaught browser errors or unexpected console errors');
   assert.deepEqual(errors.filter(error => !expectedCancelledErrors.includes(error)), []);
   const result = { date: new Date().toISOString(), status: 'passed', media: 'synthetic canvas camera, oscillator microphone, device/permission/hotplug fixtures; real browser analyser/preview and local LiveKit WebRTC; speech recognition stubbed; physical hardware not tested', checks, errors: unexpected };
-  await writeFile(new URL('../docs/PREJOIN_VERIFICATION.json', import.meta.url), JSON.stringify(result, null, 2) + '\n');
+  await writeFile(new URL('../artifacts/PREJOIN_VERIFICATION.json', import.meta.url), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   for (let index = 0; index < pages.length; index++) await pages[index].screenshot({ path: fileURLToPath(new URL(`prejoin-failed-${index + 1}.png`, output)), fullPage: true }).catch(() => {});

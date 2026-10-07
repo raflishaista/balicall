@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright')
 const url = process.env.MEDIA_TEST_URL || 'http://127.0.0.1:5187';
 const axePath = process.env.AXE_CORE_PATH;
 if (!axePath) throw new Error('Set AXE_CORE_PATH to a local axe-core distribution before running.');
-const output = new URL('../docs/screenshots/', import.meta.url);
+const output = new URL('../artifacts/screenshots/', import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.MEDIA_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : undefined), args: ['--autoplay-policy=no-user-gesture-required'] });
 const pages = [], checks = [], errors = [], consoleErrors = [], accessibility = [], sizes = [];
@@ -242,7 +242,7 @@ try {
   const unexpectedConsoleErrors = consoleErrors.filter(error => !expectedTransportErrors.includes(error));
   assert.deepEqual(unexpectedConsoleErrors, []); assert.deepEqual(httpErrors, []);
   const result = { date: new Date().toISOString(), status: violations.length ? 'needs-accessibility-fixes' : 'passed', browser: { channel: process.env.MEDIA_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : 'chromium'), version: browser.version(), headless: true }, media: 'six sessions, real local LiveKit WebRTC/SFU and signaling reconnect; synthetic canvas/audio, late-permission and native mute/unmute fixtures; physical devices and real network handoff not tested', checks, sizes, accessibility, errors, consoleErrors: unexpectedConsoleErrors, expectedTransportErrors, httpErrors };
-  await writeFile(new URL('../docs/MEDIA_EXPERIENCE_VERIFICATION.json', import.meta.url), JSON.stringify(result, null, 2) + '\n');
+  await writeFile(new URL('../artifacts/MEDIA_EXPERIENCE_VERIFICATION.json', import.meta.url), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify({ status: result.status, checks, violationCount: violations.length, errors, unexpectedConsoleErrors, httpErrors, expectedTransportErrorCount: expectedTransportErrors.length }, null, 2));
   assert.equal(violations.length, 0);
 } catch (error) {

@@ -245,20 +245,13 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [pendingSaves]);
 
-  const fetchSchedules = useCallback(async () => {
-    try {
-      const data = await apiRequest<{ success: boolean; schedules: ScheduledMeeting[] }>('/schedules', { method: 'GET' }, 10000);
-      if (data && Array.isArray(data.schedules)) {
-        setSchedules(data.schedules);
-      }
-    } catch (err) {
-      console.warn('Failed to fetch schedules:', err);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchSchedules();
-  }, [fetchSchedules]);
+    const abort = new AbortController();
+    void apiRequest<{ success: boolean; schedules: ScheduledMeeting[] }>('/schedules', { method: 'GET', signal: abort.signal }, 10000)
+      .then(data => { if (!abort.signal.aborted && Array.isArray(data.schedules)) setSchedules(data.schedules); })
+      .catch(error => { if (!abort.signal.aborted) console.warn('Failed to fetch schedules:', error); });
+    return () => abort.abort();
+  }, []);
 
   const handleCreateSchedule = async (scheduleData: {
     title: string;
