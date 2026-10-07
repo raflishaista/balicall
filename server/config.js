@@ -15,7 +15,7 @@ export function loadConfig(env = process.env) {
     llmBaseUrl: env.LLM_BASE_URL || 'http://10.7.1.21/v1',
     llmModel: env.LLM_MODEL || env.TEXT_MODEL || 'qwen-35b',
     geminiKey: env.GEMINI_API_KEY || '',
-    llmTimeoutMs: Number(env.LLM_TIMEOUT_MS || 30000),
+    llmTimeoutMs: Number(env.LLM_TIMEOUT_MS || 60000),
     sttProvider: env.STT_PROVIDER || 'browser',
     sttBaseUrl: env.STT_BASE_URL || '',
     sttModel: env.STT_MODEL || '',
