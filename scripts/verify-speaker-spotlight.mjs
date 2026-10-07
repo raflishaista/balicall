@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const baseUrl = process.env.SPOTLIGHT_TEST_URL || 'http://127.0.0.1:5187';
-const output = new URL('../docs/screenshots/', import.meta.url);
+const output = new URL('../artifacts/screenshots/', import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, channel: process.env.SPOTLIGHT_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : undefined), args: ['--autoplay-policy=no-user-gesture-required'] });
 const pages = [], checks = [], errors = [];
@@ -150,7 +150,7 @@ try {
   checks.push('leaving cleans media; last participant retains a valid spotlight');
   assert.deepEqual(errors, []); checks.push('no uncaught browser errors');
   const report = { date: new Date().toISOString(), status: 'passed', media: 'controlled oscillator audio and canvas video, real local LiveKit WebRTC/SFU active speaker events; speech recognition stubbed; physical microphones and human speech not tested', timing: { confirmationMs: 600, minimumHoldMs: 1200 }, checks, errors };
-  await writeFile(new URL('../docs/SPEAKER_SPOTLIGHT_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
+  await writeFile(new URL('../artifacts/SPEAKER_SPOTLIGHT_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   for (const [index, page] of pages.entries()) {

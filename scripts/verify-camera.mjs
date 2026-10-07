@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const baseUrl = process.env.CAMERA_TEST_URL || 'http://127.0.0.1:5187';
-const output = new URL('../docs/screenshots/', import.meta.url);
+const output = new URL('../artifacts/screenshots/', import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
@@ -193,7 +193,7 @@ try {
   assert.deepEqual(pageErrors, []);
   checks.push('no uncaught browser errors');
   const report = { date: new Date().toISOString(), status: 'passed', browser: process.env.CAMERA_TEST_BROWSER || (process.platform === 'win32' ? 'msedge' : 'chromium'), media: 'canvas camera fixture and Chromium fake microphone with real local LiveKit WebRTC transport; speech recognition stubbed', checks, pageErrors };
-  await writeFile(new URL('../docs/CAMERA_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
+  await writeFile(new URL('../artifacts/CAMERA_VERIFICATION.json', import.meta.url), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   for (const [index, page] of pages.entries()) {
