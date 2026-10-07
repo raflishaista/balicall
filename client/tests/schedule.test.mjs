@@ -168,9 +168,10 @@ test('generateRecommendedSlug produces room names with day suffix from various d
 });
 
 function mountScheduleForm(initialProps = {}) {
-  let formState;
+  const result = { current: null };
   function Harness(props) {
-    formState = useScheduleForm(props);
+    const form = useScheduleForm(props);
+    React.useEffect(() => { result.current = form; });
     return null;
   }
   let root;
@@ -178,10 +179,54 @@ function mountScheduleForm(initialProps = {}) {
     root = create(React.createElement(Harness, initialProps));
   });
   return {
-    get form() { return formState; },
+    get form() { return result.current; },
+    update: props => act(() => root.update(React.createElement(Harness, props))),
     unmount: () => act(() => root.unmount()),
   };
 }
+
+test('schedule validation advances with the clock without resetting user inputs', () => {
+  const h = mountScheduleForm({ initialDate: new Date(2026, 9, 7, 10, 0) });
+  try {
+    act(() => h.form.handleTitleChange('Evaluasi monitoring'));
+    const start = h.form.startTime;
+    assert.equal(h.form.validation.valid, true);
+    h.update({ initialDate: new Date(2026, 9, 7, 10, 16) });
+    assert.equal(h.form.startTime, start);
+    assert.equal(h.form.title, 'Evaluasi monitoring');
+    assert.equal(h.form.validation.valid, false);
+    assert.equal(h.form.currentHourMinuteStr, '10:16');
+  } finally { h.unmount(); }
+});
+
+test('schedule clock updates today after midnight without changing selected meeting date', () => {
+  const h = mountScheduleForm({ initialDate: new Date(2026, 9, 7, 23, 50) });
+  try {
+    assert.equal(h.form.date, '2026-10-08');
+    assert.equal(h.form.isSelectedDateToday, false);
+    h.update({ initialDate: new Date(2026, 9, 8, 0, 1) });
+    assert.equal(h.form.date, '2026-10-08');
+    assert.equal(h.form.todayDateStr, '2026-10-08');
+    assert.equal(h.form.isSelectedDateToday, true);
+    assert.equal(h.form.validation.valid, false);
+  } finally { h.unmount(); }
+});
+
+test('host follows incoming identity before editing, preserves draft identity and manual changes, resets to current identity', () => {
+  const first = { employeeId: 'BT-1', employeeName: 'Rafli', department: 'Network' };
+  const second = { employeeId: 'BT-2', employeeName: 'Budi', department: 'Field' };
+  const h = mountScheduleForm(first);
+  try {
+    h.update(second); assert.equal(h.form.activeHostId, 'BT-2');
+    act(() => h.form.handleTitleChange('Koordinasi'));
+    h.update(first); assert.equal(h.form.activeHostId, 'BT-2');
+    act(() => h.form.setActiveHostName('Host manual'));
+    h.update(second); assert.equal(h.form.activeHostName, 'Host manual');
+    act(() => h.form.resetForm());
+    assert.equal(h.form.activeHostId, 'BT-2'); assert.equal(h.form.activeHostName, 'Budi');
+    assert.equal(h.form.title, '');
+  } finally { h.unmount(); }
+});
 
 test('useScheduleForm updates room slug incrementally as title is typed character by character', () => {
   const h = mountScheduleForm();
