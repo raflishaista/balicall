@@ -1,7 +1,7 @@
 # Bali Tower LiveKit SFU Configuration with Webhook Integration
 port: 7880
 bind_addresses:
-  - "127.0.0.1"
+  - "0.0.0.0"
 
 rtc:
   tcp_port: 7881
