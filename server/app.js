@@ -1,4 +1,5 @@
 import express from 'express';
+import { attachAuth } from './auth.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
@@ -45,7 +46,7 @@ const pdfText = value => {
   return String(value);
 };
 
-export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
+export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore } = {}) {
   const app = express();
   const store = new MeetingStore(config.dataFile);
   const verifier = new TokenVerifier(config.livekitKey, config.livekitSecret);
@@ -57,7 +58,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   const inFlightSummarize = new Map();
   const webhookLogs = [];
 
-  app.use(cors({ origin(origin, callback) {
+  app.use(cors({ credentials: true, origin(origin, callback) {
     if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
     try {
       const url = new URL(origin);
@@ -75,6 +76,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
       req.rawBody = buf ? buf.toString('utf8') : '';
     },
   }));
+
+  attachAuth(app, config, authStore);
 
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
@@ -126,6 +129,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
 
   // 3. Generate LiveKit token with database employee verification
   app.post('/api/token', asyncRoute(async (req, res) => {
+    if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
     let { roomName, employeeId, employeeName, department = 'General' } = req.body || {};
     if (![roomName, employeeId, employeeName, department].every(value => nonEmpty(value))) {
       return res.status(400).json({ error: 'Room, employee ID, name and department must be non-empty strings (max 160 characters)' });
@@ -193,6 +197,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   }));
 
   app.post('/api/schedules', asyncRoute(async (req, res) => {
+    if (req.auth) req.body = { ...req.body, hostId: req.auth.user.employeeId, hostName: req.auth.user.name, department: req.auth.user.department };
     const {
       roomName,
       title,
@@ -279,6 +284,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
 
   app.delete('/api/schedules/:id', asyncRoute(async (req, res) => {
     const { id } = req.params;
+    if (req.auth) {
+      const schedule = (await getUpcomingSchedules()).find(item => item.id === id);
+      if (!schedule) return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan.' });
+      if (schedule.hostId !== req.auth.user.employeeId) return res.status(403).json({ error: 'Hanya penyelenggara yang dapat mengubah jadwal ini.' });
+    }
     const ok = await cancelSchedule(id);
     if (!ok) {
       return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
@@ -288,6 +298,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
 
   app.put('/api/schedules/:id', asyncRoute(async (req, res) => {
     const { id } = req.params;
+    if (req.auth) {
+      const schedule = (await getUpcomingSchedules()).find(item => item.id === id);
+      if (!schedule) return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan.' });
+      if (schedule.hostId !== req.auth.user.employeeId) return res.status(403).json({ error: 'Hanya penyelenggara yang dapat mengubah jadwal ini.' });
+    }
     const {
       scheduledStart,
       scheduledEnd,
@@ -344,6 +359,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
 
   // Meeting authorization middleware
   app.use('/api/meetings/:id', asyncRoute(async (req, res, next) => {
+    if (['db-summaries', 'db-details'].includes(req.params.id)) return next();
     const meeting = store.get(req.params.id);
     if (!meeting) return res.status(404).json({ error: 'Meeting session not found' });
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -352,6 +368,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
     try { claims = await verifier.verify(token); } catch { return res.status(401).json({ error: 'Meeting token is invalid or expired' }); }
     if (claims.video?.room !== meeting.livekitRoom || !claims.video?.roomJoin || !meeting.participants.has(claims.sub)) return res.status(403).json({ error: 'This token cannot access the meeting' });
     req.meetingId = meeting.id;
+    if (req.auth && claims.sub !== req.auth.user.employeeId) return res.status(403).json({ error: 'Token rapat bukan milik akun ini.' });
     req.speakerId = claims.sub;
     next();
   }));

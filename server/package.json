@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "auth:migrate": "node scripts/auth-admin.js --migrate-only",
+    "auth:invite": "node scripts/auth-admin.js",
+    "auth:test-account": "node scripts/auth-admin.js --create-test-account"
   },
   "dependencies": {
     "@google/genai": "^2.26.0",
