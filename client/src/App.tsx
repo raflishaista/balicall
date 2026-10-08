@@ -9,9 +9,23 @@ import { createSaveQueue } from './saveQueue';
 import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
-import './SummaryHistory.css';
-import { readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor, upsertSummary, validSummary } from './summaryHistory';
-import type { MeetingSummary, TranscriptEntry, SummaryRecord } from './summaryHistory';
+import {
+  readSummaryHistory,
+  readSummarySession,
+  saveSummaryHistory,
+  saveSummarySession,
+  summaryTokenFor,
+  upsertSummary,
+  validSummary,
+  readInProgressSummaries,
+  saveInProgressSummary,
+  removeInProgressSummary,
+  readActiveView,
+  saveActiveView,
+  normalizeDbSummary,
+} from './summaryHistory';
+import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
+import { SummaryHistoryView } from './SummaryHistoryView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
@@ -46,6 +60,7 @@ import {
   Loader2,
   Search,
   ChevronLeft,
+  Home,
 } from 'lucide-react';
 
 function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[]) {
@@ -64,12 +79,27 @@ export default function App() {
   const [initialSummaryState] = useState(() => {
     const history = readSummaryHistory();
     const session = readSummarySession();
+    const inProgress = readInProgressSummaries();
+    const savedActiveView = readActiveView();
     const selected = session?.open ? history.find(item => item.meetingId === session.meetingId) : undefined;
-    return { history, session: session?.open ? session : null, selected };
+    const matchingInProgress = session?.open ? inProgress.find(item => item.meetingId === session.meetingId) : undefined;
+    return {
+      history,
+      session: (session?.open || savedActiveView === 'summary') ? session : null,
+      selected,
+      matchingInProgress,
+      savedActiveView,
+    };
   });
+  const [inProgressList, setInProgressList] = useState<InProgressRecord[]>(() => readInProgressSummaries());
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
+  const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(initialSummaryState.session ? 'summary' : 'home');
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(() => {
+    if (initialSummaryState.savedActiveView === 'summary') return 'summary';
+    if (initialSummaryState.session) return 'summary';
+    return 'home';
+  });
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
   const [schedules, setSchedules] = useState<ScheduledMeeting[]>([]);
@@ -121,47 +151,174 @@ export default function App() {
   }));
 
   useEffect(() => {
+    if (view !== 'in-call' && view !== 'lobby') {
+      saveActiveView(view);
+    }
     const session = readSummarySession();
     if (session) saveSummarySession({ ...session, open: view === 'summary' });
   }, [view]);
 
+  // Robust reload recovery: poll for in-progress summaries without immediately throwing errors
   useEffect(() => {
     const session = initialSummaryState.session;
-    if (!session || initialSummaryState.selected) return;
+    if (!session || initialSummaryState.selected || !session.meetingId) return;
+    let cancelled = false;
     const controller = new AbortController();
     const generation = ++summaryGeneration.current;
-    void apiRequest<{ summary: MeetingSummary | null; transcripts: TranscriptEntry[] }>(meetingPath(session.meetingId, 'transcript'), {
-      headers: { Authorization: 'Bearer ' + session.token }, signal: controller.signal,
-    }).then(data => {
-      if (controller.signal.aborted || generation !== summaryGeneration.current) return;
-      if (!validSummary(data.summary)) {
-        setSummaryError('Notulen belum selesai saat halaman dimuat ulang. Coba ambil atau buat notulen lagi.');
-        return;
+    let pollTimer: ReturnType<typeof setTimeout>;
+
+    const poll = async (attempt = 0) => {
+      if (cancelled || generation !== summaryGeneration.current) return;
+      try {
+        const data = await apiRequest<{
+          summary: MeetingSummary | null;
+          transcripts: TranscriptEntry[];
+          isSummarizing?: boolean;
+        }>(meetingPath(session.meetingId, 'transcript'), {
+          headers: session.token ? { Authorization: 'Bearer ' + session.token } : {},
+          signal: controller.signal,
+        });
+
+        if (cancelled || generation !== summaryGeneration.current) return;
+
+        if (validSummary(data.summary)) {
+          setSummary(data.summary);
+          setTranscripts(data.transcripts);
+          setIsSummarizing(false);
+          setSummaryError(null);
+          const record: SummaryRecord = {
+            meetingId: session.meetingId,
+            roomName: session.roomName,
+            savedAt: data.summary.generatedAt || new Date().toISOString(),
+            summary: data.summary,
+            transcripts: data.transcripts,
+          };
+          const next = upsertSummary(readSummaryHistory(), record);
+          setSummaryHistory(next);
+          saveSummaryHistory(next);
+          removeInProgressSummary(session.meetingId);
+          setInProgressList(readInProgressSummaries());
+          return;
+        }
+
+        // Trigger summarize if first attempt and token exists
+        if (attempt === 0 && session.token) {
+          apiRequest<{ summary: MeetingSummary }>(
+            meetingPath(session.meetingId, 'summarize'),
+            {
+              method: 'POST',
+              headers: { Authorization: 'Bearer ' + session.token, 'Content-Type': 'application/json' },
+              body: '{}',
+              signal: controller.signal,
+            },
+            125000
+          ).then(res => {
+            if (cancelled || generation !== summaryGeneration.current) return;
+            if (validSummary(res.summary)) {
+              setSummary(res.summary);
+              setTranscripts(data.transcripts.length ? data.transcripts : session.transcripts);
+              setIsSummarizing(false);
+              setSummaryError(null);
+              const record: SummaryRecord = {
+                meetingId: session.meetingId,
+                roomName: session.roomName,
+                savedAt: res.summary.generatedAt || new Date().toISOString(),
+                summary: res.summary,
+                transcripts: data.transcripts.length ? data.transcripts : session.transcripts,
+              };
+              const next = upsertSummary(readSummaryHistory(), record);
+              setSummaryHistory(next);
+              saveSummaryHistory(next);
+              removeInProgressSummary(session.meetingId);
+              setInProgressList(readInProgressSummaries());
+            }
+          }).catch(err => {
+            if (cancelled || generation !== summaryGeneration.current) return;
+            console.warn('Summarize re-trigger note:', err);
+          });
+        }
+
+        if (attempt < 30) {
+          pollTimer = setTimeout(() => void poll(attempt + 1), 3000);
+        } else {
+          setSummaryError('Waktu proses notulen melebihi batas. Silakan coba buat notulen lagi.');
+          setIsSummarizing(false);
+        }
+      } catch (error) {
+        if (cancelled || generation !== summaryGeneration.current) return;
+        if (attempt < 5) {
+          pollTimer = setTimeout(() => void poll(attempt + 1), 3000);
+        } else {
+          setSummaryError(error instanceof Error ? error.message : 'Gagal memulihkan proses notulen.');
+          setIsSummarizing(false);
+        }
       }
-      setSummary(data.summary); setTranscripts(data.transcripts);
-      const record: SummaryRecord = { meetingId: session.meetingId, roomName: session.roomName, savedAt: data.summary.generatedAt || new Date().toISOString(), summary: data.summary, transcripts: data.transcripts };
-      const next = upsertSummary(readSummaryHistory(), record);
-      setSummaryHistory(next);
-      if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
-    }).catch(error => {
-      if (!controller.signal.aborted && generation === summaryGeneration.current) setSummaryError(error instanceof Error ? error.message : 'Gagal memulihkan notulen.');
-    }).finally(() => {
-      if (!controller.signal.aborted && generation === summaryGeneration.current) setIsSummarizing(false);
-    });
-    return () => controller.abort();
+    };
+
+    void poll(0);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(pollTimer);
+    };
   }, [initialSummaryState]);
 
   const openSavedSummary = (record: SummaryRecord) => {
     summaryGeneration.current++;
-    setIsSummarizing(false); setSummaryError(null); setCopied(false);
-    setSummary(record.summary); setTranscripts(record.transcripts);
-    setSummaryMeetingId(record.meetingId); setSummaryRoomName(record.roomName);
+    setIsSummarizing(false);
+    setSummaryError(null);
+    setCopied(false);
+    setSummary(record.summary);
+    setTranscripts(record.transcripts);
+    setSummaryMeetingId(record.meetingId);
+    setSummaryRoomName(record.roomName);
     const savedToken = summaryTokenFor(record.meetingId);
     setSummaryToken(savedToken);
-    if (!saveSummarySession({ meetingId: record.meetingId, roomName: record.roomName, token: savedToken, transcripts: record.transcripts, open: true })) {
-      setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
-    }
+    saveSummarySession({
+      meetingId: record.meetingId,
+      roomName: record.roomName,
+      token: savedToken,
+      transcripts: record.transcripts,
+      open: true,
+      isSummarizing: false,
+    });
+    saveActiveView('summary');
     setView('summary');
+
+    // If record lacks transcripts, load from DB
+    if (!record.transcripts || record.transcripts.length === 0) {
+      apiRequest<{ success: boolean; transcripts: TranscriptEntry[] }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
+        .then(details => {
+          if (details?.transcripts && details.transcripts.length > 0) {
+            setTranscripts(details.transcripts);
+          }
+        })
+        .catch(() => {});
+    }
+  };
+
+  const openInProgressSummary = (record: InProgressRecord) => {
+    summaryGeneration.current++;
+    setIsSummarizing(true);
+    setSummary(null);
+    setSummaryError(null);
+    setSummaryMeetingId(record.meetingId);
+    setSummaryRoomName(record.roomName);
+    const savedToken = record.token || summaryTokenFor(record.meetingId);
+    setSummaryToken(savedToken);
+    setTranscripts(record.transcripts);
+    saveSummarySession({
+      meetingId: record.meetingId,
+      roomName: record.roomName,
+      token: savedToken,
+      transcripts: record.transcripts,
+      open: true,
+      isSummarizing: true,
+    });
+    saveActiveView('summary');
+    setView('summary');
+    void triggerSummarize(record.meetingId, savedToken, record.roomName, record.transcripts);
   };
 
   // Backend Health and LLM status
@@ -210,6 +367,36 @@ export default function App() {
     const timer = setInterval(() => void check(), 15000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
+
+  const fetchDbSummaries = useCallback(async () => {
+    try {
+      setIsLoadingDb(true);
+      const data = await apiRequest<{ success: boolean; summaries: any[]; inProgress?: any[] }>('/meetings/db-summaries', {}, 5000);
+      if (data?.summaries && Array.isArray(data.summaries)) {
+        const dbRecords = data.summaries.map(normalizeDbSummary);
+        setSummaryHistory(prev => {
+          let merged = [...prev];
+          for (const rec of dbRecords) {
+            merged = upsertSummary(merged, rec);
+          }
+          saveSummaryHistory(merged);
+          return merged;
+        });
+        setHistoryNotice('Arsip notulen berhasil disinkronkan dengan server.');
+        setTimeout(() => setHistoryNotice(null), 3500);
+      }
+    } catch (err) {
+      console.warn('DB summaries fetch note:', err);
+      setHistoryNotice('Menggunakan arsip notulen lokal (database standby).');
+      setTimeout(() => setHistoryNotice(null), 3500);
+    } finally {
+      setIsLoadingDb(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchDbSummaries();
+  }, [fetchDbSummaries]);
 
   useEffect(() => {
     if (view !== 'in-call' || !meetingStartTime) return;
@@ -382,7 +569,18 @@ export default function App() {
             }
           : data.summary;
       setSummary(completedSummary);
-      const record: SummaryRecord = { meetingId: targetMeetingId, roomName: targetRoomName, savedAt: data.summary.generatedAt || new Date().toISOString(), summary: completedSummary, transcripts: fallbackTranscripts };
+      removeInProgressSummary(targetMeetingId);
+      setInProgressList(readInProgressSummaries());
+      const record: SummaryRecord = {
+        meetingId: targetMeetingId,
+        roomName: targetRoomName,
+        savedAt: data.summary.generatedAt || new Date().toISOString(),
+        summary: completedSummary,
+        transcripts: fallbackTranscripts,
+        hostId: employeeId,
+        hostName: employeeName,
+        department,
+      };
       const next = upsertSummary(readSummaryHistory(), record);
       setSummaryHistory(next);
       if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
@@ -431,14 +629,29 @@ export default function App() {
     if (!generate) {
       setMeetingId(null);
       setTranscripts([]);
+      saveActiveView('home');
       setView('home');
       return;
     }
 
     // 3. Immediately transition to summary view with loading card
-    if (!saveSummarySession({ meetingId: currentMeetingId, roomName: currentRoomName, token: currentToken, transcripts: capturedTranscripts, open: true })) {
+    const inProgressRecord: InProgressRecord = {
+      meetingId: currentMeetingId,
+      roomName: currentRoomName,
+      token: currentToken,
+      transcripts: capturedTranscripts,
+      startedAt: new Date().toISOString(),
+      hostId: employeeId,
+      hostName: employeeName,
+      department,
+    };
+    saveInProgressSummary(inProgressRecord);
+    setInProgressList(readInProgressSummaries());
+
+    if (!saveSummarySession({ meetingId: currentMeetingId, roomName: currentRoomName, token: currentToken, transcripts: capturedTranscripts, open: true, isSummarizing: true })) {
       setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
     }
+    saveActiveView('summary');
     setView('summary');
     setIsSummarizing(true);
     setSummary(null);
@@ -558,13 +771,32 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          hasSummary={summaryHistory.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
-          onHome={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('home'); }}
+          hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
+          onHome={() => {
+            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+            saveActiveView('home');
+            setView('home');
+          }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
-          onSchedule={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('schedule'); }}
-          onSettings={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); setView('settings'); }}
-          onSummary={() => { joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll(); if (!summary && !isSummarizing && !summaryError && summaryHistory[0]) openSavedSummary(summaryHistory[0]); else setView('summary'); }}
+          onSchedule={() => {
+            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+            saveActiveView('schedule');
+            setView('schedule');
+          }}
+          onSettings={() => {
+            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+            saveActiveView('settings');
+            setView('settings');
+          }}
+          onSummary={() => {
+            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+            saveActiveView('summary');
+            setView('summary');
+            if (!summary && !isSummarizing) {
+              setSummaryMeetingId(null);
+            }
+          }}
         />
       )}
       <div className="workspace-body">
@@ -674,17 +906,28 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           />
         )}
 
-        {view === 'summary' && <div className="summary-history">
-          <h2>Riwayat notulen</h2>
-          <p>20 hasil terakhir tersimpan di browser ini. Buka kembali untuk membaca atau menyalin notulen.</p>
-          {historyNotice && <div className="summary-history-notice" role="status">{historyNotice}</div>}
-          <div className="summary-history-list">{summaryHistory.map(record => <button type="button" key={record.meetingId} aria-pressed={record.meetingId === summaryMeetingId} onClick={() => openSavedSummary(record)}>
-            <strong>{record.summary.title}</strong><small>{record.roomName} · {new Date(record.savedAt).toLocaleString('id-ID')}</small>
-          </button>)}</div>
-        </div>}
-        {view === 'summary' && (
+        {view === 'summary' && !summaryMeetingId && !isSummarizing && (
+          <SummaryHistoryView
+            summaryHistory={summaryHistory}
+            inProgressList={inProgressList}
+            employeeId={employeeId}
+            employeeName={employeeName}
+            department={department}
+            onSelectSummary={openSavedSummary}
+            onSelectInProgress={openInProgressSummary}
+            onBackToHome={() => {
+              saveActiveView('home');
+              setView('home');
+            }}
+            onRefreshData={fetchDbSummaries}
+            isLoadingDb={isLoadingDb}
+            notice={historyNotice}
+          />
+        )}
+
+        {view === 'summary' && (summaryMeetingId || isSummarizing) && (
           <SummaryView
-            key={summaryMeetingId || 'no-summary'}
+            key={summaryMeetingId || 'active-summary'}
             summary={summary}
             roomName={summaryRoomName || roomName}
             meetingId={summaryMeetingId || meetingId || ''}
@@ -695,6 +938,14 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isSummarizing={isSummarizing}
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
+            onBackToHistory={() => {
+              setSummaryMeetingId(null);
+              setSummary(null);
+              setIsSummarizing(false);
+              setSummaryError(null);
+              const session = readSummarySession();
+              if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+            }}
             onNewCall={() => {
               summaryGeneration.current++;
               setIsSummarizing(false);
@@ -707,6 +958,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               setSummaryMeetingId(null);
               setSummaryToken(null);
               setSummaryRoomName('');
+              saveActiveView('home');
               setView('home');
             }}
           />
@@ -878,6 +1130,7 @@ function SummaryView({
   isSummarizing = false,
   summaryError = null,
   onRetry,
+  onBackToHistory,
 }: {
   summary: MeetingSummary | null;
   roomName: string;
@@ -890,6 +1143,7 @@ function SummaryView({
   isSummarizing?: boolean;
   summaryError?: string | null;
   onRetry?: () => void;
+  onBackToHistory?: () => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const [query, setQuery] = useState('');
@@ -960,7 +1214,16 @@ function SummaryView({
   if (isSummarizing && !summary) {
     return (
       <div className="summary-page">
-        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
+          {onBackToHistory && (
+            <button className="back-link" onClick={onBackToHistory} style={{ margin: 0 }}>
+              <ChevronLeft size={16} /> Riwayat notulen
+            </button>
+          )}
+          <button className="back-link" onClick={onNewCall} style={{ margin: 0 }}>
+            <Home size={15} /> Kembali ke beranda
+          </button>
+        </div>
         <section className="summary-card">
           <header className="summary-heading" style={{ borderBottom: '1px solid #e3ebf6', paddingBottom: '20px' }}>
             <div>
@@ -1018,7 +1281,16 @@ function SummaryView({
   if (summaryError && !summary) {
     return (
       <div className="summary-page">
-        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
+          {onBackToHistory && (
+            <button className="back-link" onClick={onBackToHistory} style={{ margin: 0 }}>
+              <ChevronLeft size={16} /> Riwayat notulen
+            </button>
+          )}
+          <button className="back-link" onClick={onNewCall} style={{ margin: 0 }}>
+            <Home size={15} /> Kembali ke beranda
+          </button>
+        </div>
         <section className="summary-card">
           <header className="summary-heading" style={{ borderBottom: '1px solid #fed7d7', paddingBottom: '20px' }}>
             <div>
@@ -1078,7 +1350,16 @@ function SummaryView({
   if (!summary) {
     return (
       <div className="summary-page">
-        <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
+          {onBackToHistory && (
+            <button className="back-link" onClick={onBackToHistory} style={{ margin: 0 }}>
+              <ChevronLeft size={16} /> Riwayat notulen
+            </button>
+          )}
+          <button className="back-link" onClick={onNewCall} style={{ margin: 0 }}>
+            <Home size={15} /> Kembali ke beranda
+          </button>
+        </div>
         <section className="summary-card">
           <p>Belum ada notulen yang tersedia.</p>
         </section>
@@ -1095,7 +1376,16 @@ function SummaryView({
 
   return (
     <div className="summary-page">
-      <button className="back-link" onClick={onNewCall}><ChevronLeft size={16} /> Kembali ke beranda</button>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
+        {onBackToHistory && (
+          <button className="back-link" onClick={onBackToHistory} style={{ margin: 0 }}>
+            <ChevronLeft size={16} /> Kembali ke riwayat notulen
+          </button>
+        )}
+        <button className="back-link" onClick={onNewCall} style={{ margin: 0 }}>
+          <Home size={15} /> Beranda
+        </button>
+      </div>
       <section className="summary-card">
         <header className="summary-heading">
           <div>

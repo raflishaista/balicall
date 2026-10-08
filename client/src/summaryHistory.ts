@@ -9,12 +9,20 @@ export interface MeetingSummary {
 }
 export interface SummaryRecord {
   meetingId: string; roomName: string; savedAt: string; summary: MeetingSummary; transcripts: TranscriptEntry[];
+  hostId?: string; hostName?: string; department?: string;
+}
+export interface InProgressRecord {
+  meetingId: string; roomName: string; token?: string; transcripts: TranscriptEntry[]; startedAt: string;
+  hostId?: string; hostName?: string; department?: string;
 }
 export interface SummarySession {
   meetingId: string; roomName: string; token: string; transcripts: TranscriptEntry[]; open: boolean;
+  isSummarizing?: boolean;
 }
 export const HISTORY_KEY = 'balicall.summary-history.v1';
 export const SESSION_KEY = 'balicall.summary-session.v1';
+export const IN_PROGRESS_KEY = 'balicall.summary-in-progress.v1';
+export const ACTIVE_VIEW_KEY = 'balicall.active-view.v1';
 const TOKEN_KEY = 'balicall.summary-tokens.v1';
 export const HISTORY_LIMIT = 20;
 
@@ -52,7 +60,12 @@ export function upsertSummary(records: SummaryRecord[], record: SummaryRecord) {
 }
 export function saveSummaryHistory(records: SummaryRecord[]) {
   // Explicit projection keeps bearer tokens out of persistent localStorage.
-  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts }) => ({ meetingId, roomName, savedAt, summary, transcripts })));
+  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts, hostId, hostName, department }) => ({
+    meetingId, roomName, savedAt, summary, transcripts,
+    ...(hostId ? { hostId } : {}),
+    ...(hostName ? { hostName } : {}),
+    ...(department ? { department } : {}),
+  })));
 }
 export function readSummarySession(): SummarySession | null {
   const value = read(SESSION_KEY, true);
@@ -71,4 +84,73 @@ export function saveSummarySession(value: SummarySession) {
 export function summaryTokenFor(id: string): string {
   const tokens = read(TOKEN_KEY, true);
   return object(tokens) && typeof tokens[id] === 'string' ? tokens[id] : '';
+}
+
+export function readInProgressSummaries(): InProgressRecord[] {
+  const value = read(IN_PROGRESS_KEY, true);
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is InProgressRecord =>
+    object(item) && typeof item.meetingId === 'string' && typeof item.roomName === 'string'
+    && typeof item.startedAt === 'string' && validTranscripts(item.transcripts)
+  );
+}
+
+export function saveInProgressSummary(record: InProgressRecord): boolean {
+  if (record.token) {
+    const previous = read(TOKEN_KEY, true);
+    const tokens = object(previous) ? previous : {};
+    write(TOKEN_KEY, Object.fromEntries([[record.meetingId, record.token], ...Object.entries(tokens).filter(([id]) => id !== record.meetingId)].slice(0, HISTORY_LIMIT)), true);
+  }
+  const current = readInProgressSummaries();
+  const next = [record, ...current.filter(item => item.meetingId !== record.meetingId)];
+  return write(IN_PROGRESS_KEY, next, true);
+}
+
+export function removeInProgressSummary(meetingId: string): boolean {
+  const current = readInProgressSummaries();
+  const next = current.filter(item => item.meetingId !== meetingId);
+  return write(IN_PROGRESS_KEY, next, true);
+}
+
+export function readActiveView(): string | null {
+  const value = read(ACTIVE_VIEW_KEY, true);
+  return typeof value === 'string' ? value : null;
+}
+
+export function saveActiveView(view: string): boolean {
+  return write(ACTIVE_VIEW_KEY, view, true);
+}
+
+export function normalizeDbSummary(raw: any): SummaryRecord {
+  const s = raw?.summary || raw || {};
+  const rawActions = s.action_items || s.actionItems || [];
+  const actionItems = Array.isArray(rawActions) ? rawActions.map((item: any) => ({
+    task: typeof item?.task === 'string' ? item.task : String(item || ''),
+    assignee: typeof item?.assignee === 'string' ? item.assignee : 'Belum ditentukan',
+    priority: (['High', 'Medium', 'Low'].includes(String(item?.priority)) ? item.priority : 'Medium') as 'High' | 'Medium' | 'Low',
+    deadline: typeof item?.deadline === 'string' ? item.deadline : 'Belum ditentukan',
+  })) : [];
+
+  return {
+    meetingId: String(raw.meeting_id || raw.meetingId || raw.id || ''),
+    roomName: String(raw.room_name || raw.roomName || 'Ruang Rapat'),
+    savedAt: String(raw.created_at || raw.createdAt || raw.savedAt || new Date().toISOString()),
+    summary: {
+      title: String(s.title || 'Notulen Rapat'),
+      executiveSummary: String(s.executive_summary || s.executiveSummary || 'Ringkasan tidak tersedia.'),
+      keyDiscussionPoints: Array.isArray(s.key_discussion_points || s.keyDiscussionPoints)
+        ? (s.key_discussion_points || s.keyDiscussionPoints).map(String) : [],
+      decisions: Array.isArray(s.decisions) ? s.decisions.map(String) : [],
+      actionItems,
+      attendanceSummary: Array.isArray(s.attendance_summary || s.attendanceSummary)
+        ? (s.attendance_summary || s.attendanceSummary).map(String) : [],
+      provider: s.provider ? String(s.provider) : undefined,
+      generatedAt: String(s.created_at || s.createdAt || s.generatedAt || new Date().toISOString()),
+      dbSummaryId: typeof raw.id === 'number' ? raw.id : undefined,
+    },
+    transcripts: Array.isArray(raw.transcripts) ? raw.transcripts : [],
+    hostId: raw.host_id || raw.hostId,
+    hostName: raw.host_name || raw.hostName,
+    department: raw.department,
+  };
 }

@@ -1,3 +1,5 @@
+@import './SummaryHistory.css';
+
 .app-root { display: grid; grid-template-columns: 226px minmax(0,1fr); min-height: 100vh; }
 .workspace-body { min-width: 0; display: flex; flex-direction: column; }
 .workspace-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; padding: 30px 16px 18px; color: #d9e5f4; background: linear-gradient(165deg,#082741 0%,#0a2034 70%,#0c3047 100%); }

@@ -1,9 +1,424 @@
-.summary-history { padding: 16px 20px; margin-bottom: 16px; background: #fff; border: 1px solid #dce7f4; border-radius: 12px; }
-.summary-history h2 { margin: 0 0 6px; font-size: 17px; color: #082847; }
-.summary-history p { margin: 0 0 12px; color: #61758c; font-size: 12px; }
-.summary-history-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.summary-history-list button { border: 1px solid #dce7f4; border-radius: 8px; background: #f5f9ff; padding: 10px 12px; text-align: left; color: #082847; cursor: pointer; max-width: 100%; }
-.summary-history-list button[aria-pressed="true"] { border-color: #087cff; background: #eaf3ff; }
-.summary-history-list strong, .summary-history-list small { display: block; overflow-wrap: anywhere; }
-.summary-history-list small { margin-top: 4px; color: #61758c; }
-.summary-history-notice { color: #8b5012; padding: 8px 0; }
+/* ========================================================
+   BaliCall Summary History & AI Minutes Archive
+   Adopts unified Bali Tower Sentra Design System
+   ======================================================== */
+
+.history-page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 26px clamp(20px, 3.1vw, 44px) 36px;
+  animation: surface-in .38s cubic-bezier(.2,.7,.25,1) both;
+}
+
+.history-header {
+  margin-bottom: 24px;
+}
+
+.history-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.history-title-copy {
+  flex: 1;
+  min-width: 280px;
+}
+
+.history-title-copy h1 {
+  margin: 6px 0 6px;
+  color: #142f52;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -.6px;
+}
+
+.history-title-copy p {
+  margin: 0;
+  color: #6a809b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.history-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.history-notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  border-radius: 7px;
+  background: #edfdf6;
+  border: 1px solid #b7f0d6;
+  color: #047857;
+  font-size: 11px;
+  font-weight: 600;
+  animation: alert-in .2s ease-out;
+}
+
+/* --------------------------------------------------------
+   Toolbar Surface Card (Scope Segmented Switch & Search)
+   -------------------------------------------------------- */
+.history-toolbar-card {
+  padding: 18px 22px;
+  margin-bottom: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.history-toolbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Segmented Scope Switch (matches .schedule-filter-tabs and .lobby-switch) */
+.history-scope-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #f1f5fb;
+  border: 1px solid #e3edf8;
+}
+
+.history-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #627b99;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .18s ease;
+  white-space: nowrap;
+}
+
+.history-scope-btn:hover {
+  color: #173b64;
+}
+
+.history-scope-btn.active {
+  background: #ffffff;
+  color: #0865ed;
+  box-shadow: 0 2px 6px rgba(12, 44, 84, 0.09);
+}
+
+.history-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 1 320px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #dce5f2;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #6a829f;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.history-search-wrap:focus-within {
+  border-color: #0865ed;
+  box-shadow: 0 0 0 3px rgba(8, 101, 237, 0.12);
+}
+
+.history-search-wrap input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #213c5f;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.history-search-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: #eef3f9;
+  color: #5d7593;
+  cursor: pointer;
+  padding: 0;
+}
+
+.history-search-clear:hover {
+  background: #dfe8f3;
+  color: #1f3a5b;
+}
+
+/* Callout Info Box (matches .schedule-help-note) */
+.history-scope-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 7px;
+  background: #f7faff;
+  border: 1px solid #dce8f8;
+  color: #4b6b91;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.history-scope-callout svg {
+  color: #0a56c4;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.history-scope-callout code {
+  background: #eaf1fa;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #103a6b;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+/* Department Filter Chips */
+.history-dept-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid #edf2f9;
+}
+
+.history-dept-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #728aa7;
+  margin-right: 2px;
+}
+
+/* --------------------------------------------------------
+   In-Progress AI Processing Section
+   -------------------------------------------------------- */
+.history-in-progress-card {
+  padding: 22px;
+  margin-bottom: 22px;
+  background: linear-gradient(170deg, #ffffff 0%, #f6faff 100%);
+  border-color: #cde0f7;
+}
+
+.card-subtext {
+  margin: 3px 0 0;
+  color: #6a829e;
+  font-size: 12px;
+}
+
+.history-in-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.in-progress-card-item {
+  border: 1px solid #c9def5;
+  border-radius: 10px;
+  padding: 16px 18px;
+  background: #ffffff;
+  box-shadow: 0 3px 10px rgba(8, 101, 237, 0.04);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+.in-progress-card-item:hover {
+  transform: translateY(-2px);
+  border-color: #0865ed;
+  box-shadow: 0 6px 16px rgba(8, 101, 237, 0.09);
+}
+
+.in-progress-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.live-processing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+/* --------------------------------------------------------
+   Completed Summaries Archive
+   -------------------------------------------------------- */
+.history-archive-card {
+  padding: 24px;
+}
+
+.history-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.history-card-item {
+  border: 1px solid #e1eaf4;
+  border-radius: 10px;
+  padding: 18px 20px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  cursor: pointer;
+}
+
+.history-card-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(18, 61, 106, 0.07);
+  border-color: #b9d3f4;
+}
+
+.history-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.history-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.db-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.history-dept-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f1f5fa;
+  color: #3b587a;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.history-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-item-desc {
+  margin: 6px 0 12px;
+  font-size: 11.5px;
+  color: #5f7895;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Metrics row */
+.history-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.history-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #f4f8fe;
+  border: 1px solid #e1ecf8;
+  color: #355880;
+  font-size: 10px;
+}
+
+.history-metric-chip svg {
+  color: #0865ed;
+}
+
+.history-metric-chip strong {
+  color: #173b64;
+  font-weight: 650;
+}
+
+.history-metric-chip.dept-chip {
+  background: #faf5ff;
+  border-color: #f3e8ff;
+  color: #6b21a8;
+}
+
+.history-metric-chip.dept-chip svg {
+  color: #9333ea;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .history-toolbar-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .history-search-wrap {
+    flex: 1;
+    width: 100%;
+  }
+
+  .history-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}

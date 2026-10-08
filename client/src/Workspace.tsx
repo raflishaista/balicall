@@ -31,7 +31,11 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
       <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>
-      <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} disabled={!hasSummary} title={!hasSummary ? 'Tersedia setelah kamu menyelesaikan rapat' : 'Lihat notulen terakhir'} onClick={onSummary}><FileText size={19} /><span>Notulen rapat</span></button>
+      <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'summary' ? 'page' : undefined} title="Lihat notulen & riwayat rapat" onClick={onSummary}>
+        <FileText size={19} />
+        <span>Notulen rapat</span>
+        {hasSummary && <span className="sidebar-has-summary-dot" title="Tersedia notulen tersimpan" />}
+      </button>
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
     <div className="sidebar-bottom">
