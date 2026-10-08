@@ -361,3 +361,28 @@ test('useScheduleForm duration preset correctly calculates end time across midni
   const expectedEndDay = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000).getDate();
   assert.equal(h.form.validation.endDateTime.getDate(), expectedEndDay);
 });
+
+test('rescheduling validates new date and time inputs correctly', () => {
+  const fixedNow = new Date('2026-10-10T08:00:00.000Z').getTime();
+
+  // 1. Reschedule to past date fails
+  const pastRes = validateScheduleTime('2026-10-09', '10:00', '11:00', fixedNow);
+  assert.equal(pastRes.valid, false);
+  assert.ok(pastRes.error.includes('masa lalu'));
+
+  // 2. Reschedule to valid future date succeeds
+  const futureRes = validateScheduleTime('2026-10-15', '14:00', '15:00', fixedNow);
+  assert.equal(futureRes.valid, true);
+  assert.equal(futureRes.error, null);
+
+  // 3. Reschedule end time earlier than start time fails
+  const invertedRes = validateScheduleTime('2026-10-15', '16:00', '15:00', fixedNow);
+  assert.equal(invertedRes.valid, false);
+  assert.ok(invertedRes.error.includes('lebih lambat'));
+
+  // 4. Reschedule duration preset calculation produces valid end time
+  const calculatedEnd = calculateEndTime('14:30', 45);
+  assert.equal(calculatedEnd, '15:15');
+  const validPresetRes = validateScheduleTime('2026-10-15', '14:30', calculatedEnd, fixedNow);
+  assert.equal(validPresetRes.valid, true);
+});

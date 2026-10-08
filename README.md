@@ -1,97 +1,160 @@
-# 📡 Bali Tower Sentra (BaliCall) — Video Call & AI Meeting Minutes Platform
+# 📡 Bali Tower Sentra (BaliCall) — Video Call, AI Meeting Minutes & Cloud Recording Platform
 
-A private, enterprise PC video and voice calling platform designed for **Bali Tower Telecom** internal operations, field transmission synchronization, and attendance coordination. 
+A private, enterprise PC video and voice calling platform designed for **Bali Tower Telecom** internal operations, field transmission synchronization, and attendance coordination.
 
-Combines **real-time WebRTC audio/video calling**, camera and screen sharing, active speaker spotlighting, hardware device selection, dual-engine speech-to-text (Browser Web Speech API & Backend STT), **PostgreSQL database persistence (`jds3_db`)** with strict employee ID verification, and an **embedded AI Meeting Secretary** powered by the internal office LLM (`qwen-35b` at `http://10.7.1.21/v1`), Google Gemini, or Smart Demo Engine.
+Combines **real-time WebRTC audio/video calling**, camera & screen sharing, active speaker spotlighting, dual-engine speech-to-text (Browser Web Speech API & Backend STT), **PostgreSQL database persistence (`jds3_db`)** with strict employee ID verification, **Meeting Scheduling (Kalender Interaktif)**, **Docker-based Cloud Meeting Recording (LiveKit Egress)**, and an **embedded AI Meeting Secretary** powered by the internal office LLM (`qwen-35b` at `http://10.7.1.21/v1`), Google Gemini, or Smart Demo Engine.
 
 ---
 
 ## 🌟 Key Features & Architecture
 
 ### 1. 📹 Video Calling, Camera & Screen Sharing
-* **Video Grid & Spotlight:** Multi-party video grid with speaker spotlighting that automatically elevates the currently speaking participant.
+* **Video Grid & Spotlight:** Multi-party responsive video grid with active speaker spotlighting that automatically detects and elevates the currently speaking participant.
 * **Camera Controls:** Seamless camera toggle, graceful fallback when cameras are disconnected or permissions denied, and non-blocking audio continuation.
 * **Screen Sharing:** High-framerate desktop/window presentation stage with active presenter ribbon.
 * **Device Settings Dialog:** Hardware selection for microphone, camera, and speaker audio output with real-time level feedback.
 
-### 2. ⚡ LiveKit WebRTC SFU (Port 7880)
+### 2. ⚡ LiveKit WebRTC SFU (Port 7880, 7881, 7882)
 * High-performance, low-latency WebRTC media delivery powered by LiveKit SFU.
 * Automatic room lifecycle and participant management.
 * WebRTC token authorization scoping each user to an active session.
 
-### 3. 🎙️ Dual Speech-to-Text (STT) Engine
-* **Browser STT (`STT_PROVIDER=browser`):** Built-in Web Speech API recognition for Indonesian (`id-ID`) and English (`en-US`) with instant local transcript rendering.
-* **Backend STT (`STT_PROVIDER=server`):** Captures microphone audio segments (~8 seconds) and sends them to an internal OpenAI-compatible `/audio/transcriptions` service without exposing API credentials to the browser.
-* **Resilient Save Queue:** Idempotent dialogue buffering with optimistic UI updates and deduplication (`tx-...`).
+### 3. 🔴 Cloud Meeting Recording (LiveKit Egress + Redis in Docker)
+* **Server-side Composite Recording:** Menggunakan headless Chromium dan GStreamer pipeline terisolasi di dalam container Docker (`livekit/egress`) untuk merekam seluruh tampilan room panggilan (video peserta, screen share, dan audio) ke file `.mp4` berkualitas tinggi.
+* **Sinkronisasi Status Real-time:** Status perekaman dipancarkan secara otomatis ke semua peserta melalui event `RoomEvent.RecordingStatusChanged` (indikator `🔴 Merekam`).
+* **Penyimpanan Lokal & Otomatis:** Video disimpan di direktori volume host [`infrastructure/livekit/recordings/`](infrastructure/livekit/recordings/) dan perekaman otomatis dihentikan saat rapat berakhir.
 
-### 4. 🗄️ PostgreSQL Database Integration (`jds3_db`)
-Persistent enterprise data storage in company PostgreSQL (`10.17.101.232:5432/jds3_db`) with prefix `balicall_*` (does not require `CREATE DATABASE` privilege):
-* **`balicall_employees`**: Authorized company employee directory (`employee_id`, `name`, `department`, `position`, `status`).
-* **`balicall_meetings`**: Meeting records and lifecycle timestamps (`id`, `room_name`, `status`, `created_at`, `ended_at`).
-* **`balicall_summaries`**: Structured meeting minutes (`executive_summary`, `key_discussion_points`, `decisions`, `action_items`, `attendance_summary`).
-* **`balicall_transcripts`**: Speech dialogue logs indexed by meeting ID.
-* **`balicall_attendees`**: Participant attendance roster with joined/left timestamps.
+### 4. 📅 Meeting Scheduling (Jadwal Rapat & Kalender Interaktif)
+* **Antarmuka Kalender & Time Picker:** Menu penjadwalan langsung di beranda dan sidebar dengan kalender interaktif serta preset durasi (15m, 30m, 45m, 1h, 1.5h, 2h).
+* **Validasi Waktu Ketat:**
+  * Menolak tanggal dan jam masa lalu.
+  * Menolak waktu selesai yang lebih awal daripada waktu mulai.
+  * Mendukung rapat lintas tengah malam (*cross-midnight shift*) hingga batas 8 jam.
+* **Slug Otomatis:** Menghasilkan slug room URL yang ramah (`room_slug`) secara dinamis berdasarkan judul rapat dan tanggal.
+* **Persistensi Database:** Tersimpan di tabel `balicall_schedules` dengan status terverifikasi dan tombol pintas langsung ke room rapat.
 
-#### 🔒 Strict Employee ID Verification & Format Validation
-* Enforces official ID format: `/^BT-\d{4,6}$/i` (e.g. `BT-10492`).
-* Malformed non-ID text (e.g. `ns-12nsunauu`) is rejected with **`400 Bad Request`**: `"Format ID Salah."`.
-* Unregistered IDs (e.g. `BT-99999`) are rejected with **`403 Forbidden`**: `"Akses ditolak: Employee ID tidak terdaftar di database resmi perusahaan."`.
-* Registered employees automatically load authoritative names and departments from the database.
+### 5. 🎙️ Dual Speech-to-Text (STT) Engine
+* **Browser STT (`STT_PROVIDER=browser`):** Built-in Web Speech API recognition untuk Bahasa Indonesia (`id-ID`) dan English (`en-US`) dengan render transkrip instan lokal.
+* **Backend STT (`STT_PROVIDER=server`):** Menangkap audio mikrofon (~8 detik) dan mengirimkannya ke layanan `/audio/transcriptions` internal tanpa mengekspos API key ke browser.
+* **Resilient Save Queue:** Idempotent dialogue buffering dengan optimistic UI updates dan deduplikasi unik (`tx-...`).
 
-### 5. 🤖 AI Meeting Secretary (Office Qwen-35b & Gemini)
-* Generates structured minutes directly from conversation transcripts:
+### 6. 🗄️ PostgreSQL Database Integration (`jds3_db`)
+Penyimpanan data perusahaan persisten di PostgreSQL (`10.17.101.232:5432/jds3_db`) dengan prefix `balicall_*`:
+* **`balicall_employees`**: Direktori resmi karyawan (`employee_id`, `name`, `department`, `position`, `status`).
+* **`balicall_meetings`**: Riwayat sesi rapat dan timestamp (`id`, `room_name`, `status`, `created_at`, `ended_at`).
+* **`balicall_summaries`**: Notulen terstruktur (`executive_summary`, `key_discussion_points`, `decisions`, `action_items`, `attendance_summary`).
+* **`balicall_transcripts`**: Log percakapan berurutan terindeks ID meeting.
+* **`balicall_attendees`**: Daftar presensi kehadiran dengan waktu join dan leave.
+* **`balicall_schedules`**: Data rapat terjadwal dan slot kalender.
+
+#### 🔒 Validasi Ketat Format ID Karyawan
+* Format NIK resmi: `/^BT-\d{4,6}$/i` (contoh: `BT-10492`).
+* Format teks salah (misal: `ns-12nsunauu`) ditolak dengan **`400 Bad Request`**: `"Format ID Salah."`.
+* NIK tidak terdaftar (misal: `BT-99999`) ditolak dengan **`403 Forbidden`**: `"Akses ditolak: Employee ID tidak terdaftar di database resmi perusahaan."`.
+
+### 7. 🤖 AI Meeting Secretary (Office Qwen-35b & Gemini)
+* Menghasilkan notulen rapat terstruktur langsung dari riwayat transkrip dialog:
   * Executive Summary
-  * Key Discussion Points
-  * Agreed Decisions
-  * Action Items (Task, Assignee, Priority, Deadline)
-  * Attendance Roster
-* Supports internal office gateway (`LLM_PROVIDER=office`, `qwen-35b`), Google Gemini (`LLM_PROVIDER=gemini`), or offline standby (`LLM_PROVIDER=demo`).
-* Automatically persists minutes to PostgreSQL upon meeting completion.
+  * Poin Pembahasan Utama
+  * Keputusan yang Disepakati
+  * Action Items (Tugas, PIC, Prioritas, Deadline)
+  * Ringkasan Kehadiran
+* Mendukung gateway internal kantor (`LLM_PROVIDER=office`, `qwen-35b`), Google Gemini (`LLM_PROVIDER=gemini`), atau fallback offline (`LLM_PROVIDER=demo`).
+* Tersimpan otomatis ke PostgreSQL saat rapat selesai.
 
-### 6. 🔗 Cryptographic LiveKit Webhooks & ERP Outbound Dispatch
-* **Inbound SFU Webhooks (`POST /api/livekit/webhook`):**
-  * Cryptographically verified using `WebhookReceiver` from `livekit-server-sdk` (JWT signature & SHA-256 body checksum).
-  * Automatically records room lifecycle and participant join/leave events.
-  * In-memory rolling event audit log accessible via `GET /api/livekit/webhooks`.
-* **Outbound Webhooks (`OUTBOUND_WEBHOOK_URL`):**
-  * Dispatches structured minutes and attendance payload to corporate ERP, Microsoft Teams, or Telegram bots.
+### 8. 🔗 Cryptographic LiveKit Webhooks & ERP Outbound Dispatch
+* **Inbound SFU Webhooks (`POST /api/livekit/webhook`):** Verifikasi signature kriptografis JWT & checksum SHA-256 via `WebhookReceiver`.
+* **Outbound Webhooks (`OUTBOUND_WEBHOOK_URL`):** Mengirim payload notulen rapat ke ERP internal, Microsoft Teams, atau bot Telegram.
 
 ---
 
-## 🚀 Menjalankan di Windows
+## 🐳 Panduan Menjalankan Docker (LiveKit + Redis + Egress)
+
+Jika Anda ingin mengaktifkan fitur **Perekaman Video (Recording)**, gunakan Docker Compose yang telah disediakan di folder [`infrastructure/livekit/`](infrastructure/livekit/).
+
+### Prasyarat:
+* **Windows:** Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) (dengan backend WSL 2 aktif).
+* **Linux:** Install `docker.io` dan `docker-compose-v2` (`sudo apt install -y docker.io docker-compose-v2`).
+
+### 1. Menyalakan Layanan Docker
+Buka terminal dan masuk ke folder infrastruktur:
+```bash
+cd infrastructure/livekit
+docker compose up -d
+```
+Docker akan menyalakan 3 container di background:
+* `balicall-redis` (Redis 7) — IPC & antrean tugas Egress.
+* `balicall-livekit` (LiveKit SFU v1.13.7) — Port 7880 (HTTP/WS), 7881 (TCP RTC), 7882 (UDP RTC).
+* `balicall-egress` (LiveKit Egress v1.14.1) — Headless Chrome recorder dengan capability `SYS_ADMIN`.
+
+### 2. Memeriksa Status & Log
+```bash
+# Cek container yang sedang berjalan
+docker compose ps
+
+# Cek log recorder Egress realtime
+docker compose logs -f egress
+
+# Menghentikan container jika sudah selesai
+docker compose down
+```
+
+### 3. Lokasi File Rekaman
+Hasil rekaman panggilan `.mp4` akan otomatis tersimpan di folder:
+```
+infrastructure/livekit/recordings/
+```
+
+> [!TIP]
+> Skrip [`start.bat`](start.bat) di Windows sudah **otomatis mendeteksi** jika LiveKit sedang berjalan di Docker (port 7880 aktif). Skrip akan melewati peluncuran binary LiveKit native agar tidak terjadi bentrok port, dan langsung menjalankan backend API serta web client.
+
+---
+
+## 🚀 Menjalankan Aplikasi di Windows
 
 Gunakan **Node.js 24 LTS** (minimum 22.18).
 
-### 1. Peluncuran Otomatis (Start Bat):
+### Cara Cepat (Otomatis):
 Cukup klik dua kali [`start.bat`](start.bat).
-Skrip ini otomatis:
-1. Memverifikasi instalasi Node.js.
-2. Mengunduh LiveKit SFU server jika belum ada.
-3. Menginstal dependensi client dan server.
-4. Menjalankan LiveKit SFU (Port 7880).
-5. Menjalankan Backend API Express (Port 3001).
-6. Menjalankan Frontend Vite (Port 5187).
+Skrip ini akan otomatis:
+1. Memverifikasi instalasi Node.js dan dependensi.
+2. Mendeteksi apakah LiveKit berjalan di Docker; jika tidak, menjalankan binary native.
+3. Menjalankan Backend API Express (Port 3001).
+4. Menjalankan Frontend Vite (Port 5187).
+5. Membuka peramban di `http://localhost:5187`.
 
-### 2. Peluncuran Manual via Terminal:
+### Peluncuran Manual via Terminal:
 ```powershell
-# 1. Jalankan setup awal (hanya pertama kali atau bila dependensi berubah)
-npm run setup
+# Terminal 1: Backend API (Port 3001)
+npm run dev --prefix server
 
-# 2. Terminal 1: LiveKit SFU (Port 7880)
-npm run sfu
-
-# 3. Terminal 2: Backend API (Port 3001)
-npm run server
-
-# 4. Terminal 3: Frontend Client (Port 5187)
-npm run client
+# Terminal 2: Frontend Web (Port 5187)
+npm run dev --prefix client
 ```
 
-Buka browser di **`http://127.0.0.1:5187`**.
+Buka browser di **`http://localhost:5187`**.
 
 ---
 
-## ⚙️ Konfigurasi (`server/.env`)
+## 🐧 Menjalankan & Deploy di Linux (SSH Environment)
+
+Untuk panduan lengkap deployment di server Linux (Ubuntu/Debian) seperti `sv-training-2`, reverse proxy Nginx HTTPS, dan daemon PM2, silakan baca dokumentasi khusus:
+👉 **[Panduan Lengkap Linux Deployment](docs/LINUX_DEPLOYMENT.md)**
+
+Ringkasan perintah di Linux:
+```bash
+# 1. Setup & build
+chmod +x scripts/setup.sh start.sh
+./scripts/setup.sh
+
+# 2. Menjalankan via PM2 (Background Daemon)
+pm2 start ecosystem.config.cjs
+pm2 status
+```
+
+---
+
+## ⚙️ Konfigurasi Environment (`server/.env`)
 
 Salin dari [`server/.env.example`](server/.env.example) ke `server/.env`:
 
@@ -99,7 +162,7 @@ Salin dari [`server/.env.example`](server/.env.example) ke `server/.env`:
 PORT=3001
 LIVEKIT_URL=ws://127.0.0.1:7880
 LIVEKIT_API_KEY=devkey
-LIVEKIT_API_SECRET=secret
+LIVEKIT_API_SECRET=c35dce5eb68185c1ba3b140ab408da916a75c0d297f42c96cbbe5aa362f7b082
 
 # Database PostgreSQL Intranet (jds3_db)
 DATABASE_URL=postgresql://jds3:PASSWORD@10.17.101.232:5432/jds3_db
@@ -109,8 +172,8 @@ VERIFY_EMPLOYEE_ID=true
 LLM_PROVIDER=office
 LLM_BASE_URL=http://10.7.1.21/v1
 LLM_MODEL=qwen-35b
-LLM_KEY=your_office_api_key_here
-LLM_TIMEOUT_MS=30000
+LLM_KEY=sk-c1PP5Ngd9Dh7q2ZjiwZAIg
+LLM_TIMEOUT_MS=60000
 
 # Google Gemini (Alternatif)
 GEMINI_API_KEY=
@@ -127,52 +190,67 @@ OUTBOUND_WEBHOOK_URL=
 
 ---
 
-## 🛠️ API & Webhook Reference
+## 🛠️ API Reference
 
 | Method | Endpoint | Deskripsi |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Status server, LiveKit SFU, LLM, STT, database PostgreSQL, dan webhook |
-| `GET` | `/api/employees` | Mengambil daftar direktori karyawan resmi dari `balicall_employees` |
-| `POST` | `/api/token` | Menghasilkan token LiveKit JWT & memverifikasi NIK karyawan di database |
-| `GET` | `/api/meetings/:id/transcript` | Mengambil transkrip dialog dan daftar kehadiran untuk meeting |
-| `POST` | `/api/meetings/:id/transcript` | Menyimpan baris ucapan dengan idempotensi deduplikasi |
-| `POST` | `/api/meetings/:id/audio` | Mengirim audio rekaman untuk transkripsi server (Backend STT) |
-| `POST` | `/api/meetings/:id/presence` | Sinkronisasi status kehadiran peserta |
-| `POST` | `/api/meetings/:id/leave` | Mencatat peserta keluar dari sesi panggilan |
-| `POST` | `/api/meetings/:id/summarize` | Menghasilkan notulen rapat AI dan menyimpannya ke PostgreSQL |
-| `GET` | `/api/meetings/db-summaries` | Mengambil daftar riwayat notulen langsung dari PostgreSQL |
-| `GET` | `/api/meetings/db-details/:id` | Mengambil detail lengkap rapat (notulen, transkrip, peserta) dari DB |
-| `POST` | `/api/livekit/webhook` | **Inbound LiveKit Webhook:** Verifikasi signature kriptografis event SFU |
-| `GET` | `/api/livekit/webhooks` | Melihat log audit event webhook LiveKit |
+| `GET` | `/api/health` | Status server, LiveKit SFU, LLM, STT, PostgreSQL, dan webhook |
+| `GET` | `/api/employees` | Mengambil direktori resmi karyawan dari `balicall_employees` |
+| `POST` | `/api/token` | Menghasilkan token LiveKit JWT & memverifikasi NIK karyawan |
+| `GET` | `/api/meetings/:id/transcript` | Mengambil riwayat transkrip dialog dan kehadiran rapat |
+| `POST` | `/api/meetings/:id/transcript` | Menyimpan transkrip percakapan dengan deduplikasi id |
+| `POST` | `/api/meetings/:id/audio` | Mengirim segmen audio untuk transkripsi backend STT |
+| `POST` | `/api/meetings/:id/presence` | Sinkronisasi heartbeat kehadiran peserta |
+| `POST` | `/api/meetings/:id/leave` | Mencatat peserta keluar (otomatis stop recording jika meeting berakhir) |
+| `POST` | `/api/meetings/:id/recording/start` | **Mulai Perekaman:** Menjalankan LiveKit Egress composite recording |
+| `POST` | `/api/meetings/:id/recording/stop` | **Hentikan Perekaman:** Menghentikan Egress & menyimpan file video |
+| `POST` | `/api/meetings/:id/summarize` | Menghasilkan notulen AI & menyimpannya ke PostgreSQL |
+| `GET` | `/api/meetings/db-summaries` | Mengambil daftar riwayat notulen dari PostgreSQL |
+| `GET` | `/api/meetings/db-details/:id` | Mengambil detail lengkap rapat (notulen, transkrip, presensi) |
+| `GET` | `/api/schedules` | Mengambil daftar rapat terjadwal aktif dari `balicall_schedules` |
+| `POST` | `/api/schedules` | Menjadwalkan rapat masa depan dengan validasi tanggal & jam ketat |
+| `PUT` | `/api/schedules/:id` | **Jadwal Ulang:** Memperbarui tanggal, jam mulai/selesai rapat terjadwal |
+| `DELETE` | `/api/schedules/:id` | Membatalkan / menghapus jadwal rapat |
+| `POST` | `/api/livekit/webhook` | **Inbound LiveKit Webhook:** Verifikasi cryptographic signature event SFU |
+| `GET` | `/api/livekit/webhooks` | Melihat log audit riwayat webhook |
 | `POST` | `/api/meetings/:id/dispatch-webhook` | **Outbound Webhook:** Mengirim notulen ke webhook ERP eksternal |
 
 ---
 
-## 🧪 Pengujian & Verifikasi
+## 🧪 Pengujian & Verifikasi (149 Passing Tests)
 
-### 1. Test Suite Backend API (20 tests):
+Seluruh komponen dilengkapi dengan automated unit & integration test suites:
+
+### 1. Test Suite Backend API (22 tests):
 ```powershell
 npm --prefix server test
 ```
-*Memverifikasi token session, kehadiran, deduplikasi transkrip, timeout, validasi format NIK (`ns-12nsunauu` -> 400), penolakan ID tidak terdaftar (403), dan direktori karyawan.*
+*Memverifikasi token session, kehadiran, deduplikasi transkrip, timeout LLM, validasi format NIK (`ns-12nsunauu` -> 400), penolakan ID tidak terdaftar (403), Egress recording lifecycle, serta pembuatan, reschedule (PUT), dan pembatalan jadwal rapat.*
 
-### 2. Test Suite Frontend Client (63 tests):
+### 2. Test Suite Frontend Client (127 tests):
 ```powershell
 npm --prefix client test
 ```
-*Memverifikasi kontrol kamera, screen share, pemilih perangkat audio/video, speaker spotlighting, Web Speech API, dan antrean simpan.*
+*Memverifikasi kontrol kamera, screen share, pemilih perangkat audio/video, active speaker spotlighting, Web Speech API recognizer, validasi kalender jadwal, penjadwalan ulang rapat (rescheduling), dan antrean simpan.*
 
 ### 3. Build Produksi Frontend:
 ```powershell
 npm --prefix client run build
 ```
 
-### 4. Integrasi Database PostgreSQL:
+### 4. Uji Integrasi Database:
 ```powershell
 node scripts/test_db.js
 ```
-*Memverifikasi koneksi PostgreSQL, pembuatan skema `balicall_*`, validasi NIK karyawan, dan operasi CRUD.*
+*Memverifikasi koneksi PostgreSQL `jds3_db`, skema tabel `balicall_*`, dan query transaksi.*
 
-### Pengaturan dan dokumen Person 1
+---
 
-Menu **Pengaturan** menyediakan default mikrofon/kamera/speaker, kondisi awal media, sorotan pembicara, mirror video lokal, dan pengurangan animasi. Preferensi tersimpan di browser dan diteruskan ke preview/room saat bergabung.
+## 💻 Pengaturan & Preferensi Pengguna
+
+Menu **Pengaturan** di aplikasi menyediakan opsi:
+* Default input mikrofon, kamera, dan speaker audio output.
+* Konfigurasi kondisi awal saat masuk panggilan (Mute by default / Camera on).
+* Pengaturan sorotan otomatis pembicara aktif (*Speaker Spotlight*).
+* Mirror video lokal dan preferensi pengurangan animasi (*Reduced Motion*).
+* Seluruh preferensi disimpan di `localStorage` per peramban dan diterapkan otomatis saat memasuki sesi rapat.

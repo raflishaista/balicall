@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
   Calendar,
+  CalendarClock,
   Clock,
   Plus,
   ChevronLeft,
@@ -12,11 +13,16 @@ import {
   Video,
   Info,
   Sparkles,
+  X,
 } from 'lucide-react';
 
 import {
   slugify,
   DURATION_PRESETS,
+  formatDateToInput,
+  formatTimeToInput,
+  calculateEndTime,
+  validateScheduleTime,
 } from './scheduleValidation';
 import { useScheduleForm } from './useScheduleForm';
 
@@ -50,6 +56,13 @@ interface ScheduleViewProps {
     scheduledStart: string;
     scheduledEnd: string;
   }) => Promise<void>;
+  onReschedule?: (id: string, updateData: {
+    scheduledStart: string;
+    scheduledEnd: string;
+    title?: string;
+    description?: string;
+    roomName?: string;
+  }) => Promise<void>;
   onCancelSchedule: (id: string) => Promise<void>;
   onJoinRoom: (roomName: string) => void;
 }
@@ -61,6 +74,7 @@ export function ScheduleView({
   department,
   onBack,
   onCreateSchedule,
+  onReschedule,
   onCancelSchedule,
   onJoinRoom,
 }: ScheduleViewProps) {
@@ -71,6 +85,72 @@ export function ScheduleView({
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Rescheduling state for meeting cards
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleStartTime, setRescheduleStartTime] = useState('');
+  const [rescheduleEndTime, setRescheduleEndTime] = useState('');
+  const [rescheduleDuration, setRescheduleDuration] = useState<number | null>(null);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [isRescheduling, setIsRescheduling] = useState(false);
+
+  const handleStartReschedule = (item: ScheduledMeeting) => {
+    setReschedulingId(item.id);
+    setRescheduleError(null);
+    setFormSuccess(null);
+    const start = new Date(item.scheduledStart);
+    const end = new Date(item.scheduledEnd);
+    setRescheduleDate(formatDateToInput(start));
+    setRescheduleStartTime(formatTimeToInput(start));
+    setRescheduleEndTime(formatTimeToInput(end));
+    const diffMins = Math.round((end.getTime() - start.getTime()) / 60000);
+    const matchedPreset = DURATION_PRESETS.find(p => p.minutes === diffMins);
+    setRescheduleDuration(matchedPreset ? matchedPreset.minutes : null);
+  };
+
+  const handleCancelReschedule = () => {
+    setReschedulingId(null);
+    setRescheduleError(null);
+  };
+
+  const handleRescheduleDurationPreset = (minutes: number) => {
+    setRescheduleDuration(minutes);
+    if (rescheduleStartTime) {
+      setRescheduleEndTime(calculateEndTime(rescheduleStartTime, minutes));
+    }
+  };
+
+  const handleSaveReschedule = async (item: ScheduledMeeting) => {
+    setRescheduleError(null);
+    const validation = validateScheduleTime(
+      rescheduleDate,
+      rescheduleStartTime,
+      rescheduleEndTime,
+      form.currentEpoch
+    );
+
+    if (!validation.valid || !validation.startDateTime || !validation.endDateTime) {
+      setRescheduleError(validation.error || 'Periksa kembali tanggal dan jam jadwal baru.');
+      return;
+    }
+
+    setIsRescheduling(true);
+    try {
+      if (onReschedule) {
+        await onReschedule(item.id, {
+          scheduledStart: validation.startDateTime.toISOString(),
+          scheduledEnd: validation.endDateTime.toISOString(),
+        });
+      }
+      setFormSuccess(`Jadwal rapat "${item.title}" berhasil diubah.`);
+      setReschedulingId(null);
+    } catch (err) {
+      setRescheduleError(err instanceof Error ? err.message : 'Gagal mengubah jadwal rapat.');
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,7 +230,7 @@ export function ScheduleView({
         </button>
         <div className="schedule-header-title">
           <span className="page-kicker">KALENDER RAPAT</span>
-          <h1>Jadwal Rapat & Reservasi Ruang</h1>
+          <h1>Jadwalkan Rapat & Reservasi Ruang</h1>
           <p>Atur agenda pertemuan tim Bali Tower, tentukan rentang waktu, dan siapkan ruang kolaborasi.</p>
         </div>
       </div>
@@ -393,89 +473,218 @@ export function ScheduleView({
                   end.getTime() >= form.currentEpoch;
 
                 return (
-                  <article key={item.id} className="schedule-card-item">
-                    <div className="schedule-card-header">
-                      <div className="schedule-time-badge">
-                        <Calendar size={13} />
-                        <span>
-                          {isToday
-                            ? 'Hari ini'
-                            : start.toLocaleDateString('id-ID', {
-                                weekday: 'short',
-                                day: 'numeric',
-                                month: 'short',
+                  <article key={item.id} className={`schedule-card-item ${reschedulingId === item.id ? 'rescheduling-active' : ''}`}>
+                    {reschedulingId === item.id ? (
+                      <div className="schedule-reschedule-box" role="region" aria-label={`Jadwalkan ulang ${item.title}`}>
+                        <div className="reschedule-box-header">
+                          <div className="reschedule-box-title">
+                            <CalendarClock size={16} />
+                            <strong>Jadwalkan Ulang Rapat</strong>
+                          </div>
+                          <button
+                            type="button"
+                            className="icon-button dialog-close"
+                            onClick={handleCancelReschedule}
+                            title="Tutup formulir ubah jadwal"
+                            aria-label="Tutup ubah jadwal"
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+
+                        <p className="reschedule-target-title">
+                          Atur ulang waktu untuk: <strong>{item.title}</strong> (<code>#{item.roomName}</code>)
+                        </p>
+
+                        {rescheduleError && (
+                          <div className="call-error compact-error" role="alert">
+                            <AlertCircle size={14} />
+                            <span>{rescheduleError}</span>
+                          </div>
+                        )}
+
+                        <div className="reschedule-fields-grid">
+                          <div className="form-group">
+                            <label htmlFor={`resched-date-${item.id}`}>Tanggal Baru</label>
+                            <input
+                              id={`resched-date-${item.id}`}
+                              type="date"
+                              className="form-input"
+                              min={form.todayDateStr}
+                              value={rescheduleDate}
+                              onChange={e => {
+                                setRescheduleDate(e.target.value);
+                                setRescheduleError(null);
+                              }}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label htmlFor={`resched-start-${item.id}`}>Jam Mulai</label>
+                            <input
+                              id={`resched-start-${item.id}`}
+                              type="time"
+                              className="form-input"
+                              value={rescheduleStartTime}
+                              onChange={e => {
+                                setRescheduleStartTime(e.target.value);
+                                setRescheduleError(null);
+                                if (rescheduleDuration) {
+                                  setRescheduleEndTime(calculateEndTime(e.target.value, rescheduleDuration));
+                                }
+                              }}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label htmlFor={`resched-end-${item.id}`}>Jam Selesai</label>
+                            <input
+                              id={`resched-end-${item.id}`}
+                              type="time"
+                              className="form-input"
+                              value={rescheduleEndTime}
+                              onChange={e => {
+                                setRescheduleEndTime(e.target.value);
+                                setRescheduleDuration(null);
+                                setRescheduleError(null);
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="reschedule-presets-row">
+                          <span className="preset-label">Durasi:</span>
+                          <div className="duration-chips">
+                            {DURATION_PRESETS.map(preset => (
+                              <button
+                                key={preset.minutes}
+                                type="button"
+                                className={`duration-chip-btn ${rescheduleDuration === preset.minutes ? 'active' : ''}`}
+                                onClick={() => handleRescheduleDurationPreset(preset.minutes)}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="reschedule-actions-row">
+                          <button
+                            type="button"
+                            className="button-secondary compact-btn"
+                            onClick={handleCancelReschedule}
+                            disabled={isRescheduling}
+                          >
+                            Batal
+                          </button>
+                          <button
+                            type="button"
+                            className="button-primary compact-btn"
+                            onClick={() => handleSaveReschedule(item)}
+                            disabled={isRescheduling}
+                          >
+                            <Check size={14} />
+                            <span>{isRescheduling ? 'Menyimpan...' : 'Simpan Jadwal Baru'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="schedule-card-header">
+                          <div className="schedule-time-badge">
+                            <Calendar size={13} />
+                            <span>
+                              {isToday
+                                ? 'Hari ini'
+                                : start.toLocaleDateString('id-ID', {
+                                    weekday: 'short',
+                                    day: 'numeric',
+                                    month: 'short',
+                                  })}
+                              {', '}
+                              {start.toLocaleTimeString('id-ID', {
+                                hour: '2-digit',
+                                minute: '2-digit',
                               })}
-                          {', '}
-                          {start.toLocaleTimeString('id-ID', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                          {' - '}
-                          {end.toLocaleTimeString('id-ID', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                          {isCrossDay && ' (+1 hari)'}
-                        </span>
-                      </div>
+                              {' - '}
+                              {end.toLocaleTimeString('id-ID', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                              {isCrossDay && ' (+1 hari)'}
+                            </span>
+                          </div>
 
-                      {isStartingSoon && (
-                        <span className="starting-soon-badge">
-                          <Sparkles size={12} /> Siap dimulai
-                        </span>
-                      )}
-                    </div>
+                          {isStartingSoon && (
+                            <span className="starting-soon-badge">
+                              <Sparkles size={12} /> Siap dimulai
+                            </span>
+                          )}
+                        </div>
 
-                    <div className="schedule-card-body">
-                      <h3 className="schedule-item-title">{item.title}</h3>
-                      <div className="schedule-room-tag">
-                        <span>Ruang:</span>
-                        <code>#{item.roomName}</code>
-                      </div>
+                        <div className="schedule-card-body">
+                          <h3 className="schedule-item-title">{item.title}</h3>
+                          <div className="schedule-room-tag">
+                            <span>Ruang:</span>
+                            <code>#{item.roomName}</code>
+                          </div>
 
-                      {item.description && (
-                        <p className="schedule-item-desc">{item.description}</p>
-                      )}
+                          {item.description && (
+                            <p className="schedule-item-desc">{item.description}</p>
+                          )}
 
-                      <div className="schedule-host-info">
-                        <Users size={13} />
-                        <span>
-                          {item.hostName} ({item.hostId}) · {item.department}
-                        </span>
-                      </div>
-                    </div>
+                          <div className="schedule-host-info">
+                            <Users size={13} />
+                            <span>
+                              {item.hostName} ({item.hostId}) · {item.department}
+                            </span>
+                          </div>
+                        </div>
 
-                    <div className="schedule-card-actions">
-                      <button
-                        type="button"
-                        className="button-primary compact-btn"
-                        onClick={() => onJoinRoom(item.roomName)}
-                        title="Masuk langsung ke ruang rapat ini"
-                      >
-                        <Video size={14} />
-                        <span>Gabung Sekarang</span>
-                      </button>
+                        <div className="schedule-card-actions">
+                          <button
+                            type="button"
+                            className="button-primary compact-btn"
+                            onClick={() => onJoinRoom(item.roomName)}
+                            title="Masuk langsung ke ruang rapat ini"
+                          >
+                            <Video size={14} />
+                            <span>Gabung Sekarang</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        className="button-secondary compact-btn"
-                        onClick={() => copyToClipboard(item)}
-                        title="Salin rincian rapat"
-                      >
-                        {copiedId === item.id ? <Check size={14} /> : <Copy size={14} />}
-                        <span>{copiedId === item.id ? 'Tersalin' : 'Salin Info'}</span>
-                      </button>
+                          <button
+                            type="button"
+                            className="button-secondary compact-btn reschedule-schedule-btn"
+                            onClick={() => handleStartReschedule(item)}
+                            title="Jadwalkan ulang rapat ini"
+                            aria-label="Jadwalkan ulang rapat"
+                          >
+                            <CalendarClock size={14} />
+                            <span>Jadwal Ulang</span>
+                          </button>
 
-                      <button
-                        type="button"
-                        className="icon-button cancel-schedule-btn"
-                        onClick={() => onCancelSchedule(item.id)}
-                        title="Batalkan jadwal ini"
-                        aria-label="Batalkan jadwal"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+                          <button
+                            type="button"
+                            className="button-secondary compact-btn"
+                            onClick={() => copyToClipboard(item)}
+                            title="Salin rincian rapat"
+                          >
+                            {copiedId === item.id ? <Check size={14} /> : <Copy size={14} />}
+                            <span>{copiedId === item.id ? 'Tersalin' : 'Salin Info'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="icon-button cancel-schedule-btn"
+                            onClick={() => onCancelSchedule(item.id)}
+                            title="Batalkan jadwal ini"
+                            aria-label="Batalkan jadwal"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </article>
                 );
               })

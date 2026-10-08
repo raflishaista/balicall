@@ -332,12 +332,34 @@ test('schedule API validates time, creates future room, lists and cancels', asyn
   assert.ok(found);
   assert.equal(found.title, 'Koordinasi Fiber Optic Q4');
 
-  // 5. DELETE /api/schedules/:id cancels the schedule
+  // 5. PUT /api/schedules/:id reschedules with validation
+  const rescheduledStart = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
+  const rescheduledEnd = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000 + 45 * 60 * 1000).toISOString();
+  
+  // 5a. Reject past time on reschedule
+  const badReschedule = await f.request(`/schedules/${schedId}`, {
+    scheduledStart: pastStart,
+    scheduledEnd: pastEnd,
+  }, undefined, 'PUT');
+  assert.equal(badReschedule.status, 400);
+
+  // 5b. Valid reschedule
+  const putRes = await f.request(`/schedules/${schedId}`, {
+    scheduledStart: rescheduledStart,
+    scheduledEnd: rescheduledEnd,
+    title: 'Koordinasi Fiber Optic Q4 (Rescheduled)',
+  }, undefined, 'PUT');
+  assert.equal(putRes.status, 200);
+  assert.equal(putRes.data.success, true);
+  assert.equal(putRes.data.schedule.title, 'Koordinasi Fiber Optic Q4 (Rescheduled)');
+  assert.equal(putRes.data.schedule.scheduledStart, rescheduledStart);
+
+  // 6. DELETE /api/schedules/:id cancels the schedule
   const delRes = await f.request(`/schedules/${schedId}`, undefined, undefined, 'DELETE');
   assert.equal(delRes.status, 200);
   assert.equal(delRes.data.success, true);
 
-  // 6. After cancellation, GET /api/schedules does not include cancelled schedule
+  // 7. After cancellation, GET /api/schedules does not include cancelled schedule
   const afterList = await f.request('/schedules', undefined, undefined, 'GET');
   const foundCancelled = afterList.data.schedules.find(s => s.id === schedId);
   assert.equal(foundCancelled, undefined);

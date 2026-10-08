@@ -20,6 +20,7 @@ import {
   createSchedule,
   getUpcomingSchedules,
   cancelSchedule,
+  updateSchedule,
 } from './db.js';
 
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
@@ -53,6 +54,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   const egressClient = new EgressClient(config.livekitInternalUrl.replace(/^ws/, 'http'), config.livekitKey, config.livekitSecret);
   const probe = livekitProbe || (() => roomService.listRooms());
   const inFlightAudio = new Map();
+  const inFlightSummarize = new Map();
   const webhookLogs = [];
 
   app.use(cors({ origin(origin, callback) {
@@ -284,6 +286,62 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
     res.json({ success: true, message: 'Jadwal rapat berhasil dibatalkan.' });
   }));
 
+  app.put('/api/schedules/:id', asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const {
+      scheduledStart,
+      scheduledEnd,
+      title,
+      description,
+      roomName,
+    } = req.body || {};
+
+    if (!scheduledStart || !scheduledEnd) {
+      return res.status(400).json({ error: 'Waktu mulai dan waktu selesai rapat baru wajib ditentukan.' });
+    }
+
+    const startTime = Date.parse(scheduledStart);
+    const endTime = Date.parse(scheduledEnd);
+
+    if (isNaN(startTime) || isNaN(endTime)) {
+      return res.status(400).json({ error: 'Format tanggal atau waktu rapat tidak valid.' });
+    }
+
+    // Validation: Start time cannot be in the past (allow 60s tolerance for network latency)
+    if (startTime < Date.now() - 60000) {
+      return res.status(400).json({
+        error: 'Waktu mulai rapat tidak boleh di masa lalu. Harap pilih tanggal dan jam yang akan datang.',
+        code: 'PAST_TIME_NOT_ALLOWED',
+      });
+    }
+
+    // Validation: End time must be after start time
+    if (endTime <= startTime) {
+      return res.status(400).json({
+        error: 'Waktu selesai rapat harus setelah waktu mulai.',
+        code: 'INVALID_TIME_RANGE',
+      });
+    }
+
+    const updated = await updateSchedule(id, {
+      scheduledStart,
+      scheduledEnd,
+      title: title ? title.trim() : undefined,
+      description: description !== undefined ? description.trim() : undefined,
+      roomName: roomName ? roomName.trim() : undefined,
+    });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Jadwal rapat berhasil diperbarui.',
+      schedule: updated,
+    });
+  }));
+
   // Meeting authorization middleware
   app.use('/api/meetings/:id', asyncRoute(async (req, res, next) => {
     const meeting = store.get(req.params.id);
@@ -310,6 +368,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   app.get('/api/meetings/:id/transcript', (req, res) => {
     const meeting = store.get(req.meetingId);
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
+      isSummarizing: inFlightSummarize.has(meeting.id),
       transcripts: meeting.transcripts, participants: [...meeting.participants.values()], summary: meeting.summary });
   });
 
@@ -474,46 +533,87 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     if (!meeting.transcripts.length) return res.status(400).json({ error: 'No saved speech to summarize. Speak or add text first.' });
-    const snapshot = structuredClone(meeting);
-    const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
-    const current = store.get(req.meetingId);
-    if (current.transcripts.length === snapshot.transcripts.length) store.transact(() => { store.get(req.meetingId).summary = summary; });
 
-    // Persist to PostgreSQL database
+    if (meeting.summary && meeting.summary.transcriptCount === meeting.transcripts.length) {
+      return res.json({ success: true, summary: meeting.summary, meetingStatus: meeting.status });
+    }
+
+    if (!inFlightSummarize.has(req.meetingId)) {
+      const task = (async () => {
+        const snapshot = structuredClone(meeting);
+        const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
+        const current = store.get(req.meetingId);
+        if (current && current.transcripts.length === snapshot.transcripts.length) {
+          store.transact(() => { store.get(req.meetingId).summary = summary; });
+        }
+
+        // Persist to PostgreSQL database
+        try {
+          await saveMeeting(snapshot);
+          await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
+          await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
+          const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
+          if (dbSummary) summary.dbSummaryId = dbSummary.id;
+        } catch (dbErr) {
+          console.warn('[DB] Could not persist meeting to database:', dbErr.message);
+        }
+
+        // Trigger outbound webhook if configured
+        if (config.outboundWebhookUrl) {
+          dispatchOutboundWebhook(config.outboundWebhookUrl, {
+            event: 'meeting.summary.created',
+            meetingId: snapshot.id,
+            roomName: snapshot.roomName,
+            summary,
+            transcriptsCount: snapshot.transcripts.length,
+            attendees: [...snapshot.participants.values()],
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        return summary;
+      })();
+      inFlightSummarize.set(req.meetingId, task);
+    }
+
+    const task = inFlightSummarize.get(req.meetingId);
     try {
-      await saveMeeting(snapshot);
-      await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
-      await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
-      const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
-      if (dbSummary) summary.dbSummaryId = dbSummary.id;
-    } catch (dbErr) {
-      console.warn('[DB] Could not persist meeting to database:', dbErr.message);
+      const summary = await task;
+      const current = store.get(req.meetingId);
+      res.json({ success: true, summary, meetingStatus: current ? current.status : 'ended' });
+    } finally {
+      if (inFlightSummarize.get(req.meetingId) === task) {
+        inFlightSummarize.delete(req.meetingId);
+      }
     }
-
-    // Trigger outbound webhook if configured
-    if (config.outboundWebhookUrl) {
-      dispatchOutboundWebhook(config.outboundWebhookUrl, {
-        event: 'meeting.summary.created',
-        meetingId: snapshot.id,
-        roomName: snapshot.roomName,
-        summary,
-        transcriptsCount: snapshot.transcripts.length,
-        attendees: [...snapshot.participants.values()],
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    res.json({ success: true, summary, meetingStatus: current.status });
   }));
 
-  // Persisted summaries and details from PostgreSQL
+  // Persisted summaries and details from PostgreSQL + in-memory store
   app.get('/api/meetings/db-summaries', asyncRoute(async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const summaries = await getMeetingSummaries(limit);
+
+    const inProgress = [];
+    if (store && store.meetings) {
+      for (const [id, meeting] of store.meetings.entries()) {
+        if (inFlightSummarize.has(id)) {
+          inProgress.push({
+            meetingId: id,
+            roomName: meeting.roomName,
+            status: 'summarizing',
+            transcriptCount: meeting.transcripts.length,
+            participants: [...meeting.participants.values()],
+            createdAt: meeting.createdAt,
+          });
+        }
+      }
+    }
+
     res.json({
       success: true,
       count: summaries.length,
       databaseConnected: isDbConnected(),
+      inProgress,
       summaries,
     });
   }));
@@ -521,6 +621,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe } = {}) {
   app.get('/api/meetings/db-details/:meetingId', asyncRoute(async (req, res) => {
     const details = await getMeetingDetails(req.params.meetingId);
     if (!details) {
+      const storeMeeting = store.get(req.params.meetingId);
+      if (storeMeeting) {
+        return res.json({
+          success: true,
+          meeting: {
+            id: storeMeeting.id,
+            room_name: storeMeeting.roomName,
+            status: storeMeeting.status,
+            created_at: storeMeeting.createdAt,
+            ended_at: storeMeeting.endedAt,
+          },
+          summary: storeMeeting.summary,
+          transcripts: storeMeeting.transcripts,
+          attendees: [...storeMeeting.participants.values()],
+        });
+      }
       return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });
     }
     res.json({ success: true, ...details });

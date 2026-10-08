@@ -645,6 +645,75 @@ export async function cancelSchedule(id) {
   return false;
 }
 
+/**
+ * Update/reschedule an existing scheduled meeting
+ */
+export async function updateSchedule(id, updates = {}) {
+  const {
+    scheduledStart,
+    scheduledEnd,
+    title,
+    description,
+    roomName,
+  } = updates;
+
+  const activePool = getPool();
+  if (activePool && isConnected) {
+    try {
+      const query = `
+        UPDATE balicall_schedules
+        SET scheduled_start = COALESCE($1, scheduled_start),
+            scheduled_end = COALESCE($2, scheduled_end),
+            title = COALESCE($3, title),
+            description = COALESCE($4, description),
+            room_name = COALESCE($5, room_name),
+            status = 'scheduled'
+        WHERE id = $6 AND status != 'cancelled'
+        RETURNING *;
+      `;
+      const res = await activePool.query(query, [
+        scheduledStart ? new Date(scheduledStart).toISOString() : null,
+        scheduledEnd ? new Date(scheduledEnd).toISOString() : null,
+        title || null,
+        description !== undefined ? description : null,
+        roomName || null,
+        id,
+      ]);
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        return {
+          id: row.id,
+          roomName: row.room_name,
+          title: row.title,
+          description: row.description,
+          hostId: row.host_id,
+          hostName: row.host_name,
+          department: row.department,
+          scheduledStart: row.scheduled_start,
+          scheduledEnd: row.scheduled_end,
+          status: row.status,
+          createdAt: row.created_at,
+        };
+      }
+    } catch (err) {
+      console.error(`[DB] ❌ Failed to update schedule ${id} in PostgreSQL:`, err.message);
+    }
+  }
+
+  if (standbySchedules.has(id)) {
+    const item = standbySchedules.get(id);
+    if (item.status === 'cancelled') return null;
+    if (scheduledStart) item.scheduledStart = new Date(scheduledStart).toISOString();
+    if (scheduledEnd) item.scheduledEnd = new Date(scheduledEnd).toISOString();
+    if (title) item.title = title;
+    if (description !== undefined) item.description = description;
+    if (roomName) item.roomName = roomName;
+    item.status = 'scheduled';
+    return item;
+  }
+  return null;
+}
+
 export { pool };
 
 export default {
@@ -666,4 +735,5 @@ export default {
   createSchedule,
   getUpcomingSchedules,
   cancelSchedule,
+  updateSchedule,
 };
