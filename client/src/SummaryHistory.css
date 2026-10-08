@@ -408,6 +408,23 @@
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
+  .history-title-copy {
+    min-width: 0;
+  }
+
+  .history-scope-switch {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .history-scope-btn {
+    flex: 1 1 180px;
+    min-width: 0;
+    justify-content: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .history-toolbar-main {
     flex-direction: column;
     align-items: stretch;
@@ -418,7 +435,7 @@
     width: 100%;
   }
 
-  .history-cards-grid {
-    grid-template-columns: 1fr;
+  .history-cards-grid, .history-in-progress-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
