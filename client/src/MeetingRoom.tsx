@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react';
-import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { MeetingControls } from './MeetingControls';
 import { initials } from './presentation';
@@ -18,7 +18,7 @@ interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
 
-export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording }: {
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, cameraBlurError = null, onToggleCameraBlur, onClearCameraBlurError }: {
   participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
   sttProvider: 'browser' | 'server'; sttConfigured: boolean; setSttProvider: (provider: 'browser' | 'server') => void;
@@ -33,6 +33,8 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   spotlightIdentity: string | null; microphonePending: boolean; connectionState: ConnectionState;
   mirrorLocalVideo?: boolean;
   recordingPending: boolean; recordingError: string | null; onToggleRecording: (enabled: boolean) => Promise<void>;
+  isCameraBlur?: boolean; cameraBlurPending?: boolean; cameraBlurSupported?: boolean; cameraBlurError?: string | null;
+  onToggleCameraBlur?: () => Promise<void>; onClearCameraBlurError?: () => void;
 }) {
   const room = useRoomContext();
   const subscribeRecording = useCallback((notify: () => void) => {
@@ -92,6 +94,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
       {recordingError && <div className="call-error" role="alert">{recordingError}</div>}
       {microphoneError && <div className="call-error" role="alert">{microphoneError}</div>}
       {cameraError && <div className="call-error camera-error" role="alert"><VideoOff size={17} /><span>{cameraError}</span><button type="button" disabled={busy || cameraPending || devicePending || !connected} onClick={() => void onToggleCamera()}>Coba kamera lagi</button></div>}
+      {cameraBlurError && <div className="call-error camera-error" role="alert"><Sparkles size={17} /><span>{cameraBlurError}</span>{onClearCameraBlurError && <button type="button" onClick={onClearCameraBlurError}>Tutup</button>}</div>}
       {screenShareError && <div className="call-error" role="alert">{screenShareError}</div>}
       {!screenShareSupported && <div className="screen-share-hint" role="status">Berbagi layar belum tersedia di browser ini. Kamu tetap dapat melihat layar peserta lain.</div>}
       <div className={`meeting-video-area ${screenTracks.length ? 'presentation-layout' : showingSpeaker ? 'speaker-layout' : 'grid-layout'}`}>
@@ -126,6 +129,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
       speechEnabled={speechEnabled} speechError={speechError} isListening={isListening} saveBlocked={saveBlocked} finishLabel={finishLabel}
       recording={recording} recordingPending={recordingPending} onToggleRecording={() => onToggleRecording(!recording)}
       onToggleMute={onToggleMute} onToggleCamera={onToggleCamera} onToggleScreenShare={onToggleScreenShare} onToggleTranscription={onToggleTranscription}
-      onOpenDevices={onOpenDevices} onParticipants={() => { setPanelOpen(true); setActiveTab('attendance'); }} transcriptOpen={panelOpen && activeTab === 'transcript'} onTranscript={() => { setPanelOpen(!panelOpen || activeTab !== 'transcript'); setActiveTab('transcript'); }} onFinish={requestFinish} />
+      onOpenDevices={onOpenDevices} onParticipants={() => { setPanelOpen(true); setActiveTab('attendance'); }} transcriptOpen={panelOpen && activeTab === 'transcript'} onTranscript={() => { setPanelOpen(!panelOpen || activeTab !== 'transcript'); setActiveTab('transcript'); }} onFinish={requestFinish}
+      isCameraBlur={isCameraBlur} cameraBlurPending={cameraBlurPending} cameraBlurSupported={cameraBlurSupported} onToggleCameraBlur={onToggleCameraBlur} />
   </div>;
 }

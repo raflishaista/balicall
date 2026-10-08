@@ -8,7 +8,7 @@
     "setup:linux": "bash ./scripts/setup.sh",
     "install:all": "npm --prefix server install && npm --prefix client install",
     "build": "npm --prefix client run build",
-    "sfu": ".\\bin\\livekit-server.exe --dev",
+    "sfu": ".\\bin\\livekit-server.exe --config livekit.yaml --dev",
     "server": "npm --prefix server run dev",
     "client": "npm --prefix client run dev",
     "start:prod": "node server/index.js",

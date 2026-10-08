@@ -31,6 +31,7 @@ import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
 import { MeetingRoom } from './MeetingRoom';
 import { cameraErrorMessage, useCameraControl } from './useCameraControl';
+import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
@@ -1055,6 +1056,7 @@ function RoomContent({
   const spotlightIdentity = useSpeakerSpotlight(room, connected);
   const preferredOutputError = usePreferredAudioOutput(room, connected, callPreferences.outputId);
   const camera = useCameraControl(localParticipant, connected, startWithCamera);
+  const blur = useBackgroundBlur(localParticipant, isCameraEnabled, connected);
   const microphone = useMicrophoneControl(localParticipant, connected);
   const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported);
@@ -1115,6 +1117,8 @@ function RoomContent({
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
     recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
+    isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
+    cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
   />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@livekit/components-react": "^2.9.24",
     "@livekit/components-styles": "^1.2.0",
+    "@livekit/track-processors": "^0.8.1",
     "livekit-client": "^2.22.3",
     "lucide-react": "^1.49.0",
     "react": "^19.2.8",

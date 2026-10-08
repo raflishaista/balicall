@@ -3,7 +3,7 @@ import { AccessToken } from '../server/node_modules/livekit-server-sdk/dist/inde
 import crypto from 'crypto';
 
 const API_KEY = process.env.LIVEKIT_API_KEY || 'devkey';
-const API_SECRET = process.env.LIVEKIT_API_SECRET || 'secret';
+const API_SECRET = process.env.LIVEKIT_API_SECRET || 'c35dce5eb68185c1ba3b140ab408da916a75c0d297f42c96cbbe5aa362f7b082';
 const WEBHOOK_URL = 'http://localhost:3001/api/livekit/webhook';
 
 async function runTest() {
