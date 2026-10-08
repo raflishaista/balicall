@@ -18,6 +18,19 @@
 .settings-profile-note { display: flex; gap: 10px; align-items: start; padding: 13px; border-radius: 8px; background: #f1f6fd; color: #385f8b; }
 .settings-profile-note svg { flex-shrink: 0; margin-top: 2px; }
 .settings-profile-note p { margin: 0; font-size: 12px; line-height: 1.7; }
+.settings-profile-open { display: flex; justify-content: space-between; gap: 12px; width: 100%; margin-top: 18px; }
+.settings-profile-detail { min-width: 0; padding: 28px; }
+.settings-profile-identity { display: flex; align-items: center; gap: 24px; padding: 9px 0 25px; }
+.settings-profile-identity > div:last-child { min-width: 0; }
+.settings-profile-identity .settings-profile-avatar { flex-shrink: 0; margin: 0; }
+.settings-profile-identity h3 { margin: 0 0 7px; color: #17395d; font-size: 21px; overflow-wrap: anywhere; }
+.settings-profile-identity p { margin: 0 0 11px; color: #526d8b; font-size: 13px; overflow-wrap: anywhere; }
+.settings-verified-label { display: inline-flex; align-items: center; gap: 6px; color: #075f9a; background: #edf5ff; border: 1px solid #d5e7fa; border-radius: 6px; padding: 5px 8px; font-size: 11px; line-height: 1.5; }
+.settings-profile-data { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 28px; margin: 0 0 24px; border-top: 1px solid #e4ebf5; }
+.settings-profile-data > div { min-width: 0; padding: 19px 0; border-bottom: 1px solid #e4ebf5; }
+.settings-profile-data dt { margin-bottom: 8px; color: #526d8b; font-size: 12px; }
+.settings-profile-data dd { margin: 0; color: #213f60; font-size: 14px; font-weight: 550; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-page button:focus-visible,.settings-heading h1:focus-visible { outline: 3px solid #7cabf4; outline-offset: 4px; border-radius: 5px; }
 .settings-category-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 15px; }
 .settings-category { display: flex; align-items: start; gap: 14px; min-width: 0; padding: 22px 18px; border: 1px solid #dbe6f3; border-radius: 11px; background: white; color: #25456c; text-align: left; }
 button.settings-category { cursor: pointer; transition: border-color .18s,box-shadow .18s,transform .18s; }
@@ -77,7 +90,16 @@ button.settings-category:hover { border-color: #9fbfed; box-shadow: 0 5px 18px #
   .settings-sections { flex-wrap: wrap; }
   .settings-sections button { flex: 1 1 140px; }
 }
+@media (max-width: 560px) {
+  .settings-profile-detail { padding: 22px 16px; }
+  .settings-profile-identity { gap: 18px; align-items: flex-start; }
+  .settings-profile-identity .settings-profile-avatar { width: 58px; height: 58px; font-size: 21px; box-shadow: 0 0 0 6px #edf5fc; }
+  .settings-profile-identity h3 { font-size: 18px; }
+  .settings-profile-data { grid-template-columns: minmax(0,1fr); }
+  .settings-profile-open { grid-column: 1/-1; }
+}
 .prejoin-video.unmirrored { transform: none; }
+@media (max-width: 850px) { .settings-profile-open { grid-column: 1/-1; } }
 @media (max-width: 1100px) { .settings-overview { grid-template-columns: minmax(210px,.8fr) minmax(0,1.7fr); gap: 16px; } .settings-category { padding: 17px 13px; gap: 10px; } .settings-check-devices { flex-direction: column; align-items: start; } .settings-save-bar { flex-wrap: wrap; } }
 @media (max-width: 850px) { .settings-overview { grid-template-columns: 1fr; } .settings-profile { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 8px 24px; } .settings-profile-avatar { grid-row: span 2; margin: 0; } .settings-profile h2,.settings-profile > p { margin: 0; } .settings-profile dl,.settings-profile-note { grid-column: 1/-1; } .settings-profile dl { margin: 15px 0 7px; } .settings-detail-layout { grid-template-columns: 1fr; gap: 16px; } .settings-sections { flex-direction: row; } .settings-sections button { flex: 1; } }
 @media (max-width: 560px) { .settings-page { padding: 24px 16px; } .settings-heading { align-items: start; gap: 12px; } .settings-heading h1 { font-size: 25px; } .settings-heading p:not(.page-kicker) { font-size: 13px; } .settings-local-badge { font-size: 10px; padding: 6px; gap: 5px; } .settings-category-grid { grid-template-columns: 1fr; } .settings-category { padding: 18px 15px; } .settings-form { padding: 18px 15px; } .settings-toggle { gap: 15px; } .settings-save-bar > div { flex-wrap: wrap; width: 100%; } .settings-save-bar .button-primary { flex: 1; } .settings-check-devices button { width: 100%; white-space: normal; } }

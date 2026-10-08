@@ -6,6 +6,7 @@ import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/compo
 import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
+import { shouldMirrorCamera } from './backgroundEffects';
 import type { BackgroundBlurControl } from './useBackgroundBlur';
 import { MeetingControls } from './MeetingControls';
 import { initials } from './presentation';
@@ -71,6 +72,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   const reconnecting = connectionState === ConnectionState.Reconnecting || connectionState === ConnectionState.SignalReconnecting;
   const connectionLabel = connected ? 'Terhubung' : reconnecting ? 'Menyambungkan kembali' : connectionState === ConnectionState.Disconnected ? 'Koneksi terputus' : 'Menghubungkan';
   const camerasByIdentity = new Map(cameraTracks.map(track => [track.participant.identity, track]));
+  const mirrorCamera = shouldMirrorCamera(mirrorLocalVideo, backgroundControl?.selection);
   const spotlight = orderedParticipants.find(participant => participant.identity === spotlightIdentity) || orderedParticipants[0];
   const showingSpeaker = viewMode === 'speaker' && screenTracks.length === 0 && Boolean(spotlight);
   const videoWidth = roomWidth * (panelOpen && !compact ? 1 - panelWidth / 100 : 1) - 50;
@@ -102,8 +104,8 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
       {screenShareError && <div className="call-error" role="alert">{screenShareError}</div>}
       {!screenShareSupported && <div className="screen-share-hint" role="status">Berbagi layar belum tersedia di browser ini. Kamu tetap dapat melihat layar peserta lain.</div>}
       <div className={`meeting-video-area ${screenTracks.length ? 'presentation-layout' : showingSpeaker ? 'speaker-layout' : 'grid-layout'}`}>
-        {screenTracks.length > 0 ? <ScreenShareStage tracks={screenTracks} /> : showingSpeaker ? <div className="speaker-primary"><ParticipantLayout participants={[spotlight]} cameras={camerasByIdentity} mirrorLocalVideo={mirrorLocalVideo} spotlightIdentity={spotlight.identity} /></div> : null}
-        <ParticipantLayout participants={paging.items} cameras={camerasByIdentity} mirrorLocalVideo={mirrorLocalVideo} strip={screenTracks.length > 0 || showingSpeaker} />
+        {screenTracks.length > 0 ? <ScreenShareStage tracks={screenTracks} /> : showingSpeaker ? <div className="speaker-primary"><ParticipantLayout participants={[spotlight]} cameras={camerasByIdentity} mirrorLocalVideo={mirrorCamera} spotlightIdentity={spotlight.identity} /></div> : null}
+        <ParticipantLayout participants={paging.items} cameras={camerasByIdentity} mirrorLocalVideo={mirrorCamera} strip={screenTracks.length > 0 || showingSpeaker} />
         {!participants.length && <div className="waiting-participants"><Loader2 className="ui-spinner" size={30} aria-hidden="true" /><p>Menghubungkan peserta ke ruang rapat...</p></div>}
       </div>
       {paging.pages > 1 && <nav className="meeting-pagination" aria-label="Halaman peserta"><button type="button" aria-label="Halaman peserta sebelumnya" disabled={paging.page === 0} onClick={() => setRequestedPage(paging.page - 1)}><ChevronLeft size={17} /></button><span aria-live="polite">Halaman {paging.page + 1} dari {paging.pages}</span><button type="button" aria-label="Halaman peserta berikutnya" disabled={paging.page === paging.pages - 1} onClick={() => setRequestedPage(paging.page + 1)}><ChevronRight size={17} /></button></nav>}

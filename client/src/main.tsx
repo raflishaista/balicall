@@ -1,7 +1,7 @@
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
+import { AuthGate } from './AuthGate.tsx'
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -53,7 +53,7 @@ class RootErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RootErrorBoundary>
-      <App />
+      <AuthGate />
     </RootErrorBoundary>
   </StrictMode>,
 )

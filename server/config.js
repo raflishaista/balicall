@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 export function loadConfig(env = process.env) {
   const config = {
     port: Number(env.PORT || 3001),
+    // Explicit opt-in keeps existing deployments compatible until account activation is ready.
+    authEnabled: env.AUTH_ENABLED === 'true',
+    authCookieSecure: env.AUTH_COOKIE_SECURE !== undefined ? env.AUTH_COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
     dataFile: env.MEETING_DATA_FILE || fileURLToPath(new URL('./data/meetings.json', import.meta.url)),
     clientDist: fileURLToPath(new URL('../client/dist', import.meta.url)),
     livekitKey: env.LIVEKIT_API_KEY || 'devkey',
@@ -27,6 +30,7 @@ export function loadConfig(env = process.env) {
       ? env.VERIFY_EMPLOYEE_ID !== 'false'
       : Boolean(env.DATABASE_URL),
   };
+  if (env.NODE_ENV === 'production' && config.authEnabled && !config.authCookieSecure) throw new Error('Production login requires secure cookies over HTTPS.');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }

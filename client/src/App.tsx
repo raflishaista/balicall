@@ -12,21 +12,8 @@ import { createSaveQueue } from './saveQueue';
 import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
-import {
-  readSummaryHistory,
-  readSummarySession,
-  saveSummaryHistory,
-  saveSummarySession,
-  summaryTokenFor,
-  upsertSummary,
-  validSummary,
-  readInProgressSummaries,
-  saveInProgressSummary,
-  removeInProgressSummary,
-  readActiveView,
-  saveActiveView,
-  normalizeDbSummary,
-} from './summaryHistory';
+import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage } from './summaryHistory';
+import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
@@ -38,6 +25,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
 import { usePreJoinMedia } from './usePreJoinMedia';
@@ -79,7 +67,10 @@ const PRESET_PERSONAS = [
   { id: 'BT-10550', name: 'Agus Pratama', dept: 'Fiber Infrastructure' },
 ];
 
-export default function App() {
+export default function App({ authUser = null, onLogout, logoutPending = false }: { authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
+  const [summaryStorage] = useState(() => scopedSummaryStorage(authUser?.employeeId || null));
+  const { readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor,
+    readInProgressSummaries, saveInProgressSummary, removeInProgressSummary, readActiveView, saveActiveView } = summaryStorage;
   const [initialSummaryState] = useState(() => {
     const history = readSummaryHistory();
     const session = readSummarySession();
@@ -111,9 +102,9 @@ export default function App() {
   const setSchedules = scheduleFeed.update;
   
   // Lobby state
-  const [employeeId, setEmployeeId] = useState('');
-  const [employeeName, setEmployeeName] = useState('');
-  const [department, setDepartment] = useState('');
+  const [employeeId, setEmployeeId] = useState(authUser?.employeeId || '');
+  const [employeeName, setEmployeeName] = useState(authUser?.name || '');
+  const [department, setDepartment] = useState(authUser?.department || '');
   const [roomName, setRoomName] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -162,7 +153,7 @@ export default function App() {
     }
     const session = readSummarySession();
     if (session) saveSummarySession({ ...session, open: view === 'summary' });
-  }, [view]);
+  }, [view, readSummarySession, saveSummarySession, saveActiveView]);
 
   // Robust reload recovery: poll for in-progress summaries without immediately throwing errors
   useEffect(() => {
@@ -268,7 +259,7 @@ export default function App() {
       controller.abort();
       clearTimeout(pollTimer);
     };
-  }, [initialSummaryState]);
+  }, [initialSummaryState, readSummaryHistory, removeInProgressSummary, saveSummaryHistory, readInProgressSummaries]);
 
   const openSavedSummary = (record: SummaryRecord) => {
     summaryGeneration.current++;
@@ -398,7 +389,7 @@ export default function App() {
     } finally {
       setIsLoadingDb(false);
     }
-  }, []);
+  }, [saveSummaryHistory]);
 
   useEffect(() => {
     void fetchDbSummaries();
@@ -775,6 +766,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
+          onLogout={onLogout} logoutPending={logoutPending}
           hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => {
             joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
@@ -862,7 +854,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -880,7 +872,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             joinError={joinError}
             onJoin={handleJoin}
             mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} mirror={userPreferences.preferences.mirrorLocalVideo} />}
-            personas={personas}
+            identityLocked={Boolean(authUser)}
+            personas={authUser ? [] : personas}
           />
         )}
 
@@ -1124,7 +1117,7 @@ function RoomContent({
     backgroundControl={blur}
     isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
     cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} onClose={closeDevices} />}</>;
 }
 
 function SummaryView({
@@ -1176,6 +1169,7 @@ function SummaryView({
         `${API_BASE}${meetingPath(meetingId, `export/${format}`)}`,
         {
           method: 'GET',
+          credentials: 'include',
           headers: {
             Authorization: `Bearer ${token}`,
           },

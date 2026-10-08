@@ -30,6 +30,7 @@ export function ParticipantVideoTile({ trackRef, spotlight = false, mirrorLocalV
     {showVideo && isTrackReference(trackRef) ? <VideoTrack
       trackRef={trackRef}
       className={`participant-video ${participant.isLocal && mirrorLocalVideo ? 'is-local-video' : ''}`}
+      style={{ transform: participant.isLocal && mirrorLocalVideo ? 'scaleX(-1)' : 'none' }}
       autoPlay playsInline muted
       aria-label={`Video kamera ${displayName}`}
       onError={() => setFailedTrack(mediaTrack)}

@@ -6,8 +6,8 @@ import type { useDeviceSettings } from './useDeviceSettings';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
-export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, onClose }: {
-  settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; onClose: () => void;
+export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, onClose }: {
+  settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean; onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -47,7 +47,7 @@ export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, 
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />
       {!settings.outputSupported ? <p className="device-help">Browser ini belum mendukung pemilihan speaker. Atur output melalui pengaturan suara sistem.</p> : settings.outputPickerSupported && <button type="button" className="text-button" disabled={disabled} onClick={() => void settings.requestOutput()}>Izinkan / pilih speaker melalui browser</button>}
     </div><div className="device-camera-preview">
-      {isCameraEnabled && cameraTrack?.track?.mediaStreamTrack.readyState === 'live' ? <VideoTrack trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }} className="device-preview-video" autoPlay playsInline muted aria-label="Preview kamera aktif" /> : <div><VideoOff size={30} /><span>Kamera nonaktif atau belum tersedia</span></div>}
+      {isCameraEnabled && cameraTrack?.track?.mediaStreamTrack.readyState === 'live' ? <VideoTrack trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }} className="device-preview-video" style={{ transform: mirror ? 'scaleX(-1)' : 'none' }} autoPlay playsInline muted aria-label="Preview kamera aktif" /> : <div><VideoOff size={30} /><span>Kamera nonaktif atau belum tersedia</span></div>}
       <p>Preview kamera rapat</p>
     </div></div>
     <p className="device-help">Pemilihan perangkat menjaga status mute dan kamera. Nama perangkat bisa disembunyikan sebelum izin browser diberikan.</p>

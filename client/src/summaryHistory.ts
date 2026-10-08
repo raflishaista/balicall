@@ -1,3 +1,4 @@
+import { accountKey, withAccountScope } from './accountScope.ts';
 export interface TranscriptEntry {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
@@ -27,11 +28,11 @@ const TOKEN_KEY = 'balicall.summary-tokens.v1';
 export const HISTORY_LIMIT = 20;
 
 function read(key: string, session = false): unknown {
-  try { return JSON.parse((session ? window.sessionStorage : window.localStorage).getItem(key) || 'null'); }
+  try { return JSON.parse((session ? window.sessionStorage : window.localStorage).getItem(accountKey(key)) || 'null'); }
   catch { return null; }
 }
 function write(key: string, value: unknown, session = false) {
-  try { (session ? window.sessionStorage : window.localStorage).setItem(key, JSON.stringify(value)); return true; }
+  try { (session ? window.sessionStorage : window.localStorage).setItem(accountKey(key), JSON.stringify(value)); return true; }
   catch { return false; }
 }
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
@@ -153,4 +154,14 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
     hostName: raw.host_name || raw.hostName,
     department: raw.department,
   };
+}
+
+// Bind storage to the account at mount, including late async callbacks from an old session.
+export function scopedSummaryStorage(employeeId: string | null) {
+  const bind = <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A): R => withAccountScope(employeeId, () => fn(...args));
+  return { readSummaryHistory: bind(readSummaryHistory), readSummarySession: bind(readSummarySession),
+    saveSummaryHistory: bind(saveSummaryHistory), saveSummarySession: bind(saveSummarySession),
+    summaryTokenFor: bind(summaryTokenFor), readInProgressSummaries: bind(readInProgressSummaries),
+    saveInProgressSummary: bind(saveInProgressSummary), removeInProgressSummary: bind(removeInProgressSummary),
+    readActiveView: bind(readActiveView), saveActiveView: bind(saveActiveView) };
 }

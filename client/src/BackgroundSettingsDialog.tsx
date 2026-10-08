@@ -3,7 +3,7 @@ import { VideoTrack, useLocalParticipant } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { ImagePlus, Loader2, Sparkles, VideoOff, X } from 'lucide-react';
 import type { BackgroundBlurControl } from './useBackgroundBlur';
-import { BLUR_BACKGROUND, NO_BACKGROUND } from './backgroundEffects';
+import { BLUR_BACKGROUND, NO_BACKGROUND, shouldMirrorCamera } from './backgroundEffects';
 import skyline from './assets/backgrounds/BalitowerSentra-Connected-Skyline.png';
 import navy from './assets/backgrounds/BalitowerSentra-Connected-Navy.png';
 import studio from './assets/backgrounds/BalitowerSentra-Studio-Sentra.png';
@@ -30,7 +30,7 @@ export function BackgroundSettingsDialog({ control, blocked, mirror = true, onCl
     onCancel={event => { event.preventDefault(); onClose(); }}>
     <header><div><h2 id={id + '-title'}><Sparkles size={21} />Latar kamera</h2><p id={id + '-description'}>Pilih latar yang nyaman untuk rapat Anda.</p></div><button ref={close} className="icon-button" type="button" aria-label="Tutup latar kamera" onClick={onClose}><X size={22} /></button></header>
     <div className="background-preview">
-      {isCameraEnabled && cameraTrack ? <VideoTrack trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }} autoPlay playsInline muted aria-label="Preview latar kamera" style={{ transform: mirror ? 'scaleX(-1)' : undefined }} /> : <div><VideoOff size={30} /><p>Nyalakan kamera untuk melihat dan menerapkan latar.</p></div>}
+      {isCameraEnabled && cameraTrack ? <VideoTrack trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }} autoPlay playsInline muted aria-label="Preview latar kamera" style={{ transform: shouldMirrorCamera(mirror, control.selection) ? 'scaleX(-1)' : 'none' }} /> : <div><VideoOff size={30} /><p>Nyalakan kamera untuk melihat dan menerapkan latar.</p></div>}
       <span>{control.blurPending ? 'Menerapkan latar…' : control.selection.label}</span>
     </div>
     {!control.blurSupported && <p className="background-notice" role="status">Efek latar belum didukung browser atau perangkat ini. Kamera tetap dapat digunakan tanpa efek.</p>}

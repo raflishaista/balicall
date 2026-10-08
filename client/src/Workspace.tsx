@@ -19,7 +19,8 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings }: {
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending }: {
+  onLogout?: () => Promise<void>; logoutPending?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
   onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void;
 }) {
@@ -39,6 +40,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
     <div className="sidebar-bottom">
+      {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
       <div className="sidebar-profile"><span className="user-avatar">{initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
     </div>
@@ -135,19 +137,20 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
   </div>;
 }
 
-export function LobbyView({ intent, onIntentChange, employeeId, setEmployeeId, employeeName, setEmployeeName, department, setDepartment, roomName, setRoomName, isJoining, joinError, onJoin, mediaPreview, personas }: {
+export function LobbyView({ intent, onIntentChange, employeeId, setEmployeeId, employeeName, setEmployeeName, department, setDepartment, roomName, setRoomName, isJoining, joinError, onJoin, mediaPreview, personas, identityLocked = false }: {
   intent: 'create' | 'join'; onIntentChange: (intent: 'create' | 'join') => void;
   employeeId: string; setEmployeeId: (value: string) => void; employeeName: string; setEmployeeName: (value: string) => void;
   department: string; setDepartment: (value: string) => void; roomName: string; setRoomName: (value: string) => void;
   isJoining: boolean; joinError: string | null; onJoin: () => void; mediaPreview: ReactNode;
+  identityLocked?: boolean;
   personas: {id: string; name: string; dept: string}[];
 }) {
   return <div className="lobby-page"><div className="lobby-page-heading"><span className="page-kicker">LET'S CONNECT</span><h1>{intent === 'create' ? 'Mulai percakapan baru.' : 'Tim kamu sudah menunggu.'}</h1><p>Siapkan identitas, periksa kamera dan mikrofon, lalu masuk ke ruang rapat.</p></div>
     <div className="lobby-layout"><section className="lobby-preview"><div className="preview-photo" /><div className="preview-heading"><span className="preview-live-dot" /> SIAPKAN RUANG KOLABORASI</div>{mediaPreview}<div className="preview-footer"><Mic size={15} /><span>Gunakan headset untuk suara yang lebih jernih.</span></div></section>
       <section className="lobby-card"><div className="lobby-switch" role="group" aria-label="Pilih aksi rapat"><button className={intent === 'create' ? 'selected' : ''} onClick={() => onIntentChange('create')}><Plus size={16} />Buat rapat</button><button className={intent === 'join' ? 'selected' : ''} onClick={() => onIntentChange('join')}><LogIn size={16} />Gabung rapat</button></div><h2>{intent === 'create' ? 'Buat ruang untuk timmu' : 'Gabung ke ruang rapat'}</h2><p className="lobby-intro">{intent === 'create' ? 'Peserta dapat bergabung menggunakan nama ruang yang sama.' : 'Masukkan nama ruang yang dibagikan penyelenggara.'}</p>
         <form onSubmit={event => { event.preventDefault(); onJoin(); }}>
-          <div className="form-grid"><label>NIK karyawan<input autoComplete="username" value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Contoh: BT-10492" required /></label><label>Nama lengkap<input autoComplete="name" value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Masukkan nama kamu" required /></label></div>
-          <label className="form-field">Departemen<select required value={department} onChange={event => setDepartment(event.target.value)}><option value="">Pilih departemen</option><option>NOC & Core Network</option><option>Field Transmission</option><option>Fiber Infrastructure</option><option>Project Management</option><option>IT Operations</option></select></label>
+          <div className="form-grid"><label>NIK karyawan<input autoComplete="username" readOnly={identityLocked} value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Contoh: BT-10492" required /></label><label>Nama lengkap<input autoComplete="name" readOnly={identityLocked} value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Masukkan nama kamu" required /></label></div>
+          <label className="form-field">Departemen<select required disabled={identityLocked} value={department} onChange={event => setDepartment(event.target.value)}><option value="">Pilih departemen</option>{identityLocked && <option value={department}>{department}</option>}<option>NOC & Core Network</option><option>Field Transmission</option><option>Fiber Infrastructure</option><option>Project Management</option><option>IT Operations</option></select></label>
           <label className="form-field">{intent === 'create' ? 'Nama ruang rapat' : 'Kode / nama ruang'}<input value={roomName} onChange={event => setRoomName(event.target.value)} placeholder={intent === 'create' ? 'Contoh: koordinasi-jaringan' : 'Masukkan nama ruang dari tim'} required /></label>
           <div className="form-note"><AudioLines size={18} /><span>Pilihan perangkat dan status mic/kamera di preview dipakai saat masuk. Preview berhenti sebelum koneksi dimulai. Kamu bisa bergabung dengan kamera atau mikrofon nonaktif.</span></div>
           {joinError && <div className="form-error" role="alert">{joinError}</div>}
