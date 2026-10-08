@@ -5,6 +5,8 @@ import { ConnectionState, RoomEvent } from 'livekit-client';
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
+import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
+import type { BackgroundBlurControl } from './useBackgroundBlur';
 import { MeetingControls } from './MeetingControls';
 import { initials } from './presentation';
 import { ParticipantLayout } from './ParticipantLayout';
@@ -18,7 +20,8 @@ interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
 }
 
-export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, cameraBlurError = null, onToggleCameraBlur, onClearCameraBlurError }: {
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, cameraBlurError = null, onToggleCameraBlur, onClearCameraBlurError, backgroundControl }: {
+  backgroundControl?: BackgroundBlurControl;
   participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
   sttProvider: 'browser' | 'server'; sttConfigured: boolean; setSttProvider: (provider: 'browser' | 'server') => void;
@@ -42,6 +45,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
     return () => { room.off(RoomEvent.RecordingStatusChanged, notify); };
   }, [room]);
   const recording = useSyncExternalStore(subscribeRecording, () => room.isRecording, () => false);
+  const [backgroundsOpen, setBackgroundsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'speaker'>('grid');
   const compact = useCompactMeeting();
   const [panelOpen, setPanelOpen] = useState(() => !compact);
@@ -130,6 +134,8 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
       recording={recording} recordingPending={recordingPending} onToggleRecording={() => onToggleRecording(!recording)}
       onToggleMute={onToggleMute} onToggleCamera={onToggleCamera} onToggleScreenShare={onToggleScreenShare} onToggleTranscription={onToggleTranscription}
       onOpenDevices={onOpenDevices} onParticipants={() => { setPanelOpen(true); setActiveTab('attendance'); }} transcriptOpen={panelOpen && activeTab === 'transcript'} onTranscript={() => { setPanelOpen(!panelOpen || activeTab !== 'transcript'); setActiveTab('transcript'); }} onFinish={requestFinish}
+      onOpenBackgrounds={backgroundControl ? () => { setPanelOpen(false); setBackgroundsOpen(true); } : undefined}
       isCameraBlur={isCameraBlur} cameraBlurPending={cameraBlurPending} cameraBlurSupported={cameraBlurSupported} onToggleCameraBlur={onToggleCameraBlur} />
+    {backgroundsOpen && backgroundControl && <BackgroundSettingsDialog control={backgroundControl} blocked={busy || devicePending || cameraPending || !connected} mirror={mirrorLocalVideo} onClose={() => setBackgroundsOpen(false)} />}
   </div>;
 }

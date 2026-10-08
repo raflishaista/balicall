@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Circle, Square, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText, Sparkles } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds }: {
+  onOpenBackgrounds?: () => void;
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
   speechEnabled: boolean; speechError: string | null; isListening: boolean; saveBlocked: boolean; finishLabel: string | null;
@@ -29,21 +30,7 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       <button type="button" className={`call-control ${isCameraEnabled ? 'control-active' : 'control-muted'}`} aria-label={isCameraEnabled ? 'Matikan kamera' : 'Aktifkan kamera'} aria-pressed={isCameraEnabled} aria-busy={cameraPending} disabled={busy || cameraPending || devicePending || !connected} onClick={() => void onToggleCamera()}>
         {cameraPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isCameraEnabled ? <Video size={22} /> : <VideoOff size={22} />}<span>{cameraPending ? 'Memproses…' : isCameraEnabled ? 'Kamera' : 'Aktifkan kamera'}</span>
       </button>
-      {cameraBlurSupported && onToggleCameraBlur && (
-        <button
-          type="button"
-          className={`call-control ${isCameraBlur ? 'control-active' : ''}`}
-          aria-label={isCameraBlur ? 'Nonaktifkan blur latar belakang' : 'Aktifkan blur latar belakang'}
-          aria-pressed={isCameraBlur}
-          aria-busy={cameraBlurPending}
-          disabled={busy || !isCameraEnabled || cameraBlurPending || devicePending || !connected}
-          onClick={() => void onToggleCameraBlur()}
-          title={!isCameraEnabled ? 'Nyalakan kamera untuk mengaktifkan blur' : isCameraBlur ? 'Nonaktifkan blur latar' : 'Aktifkan blur latar belakang'}
-        >
-          {cameraBlurPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : <Sparkles size={22} />}
-          <span>{cameraBlurPending ? 'Memproses…' : isCameraBlur ? 'Blur aktif' : 'Blur latar'}</span>
-        </button>
-      )}
+      {onOpenBackgrounds ? <button type="button" className="call-control" aria-label="Latar kamera" aria-haspopup="dialog" disabled={busy || devicePending || cameraPending || !connected} onClick={onOpenBackgrounds}><Sparkles size={22} /><span>Latar kamera</span></button> : cameraBlurSupported && onToggleCameraBlur ? <button type="button" className={`call-control ${isCameraBlur ? 'control-active' : ''}`} aria-label={isCameraBlur ? 'Nonaktifkan blur latar belakang' : 'Aktifkan blur latar belakang'} aria-pressed={isCameraBlur} aria-busy={cameraBlurPending} disabled={busy || !isCameraEnabled || cameraBlurPending || devicePending || !connected} onClick={() => void onToggleCameraBlur()}><Sparkles size={22} /><span>Blur latar</span></button> : null}
       <button type="button" className={`call-control ${isScreenShareEnabled ? 'control-active' : ''}`} aria-label={isScreenShareEnabled ? 'Hentikan berbagi layar' : 'Bagikan layar'} aria-pressed={isScreenShareEnabled} aria-busy={screenSharePending} disabled={busy || screenSharePending || !connected || (!screenShareSupported && !isScreenShareEnabled)} onClick={() => void onToggleScreenShare()}>
         {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
       </button>

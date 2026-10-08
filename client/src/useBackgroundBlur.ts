@@ -1,112 +1,80 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalParticipant, LocalVideoTrack } from 'livekit-client';
-import { Track } from 'livekit-client';
-import { BackgroundBlur, supportsBackgroundProcessors } from '@livekit/track-processors';
+import { ParticipantEvent, Track } from 'livekit-client';
+import { BackgroundProcessor, supportsBackgroundProcessors } from '@livekit/track-processors';
+import { BackgroundEffectSession, BLUR_BACKGROUND, NO_BACKGROUND, validateBackgroundFile } from './backgroundEffects.ts';
+import type { BackgroundChoice } from './backgroundEffects';
 
-export interface BackgroundBlurControl {
-  isBlurEnabled: boolean;
-  blurPending: boolean;
-  blurSupported: boolean;
-  blurError: string | null;
-  toggleBlur: () => Promise<void>;
-  clearBlurError: () => void;
-}
+export function useBackgroundBlur(participant: LocalParticipant | undefined, isCameraEnabled: boolean, connected: boolean) {
+  const [selection, setSelection] = useState<BackgroundChoice>(NO_BACKGROUND);
+  const [blurPending, setPending] = useState(false);
+  const [blurError, setError] = useState<string | null>(null);
+  const blurSupported = typeof window !== 'undefined' && supportsBackgroundProcessors();
+  const active = useRef<{ session: BackgroundEffectSession; selection: BackgroundChoice; busy: boolean; upload?: string } | null>(null);
 
-export function useBackgroundBlur(
-  participant: LocalParticipant | undefined,
-  isCameraEnabled: boolean,
-  connected: boolean,
-): BackgroundBlurControl {
-  const [isBlurEnabled, setIsBlurEnabled] = useState(false);
-  const [blurPending, setBlurPending] = useState(false);
-  const [blurError, setBlurError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!connected || !participant) return;
+    const state = { session: new BackgroundEffectSession(BackgroundProcessor), selection: NO_BACKGROUND, busy: false, upload: undefined as string | undefined };
+    active.current = state;
+    queueMicrotask(() => {
+      if (active.current === state) { setSelection(NO_BACKGROUND); setPending(false); setError(null); }
+    });
+    const reapply = () => {
+      const track = participant.getTrackPublication(Track.Source.Camera)?.track as LocalVideoTrack | undefined;
+      if (!track || state.selection.id === 'none' || state.busy) return;
+      state.busy = true; setPending(true);
+      void state.session.apply(track, state.selection).catch(() => {
+        if (active.current !== state) return;
+        state.selection = NO_BACKGROUND; setSelection(NO_BACKGROUND);
+        setError('Latar kamera gagal dipulihkan. Pilih ulang efek kamera.');
+      }).finally(() => { state.busy = false; if (active.current === state) setPending(false); });
+    };
+    participant.on?.(ParticipantEvent.LocalTrackPublished, reapply);
+    return () => {
+      participant.off?.(ParticipantEvent.LocalTrackPublished, reapply);
+      active.current = null;
+      void state.session.close().catch(() => {}).finally(() => { if (state.upload) URL.revokeObjectURL(state.upload); });
+    };
+  }, [participant, connected]);
 
-  const blurSupported = typeof window !== 'undefined' && typeof supportsBackgroundProcessors === 'function'
-    ? supportsBackgroundProcessors()
-    : false;
-
-  const processorRef = useRef<any>(null);
-  const isEnabledRef = useRef(isBlurEnabled);
-  isEnabledRef.current = isBlurEnabled;
-
-  const clearBlurError = useCallback(() => {
-    setBlurError(null);
-  }, []);
-
-  const getCameraTrack = useCallback((): LocalVideoTrack | undefined => {
-    if (!participant) return undefined;
-    const pub = participant.getTrackPublication(Track.Source.Camera);
-    return pub?.track as LocalVideoTrack | undefined;
-  }, [participant]);
-
-  const toggleBlur = useCallback(async () => {
-    if (!blurSupported) {
-      setBlurError('Perangkat atau browser ini belum mendukung efek blur latar belakang.');
-      return;
-    }
-
-    if (!connected || !isCameraEnabled || blurPending) return;
-
-    const track = getCameraTrack();
-    if (!track) {
-      setBlurError('Kamera belum aktif. Nyalakan kamera sebelum mengaktifkan blur.');
-      return;
-    }
-
-    setBlurPending(true);
-    setBlurError(null);
-
+  const selectBackground = useCallback(async (choice: BackgroundChoice, file?: File) => {
+    if (!blurSupported) { setError('Perangkat atau browser ini belum mendukung efek latar belakang.'); return; }
+    const state = active.current;
+    if (!state || !isCameraEnabled || state.busy) return;
+    const track = participant?.getTrackPublication(Track.Source.Camera)?.track as LocalVideoTrack | undefined;
+    if (!track) { setError('Nyalakan kamera sebelum memilih latar belakang.'); return; }
+    state.busy = true; setPending(true); setError(null);
+    let candidate: string | undefined, applying = false;
     try {
-      if (isBlurEnabled) {
-        await track.stopProcessor();
-        setIsBlurEnabled(false);
-      } else {
-        if (!processorRef.current) {
-          processorRef.current = BackgroundBlur(15);
-        }
-        await track.setProcessor(processorRef.current);
-        setIsBlurEnabled(true);
+      if (file) {
+        validateBackgroundFile(file);
+        candidate = URL.createObjectURL(file);
+        const image = new Image(); image.src = candidate;
+        await image.decode();
+        if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth > 4096 || image.naturalHeight > 4096) throw new Error('Resolusi gambar maksimal 4096 × 4096 piksel.');
+        choice = { id: 'upload', label: 'Gambar sendiri', imagePath: candidate };
       }
-    } catch (err) {
-      console.error('Gagal menerapkan efek blur:', err);
-      setBlurError(
-        err instanceof Error
-          ? `Gagal memproses blur: ${err.message}`
-          : 'Gagal memproses efek blur latar belakang.',
-      );
+      if (active.current !== state) return;
+      applying = true;
+      if (await state.session.apply(track, choice) && active.current === state) {
+        if (state.upload && state.upload !== choice.imagePath) URL.revokeObjectURL(state.upload);
+        state.upload = candidate || (choice.imagePath === state.upload ? state.upload : undefined);
+        candidate = undefined;
+        state.selection = choice; setSelection(choice);
+      }
+    } catch (error) {
+      if (active.current === state) {
+        if (applying) { state.selection = NO_BACKGROUND; setSelection(NO_BACKGROUND); }
+        setError(error instanceof Error ? `Gagal menerapkan latar: ${error.message}` : 'Gagal menerapkan latar kamera.');
+      }
     } finally {
-      setBlurPending(false);
+      if (candidate) URL.revokeObjectURL(candidate);
+      state.busy = false;
+      if (active.current === state) setPending(false);
     }
-  }, [blurSupported, connected, isCameraEnabled, blurPending, getCameraTrack, isBlurEnabled]);
-
-  // Re-apply blur if camera was toggled off and back on while blur was enabled
-  useEffect(() => {
-    if (!connected || !isCameraEnabled || !isEnabledRef.current || !processorRef.current) {
-      return;
-    }
-
-    const track = getCameraTrack();
-    if (track && !track.getProcessor()) {
-      void track.setProcessor(processorRef.current).catch(err => {
-        console.warn('Re-applying blur processor note:', err);
-      });
-    }
-  }, [connected, isCameraEnabled, getCameraTrack]);
-
-  // Clean up processor when participant disconnects or leaves
-  useEffect(() => {
-    if (!connected) {
-      setIsBlurEnabled(false);
-      processorRef.current = null;
-    }
-  }, [connected]);
-
-  return {
-    isBlurEnabled,
-    blurPending,
-    blurSupported,
-    blurError,
-    toggleBlur,
-    clearBlurError,
-  };
+  }, [participant, isCameraEnabled, blurSupported]);
+  const clearBlurError = useCallback(() => setError(null), []);
+  const toggleBlur = useCallback(() => selectBackground(selection.id === 'blur' ? NO_BACKGROUND : BLUR_BACKGROUND), [selection.id, selectBackground]);
+  return { selection: connected ? selection : NO_BACKGROUND, selectBackground, isBlurEnabled: connected && selection.id === 'blur', blurPending, blurSupported, blurError, toggleBlur, clearBlurError };
 }
+export type BackgroundBlurControl = ReturnType<typeof useBackgroundBlur>;

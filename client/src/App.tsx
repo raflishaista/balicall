@@ -1107,7 +1107,7 @@ function RoomContent({
 
   return <><MeetingRoom
     participants={participants} roomName={roomName} employeeId={employeeId}
-    cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending}
+    cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
     microphonePending={microphone.pending} connectionState={connectionState}
     screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
@@ -1121,9 +1121,10 @@ function RoomContent({
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
     recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
+    backgroundControl={blur}
     isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
     cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
 }
 
 function SummaryView({
