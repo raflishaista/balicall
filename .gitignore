@@ -19,6 +19,11 @@ test/egress/egress-test-token
 
 # Dependencies
 node_modules/
+.venv/
+.venv-live/
+__pycache__/
+*.pyc
+server/speech/models/
 */node_modules/
 
 # Build artifacts

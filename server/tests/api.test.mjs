@@ -6,6 +6,30 @@ import { join, resolve } from 'node:path';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { MeetingStore } from '../meetingStore.js';
+import { createHmac } from 'node:crypto';
+
+test('WhisperLiveKit selection preserves existing models and requires an active meeting ticket', async t => {
+  const secret = 'local-test-secret-with-at-least-32-characters';
+  const f = await fixture(t, { sttModel: 'small', sttModels: ['small', 'small-id'], liveSttSecret: secret, liveSttUrl: '/live-stt/asr' });
+  const health = await f.request('/health', undefined, null, 'GET');
+  assert.deepEqual(health.data.sttModels, ['small', 'small-id', 'whisperlivekit-small']);
+  const a = await f.joinRoom('a');
+  const body = { language: 'id', model: 'whisperlivekit-small' };
+  assert.equal((await f.request(a.route('live-session'), body)).status, 401);
+  assert.equal((await a.post('live-session', { ...body, model: 'arbitrary' })).status, 400);
+  assert.equal((await a.post('live-session', { ...body, language: 'th' })).status, 400);
+  const response = await a.post('live-session', body);
+  assert.equal(response.status, 200);
+  const ticket = new URL(response.data.url, 'http://local').searchParams.get('ticket');
+  const [payload, signature] = ticket.split('.');
+  assert.equal(signature, createHmac('sha256', secret).update(payload).digest('base64url'));
+  const claims = JSON.parse(Buffer.from(payload, 'base64url'));
+  assert.equal(claims.speakerId, 'a'); assert.equal(claims.meetingId, a.meetingId);
+  assert.equal(claims.language, 'id'); assert.ok(claims.exp * 1000 > Date.now());
+  assert.ok(!response.data.url.includes(secret));
+  await a.post('leave');
+  assert.equal((await a.post('live-session', body)).status, 409);
+});
 
 async function fixture(t, overrides = {}, dependencies = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'balicall-test-'));
@@ -173,6 +197,70 @@ test('backend STT forwards complete audio with language and keeps keys on server
   assert.equal(calls, 1); assert.equal((await a.get('transcript')).data.transcripts.length, 1);
   const health = await f.request('/health', undefined, undefined, 'GET');
   assert.equal(JSON.stringify(health.data).includes('server-only'), false);
+});
+
+test('STT model selection is allowlisted, forwarded and saved with each upload', async t => {
+  const forwarded = [];
+  const f = await fixture(t, { sttBaseUrl: 'http://speech/v1', sttModel: 'small', sttModels: ['small', 'small-id'] }, {
+    fetchImpl: async (_url, options) => {
+      forwarded.push(options.body.get('model'));
+      return new Response(JSON.stringify({ text: 'Halo' }));
+    },
+  });
+  const a = await f.joinRoom();
+  const upload = (requestId, model) => f.request(a.route('audio'), undefined, a.token, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/webm', 'X-Request-Id': requestId, ...(model ? { 'X-Speech-Model': model } : {}) }, body: 'fixture',
+  });
+  assert.equal((await upload('default')).data.entry.sttModel, 'small');
+  const selected = await upload('selected', 'small-id');
+  assert.equal(selected.status, 200);
+  assert.equal(selected.data.entry.sttModel, 'small-id');
+  assert.equal((await upload('selected', 'small')).data.entry.sttModel, 'small-id');
+  assert.equal((await upload('invalid', '/arbitrary/model')).status, 400);
+  assert.deepEqual(forwarded, ['small', 'small-id']);
+  const health = await f.request('/health', undefined, undefined, 'GET');
+  assert.deepEqual(health.data.sttModels, ['small', 'small-id']);
+  await f.restart();
+  assert.equal((await a.get('transcript')).data.transcripts[1].sttModel, 'small-id');
+});
+
+test('diarized STT preserves clip speakers and timestamps across retries and restart', async t => {
+  const segments = [
+    { speaker: 'SPEAKER_00', start: 0, end: 1.2, text: 'Halo' },
+    { speaker: 'SPEAKER_01', start: 1.2, end: 2.4, text: 'Selamat pagi' },
+  ];
+  let calls = 0;
+  const f = await fixture(t, { sttBaseUrl: 'http://speech/v1', sttModel: 'small', sttDiarization: true }, {
+    fetchImpl: async (_url, options) => {
+      calls++;
+      assert.equal(options.body.get('diarize'), 'true');
+      return new Response(JSON.stringify({ text: 'Halo Selamat pagi', segments }));
+    },
+  });
+  const a = await f.joinRoom();
+  const upload = () => f.request(a.route('audio'), undefined, a.token, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/webm', 'X-Request-Id': 'diarized', 'X-Speech-Language': 'id' }, body: 'fixture',
+  });
+  const first = await upload();
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.data.entry.segments, segments);
+  assert.equal(first.data.entry.speakerId, 'tester');
+  await f.restart();
+  assert.deepEqual((await upload()).data.entry, first.data.entry);
+  assert.equal(calls, 1);
+  assert.deepEqual((await a.get('transcript')).data.transcripts[0].segments, segments);
+});
+
+test('invalid diarization does not save a misleading transcript', async t => {
+  const f = await fixture(t, { sttBaseUrl: 'http://speech/v1', sttModel: 'small', sttDiarization: true }, {
+    fetchImpl: async () => new Response(JSON.stringify({ text: 'hello', segments: [{ text: 'hello', speaker: 'SPEAKER_00', start: 2, end: 1 }] })),
+  });
+  const a = await f.joinRoom();
+  const result = await f.request(a.route('audio'), undefined, a.token, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/webm', 'X-Request-Id': 'invalid' }, body: 'fixture',
+  });
+  assert.equal(result.status, 502);
+  assert.equal((await a.get('transcript')).data.transcripts.length, 0);
 });
 
 test('missing STT config and unsupported audio are explicit errors', async t => {

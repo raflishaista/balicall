@@ -54,3 +54,28 @@ test('missing stop event has a bounded finish timeout', async () => {
   await assert.rejects(controller.finish(), /belum selesai/);
   controller.dispose();
 });
+
+test('speech is uploaded after a pause without waiting for the maximum clip length', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  let speaking = true;
+  const { controller, audio } = setup({ hasVoice: () => speaking, segmentMs: 3000, minSegmentMs: 200, silenceMs: 200 });
+  t.mock.timers.tick(100);
+  speaking = false;
+  t.mock.timers.tick(200);
+  await Promise.resolve();
+  assert.equal(audio.length, 1);
+  controller.dispose();
+});
+
+test('continuous speech uploads a complete clip every three seconds by default', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  const { controller, audio } = setup({ segmentMs: undefined });
+  t.mock.timers.tick(2999);
+  await Promise.resolve();
+  assert.equal(audio.length, 0);
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(audio.length, 1);
+  assert.equal(await audio[0].text(), 'container-header-and-audio');
+  controller.dispose();
+});

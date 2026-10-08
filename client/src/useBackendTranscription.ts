@@ -5,8 +5,9 @@ export function useBackendTranscription(options: {
   muted: boolean;
   track?: MediaStreamTrack;
   language: string;
+  model?: string;
   volume: number;
-  onAudio: (audio: Blob, language: string) => void;
+  onAudio: (audio: Blob, language: string, model?: string) => void;
 }) {
   const [enabled, setEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,20 +18,21 @@ export function useBackendTranscription(options: {
   const format = typeof MediaRecorder === 'undefined' ? undefined :
     ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(value => MediaRecorder.isTypeSupported(value));
   const capabilityError = !format ? 'Browser ini tidak dapat merekam audio dalam format yang didukung transkripsi server.' : null;
-  const onAudio = useEffectEvent((audio: Blob) => options.onAudio(audio, options.language));
+  const onAudio = useEffectEvent((audio: Blob, language: string, model?: string) => options.onAudio(audio, language, model));
   const hasVoice = useEffectEvent(() => options.volume > 0.005);
   const onError = useEffectEvent((message: string) => setError(message));
   useEffect(() => {
     if (options.muted || changingTrack || !enabled || !options.track || options.track.readyState === 'ended') return;
     if (!format) return;
     const stream = new MediaStream([options.track]);
+    const language = options.language, model = options.model;
     const recorder = startAudioRecorder({
       createRecorder: () => new MediaRecorder(stream, { mimeType: format }),
-      hasVoice, onAudio, onError,
+      hasVoice, onAudio: audio => onAudio(audio, language, model), onError,
     });
     controller.current = recorder;
     return () => { recorder.dispose(); controller.current = null; };
-  }, [options.muted, options.track, options.language, enabled, attempt, format, changingTrack]);
+  }, [options.muted, options.track, options.language, options.model, enabled, attempt, format, changingTrack]);
   const flushRecorder = useCallback(() => {
     if (flushing.current) return flushing.current;
     const pending = (controller.current?.finish() || Promise.resolve()).finally(() => {
