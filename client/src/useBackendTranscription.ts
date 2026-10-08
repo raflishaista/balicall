@@ -27,6 +27,7 @@ export function useBackendTranscription(options: {
     const recorder = startAudioRecorder({
       createRecorder: () => new MediaRecorder(stream, { mimeType: format }),
       hasVoice, onAudio, onError,
+      segmentMs: 4000,
     });
     controller.current = recorder;
     return () => { recorder.dispose(); controller.current = null; };

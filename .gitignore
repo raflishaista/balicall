@@ -47,3 +47,7 @@ Thumbs.db
 
 # Local-only generated verification reports and screenshots
 /artifacts/
+
+# Python cache
+__pycache__/
+*.py[cod]

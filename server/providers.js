@@ -33,6 +33,7 @@ export async function fetchJson(url, options, timeoutMs, fetchImpl = fetch) {
   } catch (error) {
     if (error instanceof ServiceError) throw error;
     if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new ServiceError('The upstream service timed out. Please retry.', 504);
+    if (error.cause?.code === 'ECONNREFUSED') throw new ServiceError('The upstream service is not reachable (ECONNREFUSED). Make sure the service is running.');
     throw new ServiceError('The upstream service is unavailable or returned invalid JSON');
   }
 }

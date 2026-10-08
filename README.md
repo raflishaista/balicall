@@ -179,10 +179,15 @@ LLM_TIMEOUT_MS=60000
 GEMINI_API_KEY=
 
 # Speech-to-Text Configuration ("browser" | "server")
+# Opsi 1: Browser bawaan (gratis, tanpa server ekstra, khusus Chrome/Edge)
 STT_PROVIDER=browser
-STT_BASE_URL=http://HOST-STT:8000/v1
-STT_MODEL=whisper-large-v3
-STT_API_KEY=
+
+# Opsi 2: Local HuggingFace Whisper Server (Didukung di Firefox, Safari, Mobile)
+# Jalankan "start_whisper.bat" atau "python scripts/whisper_server.py":
+# STT_PROVIDER=server
+# STT_BASE_URL=http://127.0.0.1:8000/v1
+# STT_MODEL=openai/whisper-large-v3
+# STT_API_KEY=
 
 # Outbound Notification Webhook (Opsional: ERP, Teams, Telegram)
 OUTBOUND_WEBHOOK_URL=

@@ -32,7 +32,7 @@ if not exist "bin\livekit-server.exe" (
     echo [*] Automatically downloading LiveKit Server for Windows...
     powershell -Command "New-Item -ItemType Directory -Force -Path 'bin' | Out-Null; $zip='bin\livekit.zip'; Write-Host 'Downloading...'; Invoke-WebRequest -Uri 'https://github.com/livekit/livekit/releases/download/v1.13.7/livekit_1.13.7_windows_amd64.zip' -OutFile $zip; Write-Host 'Extracting...'; Expand-Archive -Path $zip -DestinationPath 'bin' -Force; Remove-Item $zip -Force"
     if exist "bin\livekit-server.exe" (
-        echo [OK] LiveKit Server downloaded successfully!
+        echo [OK] LiveKit Server downloaded successfully.
     ) else (
         echo [WARNING] Could not auto-download LiveKit. Please check your internet connection.
     )
@@ -48,6 +48,13 @@ if not exist "server\node_modules" (
 
 if not exist "client\node_modules" (
     echo [*] Installing client dependencies...
+    pushd "%~dp0client"
+    call npm install
+    popd
+)
+
+if not exist "client\node_modules\ldrs" (
+    echo [*] Updating client dependencies...
     pushd "%~dp0client"
     call npm install
     popd
@@ -73,6 +80,22 @@ if errorlevel 1 (
     echo [1/3] Port 7880 is already in use [Docker or background SFU is active]. Skipping native launch.
 )
 
+:: Optional Launch: Local Whisper STT Server if STT_PROVIDER=server and targeting local port 8000
+if exist "server\.env" (
+    findstr /i "STT_PROVIDER=server" "server\.env" >nul 2>nul
+    if not errorlevel 1 (
+        findstr /i "8000" "server\.env" >nul 2>nul
+        if not errorlevel 1 (
+            netstat -ano | findstr ":8000" >nul
+            if errorlevel 1 (
+                echo [*] Starting Local Whisper STT Server on Port 8000...
+                start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
+                ping -n 3 127.0.0.1 >nul
+            )
+        )
+    )
+)
+
 :: Launch 2: Backend Server
 echo [2/3] Starting Backend Server on Port 3001...
 start "BaliCall Backend" /D "%~dp0server" cmd /k "npm run dev"
@@ -84,7 +107,7 @@ start "BaliCall Client" /D "%~dp0client" cmd /k "npm run dev"
 
 echo.
 echo ========================================================
-echo   All services launched!
+echo   All services launched.
 echo   Open your browser at: http://127.0.0.1:5187
 echo ========================================================
 pause
