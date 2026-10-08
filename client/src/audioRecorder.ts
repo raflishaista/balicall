@@ -16,6 +16,7 @@ export function startAudioRecorder(options: {
   onAudio: (audio: Blob) => void;
   onError: (message: string) => void;
   segmentMs?: number;
+  pauseMs?: number;
   finishTimeoutMs?: number;
 }) {
   let recorder: Recorder;
@@ -32,6 +33,8 @@ export function startAudioRecorder(options: {
     const chunks: Blob[] = [];
     let heardVoice = options.hasVoice();
     let finalized = false;
+    let elapsedMs = 0;
+    let silentMs = 0;
     try {
       recorder = options.createRecorder();
       recorder.ondataavailable = ({ data }) => { if (!disposed && !finalized && data.size) chunks.push(data); };
@@ -53,7 +56,19 @@ export function startAudioRecorder(options: {
         if (recorder.state !== 'inactive') recorder.stop();
       };
       recorder.start();
-      levelTimer = setInterval(() => { heardVoice ||= options.hasVoice(); }, 100);
+      levelTimer = setInterval(() => {
+        const active = options.hasVoice();
+        elapsedMs += 100;
+        if (active) {
+          heardVoice = true;
+          silentMs = 0;
+        } else if (heardVoice) {
+          silentMs += 100;
+          if (options.pauseMs && silentMs >= options.pauseMs && elapsedMs >= 1200) {
+            if (recorder.state !== 'inactive') recorder.stop();
+          }
+        }
+      }, 100);
       segmentTimer = setTimeout(() => {
         heardVoice ||= options.hasVoice();
         if (recorder.state !== 'inactive') recorder.stop();

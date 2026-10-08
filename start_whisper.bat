@@ -1,12 +1,12 @@
 @echo off
 cd /d "%~dp0"
 echo ========================================================
-echo   BaliCall Local Whisper STT Server (HuggingFace)
+echo   BaliCall Local Whisper STT Server (faster-whisper)
 echo ========================================================
 echo.
 
-:: Default to openai/whisper-small (lightweight & fast for CPU)
-set MODEL=openai/whisper-small
+:: Default to small (CTranslate2 INT8 quantized, fast on CPU)
+set MODEL=small
 if not "%~1"=="" set MODEL=%~1
 
 echo [*] Model: %MODEL%
