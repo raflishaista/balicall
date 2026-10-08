@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BackgroundEffectSession, NO_BACKGROUND, BLUR_BACKGROUND, backgroundOptions, validateBackgroundFile } from '../src/backgroundEffects.ts';
+import { BackgroundEffectSession, NO_BACKGROUND, BLUR_BACKGROUND, backgroundOptions, validateBackgroundFile, shouldMirrorCamera } from '../src/backgroundEffects.ts';
+
+test('image backgrounds preserve readable text while plain/blur cameras follow mirror preference', () => {
+  for (const choice of [undefined, NO_BACKGROUND, BLUR_BACKGROUND]) {
+    assert.equal(shouldMirrorCamera(true, choice), true);
+    assert.equal(shouldMirrorCamera(false, choice), false);
+  }
+  for (const id of ['skyline', 'sentra', 'studio', 'upload']) {
+    assert.equal(shouldMirrorCamera(true, { id, label: id, imagePath: 'blob:image' }), false);
+    assert.equal(shouldMirrorCamera(false, { id, label: id, imagePath: 'blob:image' }), false);
+  }
+});
 
 function fixture() {
   const calls = [], processors = [];

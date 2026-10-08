@@ -15,6 +15,7 @@
 .sidebar-link.active { transition: background .2s,color .2s,box-shadow .2s; }
 .sidebar-link:disabled { color: #7690a7; opacity: .7; }
 .sidebar-bottom { margin-top: auto; }
+.sidebar-account-logout { flex-shrink: 0; }
 .sidebar-note { display: flex; gap: 11px; align-items: center; margin: 25px 9px; padding-top: 22px; border-top: 1px solid #244056; color: #ed9554; }
 .sidebar-note div { display: grid; gap: 7px; }
 .sidebar-note strong { font-size: 11px; color: #cfdeec; font-weight: 500; }
@@ -1135,3 +1136,9 @@ input::placeholder { color: #a1b1c6; }
   .sidebar-link { width: 100%; min-width: 0; }
 }
 
+
+@media (max-width: 720px) {
+  .workspace-sidebar .sidebar-bottom { display: contents; }
+  .sidebar-bottom .sidebar-note, .sidebar-bottom .sidebar-profile { display: none; }
+  .sidebar-bottom .sidebar-account-logout { display: flex; flex: none; width: 100%; min-height: 44px; margin-top: 10px; }
+}

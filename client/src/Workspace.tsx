@@ -40,7 +40,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
     <div className="sidebar-bottom">
-      {onLogout && <button type="button" className="sidebar-link" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
+      {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
       <div className="sidebar-profile"><span className="user-avatar">{initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
     </div>

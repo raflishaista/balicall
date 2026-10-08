@@ -4,6 +4,11 @@ import type { BackgroundProcessorWrapper, SwitchBackgroundProcessorOptions } fro
 export type BackgroundChoice = { id: string; label: string; imagePath?: string };
 export const NO_BACKGROUND: BackgroundChoice = { id: 'none', label: 'Tanpa efek' };
 export const BLUR_BACKGROUND: BackgroundChoice = { id: 'blur', label: 'Blur' };
+// Mirroring a composited image also reverses its logos and text. Keep image
+// backgrounds in their published orientation; plain/blurred cameras follow the preference.
+export function shouldMirrorCamera(preference: boolean, choice?: BackgroundChoice) {
+  return preference && !choice?.imagePath;
+}
 export function validateBackgroundFile(file: Pick<File, 'type' | 'size'>) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Gunakan gambar JPG, PNG, atau WebP.');
   if (!file.size || file.size > 5 * 1024 * 1024) throw new Error('Ukuran gambar maksimal 5 MB.');

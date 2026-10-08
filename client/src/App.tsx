@@ -25,6 +25,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
 import { usePreJoinMedia } from './usePreJoinMedia';
@@ -853,7 +854,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -1116,7 +1117,7 @@ function RoomContent({
     backgroundControl={blur}
     isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
     cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} onClose={closeDevices} />}</>;
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} onClose={closeDevices} />}</>;
 }
 
 function SummaryView({
