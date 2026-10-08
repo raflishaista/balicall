@@ -11,7 +11,7 @@ rtc:
   node_ip: "10.17.101.232"
 
 keys:
-  devkey: secret
+  devkey: c35dce5eb68185c1ba3b140ab408da916a75c0d297f42c96cbbe5aa362f7b082
 
 webhook:
   api_key: devkey
