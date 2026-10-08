@@ -9,20 +9,21 @@ export interface MeetingPreferences {
   mirrorLocalVideo: boolean;
   autoSpotlight: boolean;
   reduceMotion: boolean;
+  scheduleReminders: boolean;
 }
 
 export const PREFERENCES_KEY = 'sentra.meeting-preferences.v1';
 export const DEFAULT_PREFERENCES: MeetingPreferences = {
   microphoneEnabled: true, cameraEnabled: true,
   microphoneId: 'default', cameraId: 'default', outputId: 'default',
-  mirrorLocalVideo: true, autoSpotlight: true, reduceMotion: false,
+  mirrorLocalVideo: true, autoSpotlight: true, reduceMotion: false, scheduleReminders: true,
 };
 
 export function normalizePreferences(value: unknown): MeetingPreferences {
   const result = { ...DEFAULT_PREFERENCES };
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
   const input = value as Record<string, unknown>;
-  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion'] as const) {
+  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders'] as const) {
     if (typeof input[key] === 'boolean') result[key] = input[key];
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {

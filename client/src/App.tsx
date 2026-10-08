@@ -2,6 +2,8 @@ import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react'
 import { apiRequest, meetingPath, API_BASE } from './api';
 import { SettingsPage } from './SettingsPage';
 import { AIProcessingIndicator } from './AIProcessingIndicator';
+import { ScheduleReminders } from './ScheduleReminders';
+import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
 import { mediaChoices } from './preferences';
 import type { MeetingPreferences } from './preferences';
@@ -103,7 +105,9 @@ export default function App() {
   });
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
-  const [schedules, setSchedules] = useState<ScheduledMeeting[]>([]);
+  const scheduleFeed = useScheduleFeed();
+  const schedules = scheduleFeed.schedules;
+  const setSchedules = scheduleFeed.update;
   
   // Lobby state
   const [employeeId, setEmployeeId] = useState('');
@@ -433,14 +437,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [pendingSaves]);
 
-  useEffect(() => {
-    const abort = new AbortController();
-    void apiRequest<{ success: boolean; schedules: ScheduledMeeting[] }>('/schedules', { method: 'GET', signal: abort.signal }, 10000)
-      .then(data => { if (!abort.signal.aborted && Array.isArray(data.schedules)) setSchedules(data.schedules); })
-      .catch(error => { if (!abort.signal.aborted) console.warn('Failed to fetch schedules:', error); });
-    return () => abort.abort();
-  }, []);
-
   const handleCreateSchedule = async (scheduleData: {
     title: string;
     roomName: string;
@@ -488,6 +484,12 @@ export default function App() {
   const handleJoinScheduledRoom = (scheduledRoomName: string) => {
     setRoomName(scheduledRoomName);
     openLobby('join');
+  };
+
+  const openSchedule = () => {
+    joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+    saveActiveView('schedule');
+    setView('schedule');
   };
 
   const handleJoin = async () => {
@@ -780,11 +782,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
-          onSchedule={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
-            saveActiveView('schedule');
-            setView('schedule');
-          }}
+          onSchedule={openSchedule}
           onSettings={() => {
             joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('settings');
@@ -830,6 +828,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         </div>
       </header>
 
+      <ScheduleReminders schedules={schedules} enabled={userPreferences.preferences.scheduleReminders}
+        available={scheduleFeed.available} failed={scheduleFeed.error} suppressed={view === 'in-call'}
+        onOpenSchedule={openSchedule}
+        onRetry={() => void scheduleFeed.refresh()} />
+
       {(callError || syncError || transcriptSaveError || pendingSaves > 0) && <div className="app-alert" role="status" aria-live="polite" aria-busy={pendingSaves > 0}>
         {pendingSaves > 0 && <Loader2 className="ui-spinner" size={15} aria-hidden="true" />}
         {callError || syncError || transcriptSaveError} {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
@@ -842,7 +845,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           employeeName={employeeName}
           onCreate={() => openLobby('create')}
           onJoin={(code?: string) => { if (code) setRoomName(code); openLobby('join'); }}
-          onSchedule={() => setView('schedule')}
+          onSchedule={openSchedule}
           upcomingSchedules={schedules}
         />}
         {view === 'schedule' && (

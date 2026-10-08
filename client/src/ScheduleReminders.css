@@ -1,0 +1,11 @@
+.schedule-reminders { margin: 14px 22px 0; padding: 14px 18px; border: 1px solid #cbdff6; border-left: 3px solid var(--brand-orange); border-radius: 10px; background: #f2f7ff; color: var(--ink); }
+.reminder-heading { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--brand-blue); }
+.reminder-note { margin: 6px 0 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.schedule-reminders ul { padding: 0; margin: 0; list-style: none; }
+.schedule-reminders li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid #dce7f5; }
+.schedule-reminders li > div { min-width: 0; overflow-wrap: anywhere; }
+.schedule-reminders li strong { display: block; font-size: 13px; }
+.schedule-reminders li span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.schedule-reminders .icon-button { flex-shrink: 0; }
+.reminder-unavailable { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; }
+@media (max-width: 600px) { .schedule-reminders { margin: 12px 14px 0; padding: 12px; } }
