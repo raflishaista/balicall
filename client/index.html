@@ -10,6 +10,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <script nomodule>
+      document.getElementById('root').innerHTML =
+        '<div style="padding:32px;max-width:620px;margin:40px auto;font-family:sans-serif;background:#fff;border:1px solid #f87171;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);color:#1e293b;line-height:1.6;">' +
+        '<h2 style="color:#b91c1c;margin-top:0;">Browser Terlalu Lawas / Tidak Didukung</h2>' +
+        '<p>Aplikasi ini membutuhkan browser modern dengan dukungan JavaScript ES Modules dan WebRTC.</p>' +
+        '<p>Browser yang Anda gunakan tidak mendukung modul JavaScript modern. Harap perbarui <strong>Mozilla Firefox</strong> ke versi terbaru, atau gunakan <strong>Google Chrome</strong> / <strong>Microsoft Edge</strong>.</p>' +
+        '</div>';
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
