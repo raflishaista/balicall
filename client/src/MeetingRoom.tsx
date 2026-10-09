@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
@@ -22,7 +22,7 @@ interface Transcript {
   segments?: { text: string; speaker: string; start: number; end: number }[];
 }
 
-export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, sttModel, sttModels, onChangeSttModel, modelPending, modelError, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, onToggleRecording, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, cameraBlurError = null, onToggleCameraBlur, onClearCameraBlurError, backgroundControl }: {
+export function MeetingRoom({ participants, roomName, employeeId, connected, isMuted, micVolume, finishing, isSummarizing, finishError, speechError, interimText, isListening, speechEnabled, saveBlocked, sttProvider, sttConfigured, setSttProvider, sttModel, sttModels, onChangeSttModel, modelPending, modelError, speechLanguage, setSpeechLanguage, activeTab, setActiveTab, transcripts, onToggleMute, onToggleTranscription, onFinish, onAddSpeechLine, cameraTracks, isCameraEnabled, cameraPending, cameraError, microphoneError, onToggleCamera, screenTracks, isScreenShareEnabled, screenSharePending, screenShareError, screenShareSupported, onToggleScreenShare, devicePending, deviceError, onOpenDevices, spotlightIdentity, microphonePending, connectionState, mirrorLocalVideo = true, recordingPending, recordingError, isRecording, onToggleRecording, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, cameraBlurError = null, onToggleCameraBlur, onClearCameraBlurError, backgroundControl }: {
   backgroundControl?: BackgroundBlurControl;
   participants: Participant[]; roomName: string; employeeId: string; connected: boolean; isMuted: boolean; micVolume: number;
   finishing: boolean; isSummarizing: boolean; finishError: string | null; speechError: string | null; interimText: string; isListening: boolean; speechEnabled: boolean; saveBlocked: boolean;
@@ -39,15 +39,40 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
   spotlightIdentity: string | null; microphonePending: boolean; connectionState: ConnectionState;
   mirrorLocalVideo?: boolean;
   recordingPending: boolean; recordingError: string | null; onToggleRecording: (enabled: boolean) => Promise<void>;
+  isRecording?: boolean;
   isCameraBlur?: boolean; cameraBlurPending?: boolean; cameraBlurSupported?: boolean; cameraBlurError?: string | null;
   onToggleCameraBlur?: () => Promise<void>; onClearCameraBlurError?: () => void;
 }) {
   const room = useRoomContext();
+  const [localRecording, setLocalRecording] = useState<boolean | null>(null);
   const subscribeRecording = useCallback((notify: () => void) => {
     room.on(RoomEvent.RecordingStatusChanged, notify);
     return () => { room.off(RoomEvent.RecordingStatusChanged, notify); };
   }, [room]);
-  const recording = useSyncExternalStore(subscribeRecording, () => room.isRecording, () => false);
+  const livekitRecording = useSyncExternalStore(subscribeRecording, () => room.isRecording, () => false);
+
+  useEffect(() => {
+    if (localRecording !== null) {
+      if (isRecording !== undefined && isRecording === localRecording) {
+        setLocalRecording(null);
+      } else if (livekitRecording === localRecording) {
+        setLocalRecording(null);
+      }
+    }
+  }, [isRecording, livekitRecording, localRecording]);
+
+  const recording = localRecording !== null ? localRecording : (isRecording ?? livekitRecording);
+
+  const handleToggleRecording = useCallback(async () => {
+    const nextState = !recording;
+    setLocalRecording(nextState);
+    try {
+      await onToggleRecording(nextState);
+    } catch (err) {
+      setLocalRecording(null);
+      throw err;
+    }
+  }, [recording, onToggleRecording]);
   const [backgroundsOpen, setBackgroundsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'speaker'>('grid');
   const compact = useCompactMeeting();
@@ -135,7 +160,7 @@ export function MeetingRoom({ participants, roomName, employeeId, connected, isM
     <MeetingControls canManageMeeting={!employeeId.startsWith('GUEST-')} busy={busy} connected={connected} devicePending={devicePending} isMuted={isMuted} microphonePending={microphonePending}
       isCameraEnabled={isCameraEnabled} cameraPending={cameraPending} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenSharePending} screenShareSupported={screenShareSupported}
       speechEnabled={speechEnabled} speechError={speechError} isListening={isListening} saveBlocked={saveBlocked} finishLabel={finishLabel}
-      recording={recording} recordingPending={recordingPending} onToggleRecording={() => onToggleRecording(!recording)}
+      recording={recording} recordingPending={recordingPending} onToggleRecording={handleToggleRecording}
       onToggleMute={onToggleMute} onToggleCamera={onToggleCamera} onToggleScreenShare={onToggleScreenShare} onToggleTranscription={onToggleTranscription}
       onOpenDevices={onOpenDevices} onParticipants={() => { setPanelOpen(true); setActiveTab('attendance'); }} transcriptOpen={panelOpen && activeTab === 'transcript'} onTranscript={() => { setPanelOpen(!panelOpen || activeTab !== 'transcript'); setActiveTab('transcript'); }} onFinish={requestFinish}
       onOpenBackgrounds={backgroundControl ? () => { setPanelOpen(false); setBackgroundsOpen(true); } : undefined}

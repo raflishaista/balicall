@@ -164,6 +164,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const [syncError, setSyncError] = useState<string | null>(null);
   const [recordingPending, setRecordingPending] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [transcriptDelivery] = useState(() => createTranscriptDelivery(entry => setTranscripts(previous => mergeTranscripts(previous, [entry]))));
   const receiveTranscripts = useCallback((entries: TranscriptEntry[]) => setTranscripts(previous => mergeTranscripts(previous, entries)), []);
   const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null; meetingId: string }>({
@@ -525,7 +526,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
-      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
@@ -615,6 +616,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     setCallDuration('00:00');
     setRecordingPending(false);
     setRecordingError(null);
+    setIsRecording(false);
 
     if (!generate) {
       setMeetingId(null);
@@ -780,11 +782,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     setRecordingPending(true); setRecordingError(null);
     try {
       const action = enabled ? 'start' : 'stop';
-      await apiRequest<{ success: boolean; recording: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
+      const data = await apiRequest<{ success: boolean; recording?: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: '{}',
       }, 15000);
+      if (generation === joinGeneration.current) {
+        setIsRecording(data?.recording?.status === 'active');
+      }
     } catch (error) {
       if (generation === joinGeneration.current) setRecordingError(error instanceof Error ? error.message : `Gagal ${enabled ? 'memulai' : 'menghentikan'} rekaman.`);
     } finally {
@@ -969,7 +974,12 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
+            isRecording={isRecording}
             onToggleRecording={handleToggleRecording}
+            onRecordingSync={(rec: { status: string } | null) => {
+              if (rec?.status === 'active') setIsRecording(true);
+              else if (rec?.status === 'stopped') setIsRecording(false);
+            }}
             callPreferences={callPreferences}
             token={token}
             sttProvider={sttProvider}
@@ -1061,7 +1071,7 @@ function InCallView({
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
-  recordingPending, recordingError, onToggleRecording,
+  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   token,
   serverUrl,
@@ -1100,12 +1110,13 @@ function InCallView({
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
-      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} register={registerTranscriptPublisher} />
+      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
       <RoomContent
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
         recordingError={recordingError}
+        isRecording={isRecording}
         onToggleRecording={onToggleRecording}
         callPreferences={callPreferences}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
@@ -1127,7 +1138,7 @@ function InCallView({
 
 function RoomContent({
   sttModels, defaultSttModel, onCreateLiveSession,
-  startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
+  startWithCamera, callPreferences, recordingPending, recordingError, isRecording, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -1246,7 +1257,7 @@ function RoomContent({
     setSpeechLanguage={language => void changeSpeechSettings(() => setSpeechLanguage(language))}
     sttModel={sttModel} sttModels={sttModels} onChangeSttModel={changeSttModel} modelPending={modelPending} modelError={modelError}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
-    recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
+    recordingPending={recordingPending} recordingError={recordingError} isRecording={isRecording} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
     backgroundControl={blur}
     isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}

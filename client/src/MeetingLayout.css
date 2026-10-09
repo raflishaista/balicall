@@ -43,6 +43,8 @@
 .meeting-layout .call-control-bar { position: relative; grid-column: 1; grid-row: 2; padding: 8px 16px; gap: 8px; z-index: 4; }
 .meeting-layout .call-controls { display: flex; flex-wrap: wrap; width: auto; gap: 4px; }
 .meeting-layout .call-control { min-width: 60px; min-height: 54px; gap: 5px; padding: 7px; font-size: 10px; }
+.call-control.control-recording { color: #ff6b6b !important; background: rgba(239, 68, 68, 0.2) !important; border-color: rgba(239, 68, 68, 0.45) !important; }
+.call-control.control-recording:hover { background: rgba(239, 68, 68, 0.32) !important; }
 .meeting-layout .leave-controls { margin-left: auto; gap: 8px; }
 .meeting-more { position: relative; }
 .meeting-more-menu { position: absolute; z-index: 8; bottom: calc(100% + 8px); right: 0; min-width: 220px; border: 1px solid #3d627f; border-radius: 10px; padding: 6px; background: #112f46; box-shadow: 0 8px 32px #0006; }
