@@ -434,6 +434,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const meeting = store.get(req.meetingId);
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
       isSummarizing: inFlightSummarize.has(meeting.id),
+      recording: meeting.recording || null,
       transcripts: meeting.transcripts, participants: [...meeting.participants.values()].map(publicParticipant), summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
   });
 
@@ -549,12 +550,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const recording = meeting.recording;
 
     if (!recording?.egressId || recording.status !== 'active') {
-      return res.status(409).json({
-        error: 'Tidak ada recording yang sedang berjalan.',
+      return res.json({
+        success: true,
+        alreadyStopped: true,
+        recording: recording || { status: 'stopped' },
       });
     }
 
-    await egressClient.stopEgress(recording.egressId);
+    try {
+      await egressClient.stopEgress(recording.egressId);
+    } catch (egressErr) {
+      console.warn('[RECORDING] stopEgress note:', egressErr.message);
+    }
 
     const stoppedAt = new Date().toISOString();
 
