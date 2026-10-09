@@ -600,39 +600,34 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     const currentRoomName = roomName;
     const capturedTranscripts = [...transcripts];
 
-    // Flush any pending utterances in the save queue
-    try {
-      await saveQueue.flush();
-    } catch (flushErr) {
-      endingMeeting.current = false;
-      throw flushErr;
-    }
-
     // 1. Terminate call media session immediately (turns off microphone, camera, and screen share)
     setToken(null);
     setMeetingStartTime(null);
     setCallDuration('00:00');
-    setRecordingPending(false); setRecordingError(null);
-
-    // 2. Notify backend of leave in background
-    const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
-      body: '{}',
-    }).catch(err => {
-      console.warn('Leave request note:', err);
-      return { status: 'ended' };
-    });
+    setRecordingPending(false);
+    setRecordingError(null);
 
     if (!generate) {
       setMeetingId(null);
       setTranscripts([]);
       saveActiveView('home');
       setView('home');
+      void (async () => {
+        try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
+        await apiRequest(meetingPath(currentMeetingId, 'leave'), {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
+          body: '{}',
+        }).catch(err => {
+          console.warn('Leave request note:', err);
+          return { status: 'ended' };
+        });
+        endingMeeting.current = false;
+      })();
       return;
     }
 
-    // 3. Immediately transition to summary view with loading card
+    // 2. Immediately transition to summary view with loading card
     const inProgressRecord: InProgressRecord = {
       meetingId: currentMeetingId,
       roomName: currentRoomName,
@@ -646,7 +641,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     saveInProgressSummary(inProgressRecord);
     setInProgressList(readInProgressSummaries());
 
-    if (!saveSummarySession({ meetingId: currentMeetingId, roomName: currentRoomName, token: currentToken, transcripts: capturedTranscripts, open: true, isSummarizing: true })) {
+    if (!saveSummarySession({
+      meetingId: currentMeetingId,
+      roomName: currentRoomName,
+      token: currentToken,
+      transcripts: capturedTranscripts,
+      open: true,
+      isSummarizing: true,
+    })) {
       setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
     }
     saveActiveView('summary');
@@ -658,12 +660,68 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     setSummaryToken(currentToken);
     setSummaryRoomName(currentRoomName);
 
-    // 4. Request summary in the background
-    try {
-      await triggerSummarize(currentMeetingId, currentToken, currentRoomName, capturedTranscripts, leavePromise);
-    } finally {
-      endingMeeting.current = false;
-    }
+    // 3. In background: process any queued audio transcripts from Whisper first, then notify leave, then summarize!
+    void (async () => {
+      try {
+        await saveQueue.flush();
+      } catch (flushErr) {
+        console.warn('Background transcript flush warning:', flushErr);
+      }
+
+      // Fetch the latest finalized transcripts from server
+      let finalTranscripts = capturedTranscripts;
+      try {
+        const transcriptData = await apiRequest<{ transcripts: TranscriptEntry[] }>(
+          meetingPath(currentMeetingId, 'transcript'),
+          { headers: { Authorization: 'Bearer ' + currentToken } }
+        );
+        if (transcriptData?.transcripts) {
+          finalTranscripts = transcriptData.transcripts;
+          setTranscripts(finalTranscripts);
+        }
+      } catch {
+        // Fallback to capturedTranscripts
+      }
+
+      // Notify backend of leave in background
+      const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
+        body: '{}',
+      }).catch(err => {
+        console.warn('Leave request note:', err);
+        return { status: 'ended' };
+      });
+
+      // Update in-progress record with all finalized transcripts
+      const updatedRecord: InProgressRecord = {
+        meetingId: currentMeetingId,
+        roomName: currentRoomName,
+        token: currentToken,
+        transcripts: finalTranscripts,
+        startedAt: inProgressRecord.startedAt,
+        hostId: employeeId,
+        hostName: employeeName,
+        department,
+      };
+      saveInProgressSummary(updatedRecord);
+      setInProgressList(readInProgressSummaries());
+      saveSummarySession({
+        meetingId: currentMeetingId,
+        roomName: currentRoomName,
+        token: currentToken,
+        transcripts: finalTranscripts,
+        open: true,
+        isSummarizing: true,
+      });
+
+      // 4. Request summary in the background with complete transcripts
+      try {
+        await triggerSummarize(currentMeetingId, currentToken, currentRoomName, finalTranscripts, leavePromise);
+      } finally {
+        endingMeeting.current = false;
+      }
+    })();
   };
 
   const handleRetrySummarize = () => {
@@ -947,6 +1005,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             copied={copied}
             onCopy={copyMarkdownSummary}
             isSummarizing={isSummarizing}
+            pendingSaves={pendingSaves}
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
             onBackToHistory={() => {
@@ -1185,6 +1244,7 @@ function SummaryView({
   onCopy,
   onNewCall,
   isSummarizing = false,
+  pendingSaves = 0,
   summaryError = null,
   onRetry,
   onBackToHistory,
@@ -1198,6 +1258,7 @@ function SummaryView({
   onCopy: () => void;
   onNewCall: () => void;
   isSummarizing?: boolean;
+  pendingSaves?: number;
   summaryError?: string | null;
   onRetry?: () => void;
   onBackToHistory?: () => void;
@@ -1286,8 +1347,13 @@ function SummaryView({
           <header className="summary-heading" style={{ borderBottom: '1px solid #e3ebf6', paddingBottom: '20px' }}>
             <div>
               <AIProcessingIndicator />
-              <h1 style={{ marginTop: '12px' }}>AI sedang menyusun notulen</h1>
-              <p className="summary-meta">Panggilan telah diakhiri · Ruang <strong>#{roomName}</strong> · <strong>{transcripts.length} ucapan</strong> direkam</p>
+              <h1 style={{ marginTop: '12px' }}>
+                {pendingSaves > 0 ? 'Menyelesaikan transkripsi sisa ucapan…' : 'AI sedang menyusun notulen'}
+              </h1>
+              <p className="summary-meta">
+                Panggilan telah diakhiri · Ruang <strong>#{roomName}</strong> · <strong>{transcripts.length} ucapan</strong> direkam
+                {pendingSaves > 0 && <span> · <strong>{pendingSaves} potongan suara</strong> sedang diproses…</span>}
+              </p>
             </div>
             <div className="summary-actions">
               <button className="button-secondary" onClick={onNewCall}>Kembali ke beranda</button>
@@ -1299,8 +1365,9 @@ function SummaryView({
             <div>
               <strong>Kamera dan mikrofon Anda telah dinonaktifkan.</strong>
               <p>
-                Panggilan telah selesai. AI sedang menganalisis seluruh percakapan yang terekam untuk menyusun
-                ringkasan eksekutif, pokok pembahasan, keputusan, dan daftar tindak lanjut (action items).
+                {pendingSaves > 0
+                  ? `Sistem sedang menyelesaikan pengenalan suara untuk ${pendingSaves} potongan audio terakhir. Setelah selesai, AI akan langsung membuat notulen rapat secara otomatis.`
+                  : 'Panggilan telah selesai. AI sedang menganalisis seluruh percakapan yang terekam untuk menyusun ringkasan eksekutif, pokok pembahasan, keputusan, dan daftar tindak lanjut (action items).'}
               </p>
             </div>
           </div>
