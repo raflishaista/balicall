@@ -9,6 +9,9 @@ import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressC
 import { MeetingStore } from './meetingStore.js';
 import { createAttendanceFinalizer } from './attendanceFinalizer.js';
 import { createGuestAccess } from './guestAccess.js';
+import { WorkspaceStore } from './workspaceStore.js';
+import { attachWorkspaceApi } from './workspaceApi.js';
+import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
 import {
   isDbConnected,
@@ -49,9 +52,10 @@ const pdfText = value => {
   return String(value);
 };
 
-export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore } = {}) {
+export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush } = {}) {
   const app = express();
   const store = new MeetingStore(config.dataFile);
+  const workspace=workspaceStore||new WorkspaceStore();
   const verifier = new TokenVerifier(config.livekitKey, config.livekitSecret);
   const webhookReceiver = new WebhookReceiver(config.livekitKey, config.livekitSecret);
   const roomService = new RoomServiceClient(config.livekitInternalUrl.replace(/^ws/, 'http'), config.livekitKey, config.livekitSecret, { requestTimeout: 1.5 });
@@ -73,6 +77,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   } }));
 
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
+  app.use('/api/profile',express.json({limit:'2mb'}));
   app.use(express.json({
     limit: '256kb',
     type: ['application/json', 'application/webhook+json'],
@@ -82,6 +87,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   }));
 
   attachAuth(app, config, authStore, createGuestAccess(store));
+  attachWorkspaceApi(app,config,workspace);
+  const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
@@ -177,6 +184,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
       // Use authoritative name and department from company DB if registered
       if (empCheck.employee?.name) employeeName = empCheck.employee.name;
       if (empCheck.employee?.department) department = empCheck.employee.department;
+      if(req.auth)employeeName=req.auth.user.name;
     }
 
     const active = [...store.meetings.values()].find(meeting => meeting.roomName === roomName.trim() && meeting.status === 'active');
@@ -401,6 +409,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     store.transact(() => { meeting.guestInviteCode ||= randomBytes(16).toString('base64url'); });
     res.json({ inviteCode: meeting.guestInviteCode });
   });
+  app.post('/api/meetings/:id/employee-invites',asyncRoute(async(req,res)=>{
+    if(!req.auth?.user||req.auth.user.isGuest)return res.status(403).json({error:'Masuk dengan akun karyawan untuk mengundang.'});
+    if(!writable(req,res))return;
+    const ids=req.body?.employeeIds;
+    if(!Array.isArray(ids)||ids.length<1||ids.length>20||ids.some(id=>typeof id!=='string'||!/^BT-\d{4,6}$/.test(id)))return res.status(400).json({error:'Pilih 1–20 NIK karyawan.'});
+    const meeting=store.get(req.meetingId);
+    for(const id of new Set(ids))await workspace.notify(id,{key:`invitation:${meeting.id}:${id}`,kind:'invitation',roomName:meeting.roomName,meetingId:meeting.id});
+    res.json({success:true});
+  }));
 
   app.post('/api/meetings/:id/live-session', (req, res) => {
     if (!writable(req, res)) return;
@@ -1104,5 +1121,5 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message });
   });
 
-  return { app, store, close: attendanceFinalizer.close };
+  return { app, store, notificationTick:()=>notifications?.tick(), close(){attendanceFinalizer.close();notifications?.close();} };
 }

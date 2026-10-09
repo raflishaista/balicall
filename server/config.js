@@ -5,6 +5,7 @@ export function loadConfig(env = process.env) {
     port: Number(env.PORT || 3001),
     // Explicit opt-in keeps existing deployments compatible until account activation is ready.
     authEnabled: env.AUTH_ENABLED === 'true',
+    vapidPublicKey:env.VAPID_PUBLIC_KEY||'',vapidPrivateKey:env.VAPID_PRIVATE_KEY||'',vapidSubject:env.VAPID_SUBJECT||'',
     authCookieSecure: env.AUTH_COOKIE_SECURE !== undefined ? env.AUTH_COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
     dataFile: env.MEETING_DATA_FILE || fileURLToPath(new URL('./data/meetings.json', import.meta.url)),
     clientDist: fileURLToPath(new URL('../client/dist', import.meta.url)),
@@ -39,6 +40,8 @@ export function loadConfig(env = process.env) {
       : Boolean(env.DATABASE_URL),
   };
   if (env.NODE_ENV === 'production' && config.authEnabled && !config.authCookieSecure) throw new Error('Production login requires secure cookies over HTTPS.');
+  if([config.vapidPublicKey,config.vapidPrivateKey,config.vapidSubject].some(Boolean)&&
+    (!/^[\w-]{87}$/.test(config.vapidPublicKey)||!/^[\w-]{43}$/.test(config.vapidPrivateKey)||!(/^(mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/.test(config.vapidSubject))))throw new Error('Configure all VAPID keys and a valid mailto/HTTPS subject, or leave all empty.');
   if (!Number.isInteger(config.attendanceGraceMs) || config.attendanceGraceMs < 0 || config.attendanceGraceMs > 30000) throw new Error('ATTENDANCE_FINALIZE_GRACE_MS must be 0–30000 milliseconds');
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {

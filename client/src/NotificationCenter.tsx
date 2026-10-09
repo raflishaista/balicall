@@ -1,0 +1,24 @@
+import { useEffect, useRef, useState } from 'react';
+import { Bell } from 'lucide-react';
+import { apiRequest } from './api';
+import { disablePush, enablePush, pushSupported } from './pushNotifications';
+interface Notice{id:string;kind:string;roomName:string;meetingId:string|null;readAt:string|null;createdAt:string}
+export function PushSettings(){
+  const [config,setConfig]=useState<{configured:boolean;publicKey:string}|null>(null);
+  useEffect(()=>{const controller=new AbortController();void apiRequest<{configured:boolean;publicKey:string}>('/notifications/push-config',{signal:controller.signal}).then(data=>setConfig(data)).catch(()=>{});return()=>controller.abort();},[]);
+  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');const lock=useRef(false);
+  const action=async(enable:boolean)=>{if(lock.current)return;lock.current=true;setBusy(true);setMessage('');try{await(enable?enablePush(config?.publicKey||''):disablePush());setMessage(enable?'Notifikasi perangkat ini diaktifkan.':'Notifikasi perangkat ini dinonaktifkan.');}catch(e){setMessage(e instanceof Error?e.message:'Pengaturan belum tersimpan.');}finally{lock.current=false;setBusy(false);}};
+  return <section className="push-settings"><h3>Notifikasi background & lintas perangkat</h3><p>Aktifkan di setiap perangkat. Inbox tersimpan pada akun; notifikasi sistem memerlukan HTTPS, izin browser dan konfigurasi Web Push server.</p><p>Notifikasi sistem hanya memuat pemberitahuan umum; buka BaliCall untuk membaca detail rapat.</p><button type="button" className="button-secondary" disabled={busy||!pushSupported()||!config?.configured} onClick={()=>void action(true)}>Aktifkan notifikasi perangkat</button><button type="button" className="text-button" disabled={busy} onClick={()=>void action(false)}>Nonaktifkan perangkat ini</button>{!config?.configured&&<p>Konfigurasi Web Push server belum tersedia. Inbox tetap dapat digunakan.</p>}{!pushSupported()&&<p>Web Push belum didukung pada koneksi/browser ini.</p>}{message&&<p role="status">{message}</p>}</section>;
+}
+export function NotificationCenter({onJoin,onSummary}:{onJoin:(room:string)=>void;onSummary:()=>void}){
+  const [open,setOpen]=useState(()=>new URLSearchParams(location.search).has('notification')),[items,setItems]=useState<Notice[]>([]),[error,setError]=useState('');
+  const dialog=useRef<HTMLDivElement>(null),button=useRef<HTMLButtonElement>(null);
+  useEffect(()=>{let alive=true;let controller:AbortController;
+    const refresh=()=>{controller?.abort();const request=new AbortController();controller=request;void apiRequest<{notifications:Notice[]}>('/notifications',{signal:request.signal}).then(data=>{if(alive&&!request.signal.aborted){setItems(data.notifications);setError('');}}).catch(()=>{if(alive&&!request.signal.aborted)setError('Inbox belum tersambung. Coba lagi nanti.');});};
+    const received=(event:MessageEvent)=>{if(event.data?.type==='balicall:open-notifications'){setOpen(true);refresh();}};
+    refresh();const timer=setInterval(refresh,30000);window.addEventListener('focus',refresh);navigator.serviceWorker?.addEventListener('message',received);return()=>{alive=false;controller?.abort();clearInterval(timer);window.removeEventListener('focus',refresh);navigator.serviceWorker?.removeEventListener('message',received);};
+  },[]);
+  useEffect(()=>{if(open)dialog.current?.querySelector<HTMLButtonElement>('button')?.focus();},[open]);
+  const choose=async(item:Notice)=>{try{await apiRequest('/notifications/'+item.id+'/read',{method:'POST'});setItems(old=>old.map(n=>n.id===item.id?{...n,readAt:new Date().toISOString()}:n));setOpen(false);button.current?.focus();if(item.kind==='summary')onSummary();else onJoin(item.roomName);}catch{setError('Notifikasi belum dapat dibuka.');}};
+  return <div className="notification-center" onKeyDown={e=>{if(e.key==='Escape'){setOpen(false);button.current?.focus();}}}><button ref={button} className="button-secondary" type="button" aria-label="Notifikasi akun" aria-expanded={open} onClick={()=>setOpen(v=>!v)}><Bell size={17}/>{items.filter(n=>!n.readAt).length||''}</button>{open&&<div ref={dialog} className="notification-inbox" role="region" aria-label="Inbox notifikasi"><h2>Notifikasi</h2><button type="button" className="text-button" onClick={()=>{setOpen(false);button.current?.focus();}}>Tutup</button>{error&&<p role="status">{error}</p>}{!items.length&&!error&&<p>Belum ada notifikasi.</p>}{items.map(item=><button type="button" className="notification-item" key={item.id} onClick={()=>void choose(item)}><strong>{item.kind==='summary'?'Notulen siap':item.kind==='invitation'?'Undangan rapat':'Pengingat rapat'}{!item.readAt?' · Baru':''}</strong><span>{item.roomName}</span><small>{new Date(item.createdAt).toLocaleString('id-ID')}</small></button>)}</div>}</div>;
+}

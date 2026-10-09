@@ -2,6 +2,9 @@ import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
 import { apiRequest, meetingPath, API_BASE } from './api';
 import { SettingsPage } from './SettingsPage';
+import { UserAvatar } from './ProfileEditor';
+import { NotificationCenter } from './NotificationCenter';
+import { EmployeeInvites } from './EmployeeInvites';
 import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
@@ -70,7 +73,7 @@ const PRESET_PERSONAS = [
   { id: 'BT-10550', name: 'Agus Pratama', dept: 'Fiber Infrastructure' },
 ];
 
-export default function App({ authUser = null, onLogout, logoutPending = false }: { authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
+export default function App({ authUser = null, onLogout, logoutPending = false, onProfileUpdated }: { onProfileUpdated?: (user:AuthUser)=>void; authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
   const isGuest = Boolean(authUser?.isGuest);
   const [guestInviteCode, setGuestInviteCode] = useState('');
   const [summaryStorage] = useState(() => scopedSummaryStorage(authUser?.employeeId || null));
@@ -841,7 +844,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
       {view !== 'in-call' && (
         <WorkspaceSidebar
-          isGuest={isGuest}
+          isGuest={isGuest} authUser={authUser}
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
@@ -882,6 +885,8 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         )}
 
         <div className="header-meta">
+          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();setSummaryMeetingId(null);setView('summary');}}/>}
+          {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
               .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(error instanceof Error ? error.message : 'Tidak dapat membuat undangan tamu.'));
@@ -901,7 +906,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               )}
             </div>
           )}
-          <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{initials(employeeName)}</span>
+          <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span>
         </div>
       </header>
       {view === 'in-call' && guestInviteCode && <div className="guest-invite-strip" role="status"><label>Kode undangan tamu <input readOnly value={guestInviteCode} onFocus={event=>event.currentTarget.select()} /></label><button className="button-secondary" type="button" onClick={()=>void navigator.clipboard.writeText(guestInviteCode).catch(()=>setCallError('Salin kode undangan dari kolom di atas.'))}>Salin kode</button><button className="text-button" type="button" onClick={()=>setGuestInviteCode('')}>Tutup</button></div>}
@@ -939,7 +944,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView

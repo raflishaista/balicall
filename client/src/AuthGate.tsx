@@ -6,8 +6,9 @@ import { setAccountScope } from './accountScope';
 import devices from './assets/login/balicall-connected-devices.png';
 import logo from './assets/login/balitower-balicall-logo-white.png';
 import './Login.css';
+import { disablePush } from './pushNotifications';
 
-export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string }
+export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
 export function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);
@@ -36,11 +37,11 @@ export function AuthGate() {
   const logout = async () => {
     if(logoutPending)return;
     setLogoutPending(true);setError(null);
-    try { await apiRequest('/auth/logout', {method:'POST'}); accept({enabled:true,user:null}); }
+    try { if(session?.user&&!session.user.isGuest)await disablePush(); await apiRequest('/auth/logout', {method:'POST'}); accept({enabled:true,user:null}); }
     catch(err) {setError(err instanceof Error?err.message:'Gagal keluar. Coba lagi.');}
     finally {setLogoutPending(false);}
   };
-  if (!checking && session && (!session.enabled || session.user)) return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user} onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
+  if (!checking && session && (!session.enabled || session.user)) return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user} onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)} onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
   return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking} onRetry={async () => { setChecking(true); await check(); }} onAuthenticated={accept} />;
 }
 function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
