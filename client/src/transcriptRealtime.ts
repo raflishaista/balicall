@@ -1,6 +1,7 @@
 import { ConnectionState, RoomEvent } from 'livekit-client';
 import type { Room, RemoteParticipant } from 'livekit-client';
 import type { TranscriptEntry } from './summaryHistory';
+import {featureError} from './api.ts';
 
 export const TRANSCRIPT_TOPIC = 'balicall.transcript.saved.v1';
 const encoder = new TextEncoder();
@@ -38,8 +39,8 @@ export function createTranscriptRealtime(room: Room, meetingId: string, options:
     try {
       const entries = await options.fetchEntries(abort.signal);
       if (!disposed) { options.onEntries(entries); options.onError(null); }
-    } catch {
-      if (!disposed) options.onError('Transkrip belum tersinkron. Periksa koneksi layanan.');
+    } catch (error) {
+      if (!disposed) options.onError(featureError('Sinkronisasi transkrip',error));
     } finally {
       running = false;
       if (dirty && !disposed) requestSync();

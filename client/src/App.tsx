@@ -1,6 +1,6 @@
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
-import { apiRequest, meetingPath, API_BASE } from './api';
+import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
 import { UserAvatar } from './ProfileEditor';
 import { NotificationCenter } from './NotificationCenter';
@@ -794,7 +794,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         setIsRecording(data?.recording?.status === 'active');
       }
     } catch (error) {
-      if (generation === joinGeneration.current) setRecordingError(error instanceof Error ? error.message : `Gagal ${enabled ? 'memulai' : 'menghentikan'} rekaman.`);
+      if (generation === joinGeneration.current) setRecordingError(featureError(enabled?'Memulai rekaman':'Menghentikan rekaman',error));
     } finally {
       if (generation === joinGeneration.current) setRecordingPending(false);
     }
@@ -894,7 +894,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
-              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(error instanceof Error ? error.message : 'Tidak dapat membuat undangan tamu.'));
+              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(featureError('Membuat undangan tamu',error)));
           }}>Undang tamu</button>}
           {isGuest && <span className="service-status">Akses tamu</span>}
           {view === 'in-call' ? <div className="call-clock"><Clock size={15} />{callDuration}</div> : (
@@ -923,7 +923,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
       {(callError || syncError || transcriptSaveError || pendingSaves > 0) && <div className="app-alert" role="status" aria-live="polite" aria-busy={pendingSaves > 0}>
         {pendingSaves > 0 && <Loader2 className="ui-spinner" size={15} aria-hidden="true" />}
-        {callError || syncError || transcriptSaveError} {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
+        {callError && <span>{callError}</span>}
+        {syncError && <span>Sinkronisasi rapat: {syncError}</span>}
+        {transcriptSaveError && <span>Penyimpanan transkrip: {transcriptSaveError}</span>}
+        {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
       <main className="app-main">
@@ -974,7 +977,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         )}
 
         {view === 'in-call' && token && (
-          <InCallView
+          <InCallView callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
@@ -1072,7 +1075,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
   );
 }
 
-function InCallView({
+function InCallView({ callDuration,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
@@ -1116,7 +1119,7 @@ function InCallView({
     >
       <RoomAudioRenderer />
       <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
-      <RoomContent
+      <RoomContent callDuration={callDuration}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
@@ -1141,7 +1144,7 @@ function InCallView({
   );
 }
 
-function RoomContent({
+function RoomContent({ callDuration,
   sttModels, defaultSttModel, onCreateLiveSession,
   startWithCamera, callPreferences, recordingPending, recordingError, isRecording, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
@@ -1242,11 +1245,11 @@ function RoomContent({
     finishRequest.current = true;
     setFinishing(true); setFinishError(null);
     try { await finishTranscription(); await onEndMeeting(generate); }
-    catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal menyelesaikan transkripsi'); }
+    catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
     finally { finishRequest.current = false; setFinishing(false); }
   };
 
-  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom
+  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom callDuration={callDuration}
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}

@@ -65,7 +65,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   const inFlightSummarize = new Map();
   const webhookLogs = [];
 
-  app.use(cors({ credentials: true, origin(origin, callback) {
+  app.use('/api', (req,res,next)=>{
+    req.requestId=randomUUID();
+    res.setHeader('X-Request-ID',req.requestId);
+    next();
+  });
+  app.use(cors({ credentials: true, exposedHeaders:['X-Request-ID'], origin(origin, callback) {
     if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
     try {
       const url = new URL(origin);
@@ -477,6 +482,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           fileType: 1,
         },
       },
+      // Empty layout skips the default template's screen-share focus switch.
+      // Explicit grid keeps camera tiles equal and promotes screen sharing.
+      { layout: 'grid' },
     );
 
     const recording = {
@@ -561,6 +569,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       await egressClient.stopEgress(recording.egressId);
     } catch (egressErr) {
       console.warn('[RECORDING] stopEgress note:', egressErr.message);
+      return res.status(502).json({
+        error: 'Belum dapat menghentikan rekaman. Coba lagi; rekaman mungkin masih berjalan.',
+        recording,
+      });
     }
 
     const stoppedAt = new Date().toISOString();
@@ -1122,10 +1134,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     app.get('*', (_req, res) => res.sendFile(join(config.clientDist, 'index.html')));
   }
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
     const status = error.status || (error.type === 'entity.too.large' ? 413 : 500);
-    if (status >= 500) console.error('API request failed:', error.message);
-    res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message });
+    if (status >= 500) console.error('API request failed:', {requestId:req.requestId,method:req.method,path:req.route?.path||req.path,status,message:error.message});
+    res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });
   });
 
   return { app, store, notificationTick:()=>notifications?.tick(), close(){attendanceFinalizer.close();notifications?.close();} };

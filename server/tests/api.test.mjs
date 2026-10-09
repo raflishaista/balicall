@@ -7,6 +7,44 @@ import { createApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { MeetingStore } from '../meetingStore.js';
 import { createHmac } from 'node:crypto';
+import { EgressClient } from 'livekit-server-sdk';
+
+test('recording explicitly selects grid so Egress automatically focuses screen sharing', async t => {
+  const calls=[];
+  t.mock.method(EgressClient.prototype,'startRoomCompositeEgress',async (...args)=>{calls.push(args);return {egressId:'EG-layout-test'};});
+  const f=await fixture(t);
+  const a=await f.joinRoom('recording-layout');
+  const response=await a.post('recording/start',{});
+  assert.equal(response.status,200);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0][2]?.layout,'grid');
+  assert.equal(calls[0][1].file.fileType,1);
+  assert.match(calls[0][1].file.filepath,/^\/out\/.+\.mp4$/);
+});
+
+test('unexpected API failure carries the same generated reference as its response header',async t=>{
+  t.mock.method(EgressClient.prototype,'startRoomCompositeEgress',async()=>{throw new Error('Fixture egress failure');});
+  const f=await fixture(t),a=await f.joinRoom('error-reference');
+  const response=await a.post('recording/start');
+  const data=response.data;
+  assert.equal(response.status,500);
+  assert.match(data.requestId,/^[a-f0-9-]{36}$/);
+  assert.equal(response.headers.get('X-Request-ID'),data.requestId);
+  assert.ok(!data.error.includes('Fixture egress'));
+});
+
+test('failed Egress stop keeps recording active and permits a later successful retry',async t=>{
+  t.mock.method(EgressClient.prototype,'startRoomCompositeEgress',async()=>({egressId:'EG-stop-test'}));
+  let attempts=0;
+  t.mock.method(EgressClient.prototype,'stopEgress',async()=>{if(++attempts===1)throw new Error('Egress unavailable');return {};});
+  const f=await fixture(t),a=await f.joinRoom('record-stop');
+  assert.equal((await a.post('recording/start')).status,200);
+  assert.equal((await a.post('recording/stop')).status,502);
+  assert.equal((await a.get('transcript')).data.recording.status,'active');
+  assert.equal((await a.post('recording/stop')).status,200);
+  assert.equal((await a.get('transcript')).data.recording.status,'stopped');
+  assert.equal((await a.post('recording/stop')).data.alreadyStopped,true);
+});
 
 test('WhisperLiveKit selection preserves existing models and requires an active meeting ticket', async t => {
   const secret = 'local-test-secret-with-at-least-32-characters';
@@ -48,7 +86,7 @@ async function fixture(t, overrides = {}, dependencies = {}) {
   });
   const request = async (path, body, token, method = 'POST', extra = {}) => {
     const response = await fetch(base + path, { method, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra.headers }, body: body === undefined ? undefined : JSON.stringify(body), ...extra });
-    return { status: response.status, data: await response.json() };
+    return { status: response.status, headers:response.headers, data: await response.json() };
   };
   const joinRoom = async (id = 'tester', roomName = 'regression-test') => {
     const response = await request('/token', { roomName, employeeId: id, employeeName: id, department: 'Test' });

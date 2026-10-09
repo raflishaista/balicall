@@ -26,8 +26,8 @@
 .meeting-layout .participant-strip .participant-avatar { width: 36px; height: 36px; font-size: 16px; }
 .meeting-layout .participant-strip .camera-placeholder { font-size: 8px; }
 .meeting-layout .participant-strip .participant-tile-footer { font-size: 9px; }
-.meeting-layout .screen-share-stage { flex: 1; height: auto; min-height: 0; margin: 0; }
-.meeting-layout .screen-share-content { min-height: 0; overflow: hidden; }
+.meeting-layout .screen-share-stage { flex: 1 1 0; height: auto; min-height: 0; margin: 0; }
+.meeting-layout .screen-share-content { flex: 1 1 0; min-height: 0; overflow: hidden; }
 .meeting-layout .screen-share-video { object-fit: contain; }
 .meeting-layout .screen-share-header { flex-shrink: 0; }
 .meeting-layout .call-bottom-note { flex: none; padding: 10px 20px; }
@@ -51,6 +51,28 @@
 .meeting-more-menu[hidden] { display: none; }
 .meeting-more-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; min-height: 44px; text-align: left; color: #e2edf5; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 12px; }
 .meeting-more-menu button:hover { background: #214a68; }
+.meeting-layout .presentation-layout { flex: 1 1 0; }
+.meeting-layout .has-screen-share { overflow: hidden; }
+.meeting-layout .screen-share-header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; }
+.presentation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.presentation-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border: 1px solid #345874; border-radius: 7px; padding: 6px 10px; color: #e5f2ff; background: #12344e; font-size: 12px; cursor: pointer; }
+.presentation-actions button[aria-pressed="true"] { background: #18558c; border-color: #439cff; }
+.presentation-actions button:disabled { opacity: .5; cursor: default; }
+.presentation-actions button:focus-visible { outline: 2px solid #74c4ff; outline-offset: 2px; }
+.presentation-fit { padding: 4px 7px; font-size: 11px; color: #b2c9dc; }
+.presentation-clock { color: #b2c9dc; font-size: 11px; margin-left: auto; padding: 0 10px; white-space: nowrap; }
+.presentation-focused .meeting-view-toggle,.presentation-focused .call-bottom-note { display: none; }
+.in-call-layout:has(.presentation-focused) .app-header { display: none; }
+.meeting-layout:fullscreen { width: 100vw; height: 100dvh; background: #0b2233; }
+.meeting-layout .call-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.meeting-layout .call-error > span { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.meeting-layout .call-error button { border: 1px solid #718da7; border-radius: 5px; background: transparent; color: inherit; padding: 6px 10px; min-height: 36px; cursor: pointer; }
+@media (max-height: 500px) and (min-width: 581px) {
+  .presentation-focused .call-info-bar { padding: 6px 12px; }
+  .presentation-focused .meeting-view-bar { padding: 0 12px 6px; }
+  .presentation-focused .call-error { padding: 6px 12px; font-size: 10px; }
+  .presentation-focused .screen-share-header { padding: 4px 8px; }
+}
 @media (max-width: 1024px) {
   .meeting-layout.call-room { height: 100%; flex: 1; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; }
   .meeting-layout .call-stage { min-height: 0; overflow: auto; }
@@ -61,6 +83,9 @@
   .meeting-layout .call-side-panel { grid-column: auto; grid-row: auto; }
 }
 @media (max-width: 580px) {
+  .presentation-actions { width: 100%; margin-left: 0; gap: 4px; }
+  .presentation-actions button { flex: 1; padding: 5px; font-size: 10px; }
+  .presentation-fit { display: none; }
   .meeting-layout .call-info-bar { padding: 8px 12px; }
   .meeting-view-bar { padding: 0 12px 8px; gap: 6px; }
   .meeting-state-chips { font-size: 9px; gap: 4px; }
