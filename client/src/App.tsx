@@ -103,10 +103,26 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const setSchedules = scheduleFeed.update;
   
   // Lobby state
-  const [employeeId, setEmployeeId] = useState(authUser?.employeeId || '');
-  const [employeeName, setEmployeeName] = useState(authUser?.name || '');
-  const [department, setDepartment] = useState(authUser?.department || '');
-  const [roomName, setRoomName] = useState('');
+  const DEV_EMPLOYEE = {
+    employeeId: 'BT-10492',
+    name: 'Rafli Aditya',
+    email: 'rafli.aditya@balitower.co.id',
+    department: 'NOC & Core Network',
+    position: 'Network Operations Engineer',
+  };
+
+  const [employeeId, setEmployeeId] = useState(
+    authUser?.employeeId || (import.meta.env.DEV ? DEV_EMPLOYEE.employeeId : '')
+  );
+  const [employeeName, setEmployeeName] = useState(
+    authUser?.name || (import.meta.env.DEV ? DEV_EMPLOYEE.name : '')
+  );
+  const [department, setDepartment] = useState(
+    authUser?.department || (import.meta.env.DEV ? DEV_EMPLOYEE.department : '')
+  );
+  const [roomName, setRoomName] = useState(
+    import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : ''
+  );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [personas, setPersonas] = useState(PRESET_PERSONAS);
