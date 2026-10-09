@@ -6,7 +6,7 @@ import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
-import { mediaChoices } from './preferences';
+import { mediaChoices, resolveTranscriptionPreferences } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
@@ -517,7 +517,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       setIsSummarizing(false);
       setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
-      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
+      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
@@ -865,7 +865,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -1090,8 +1090,9 @@ function RoomContent({
   }, [connected]);
   const volume = useTrackVolume(microphoneTrack ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone } : undefined);
   const micVolume = isMuted ? 0 : Math.min(100, Math.round(volume * 100));
-  const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>('id-ID');
-  const [selectedSttModel, setSelectedSttModel] = useState<string | null>(null);
+  const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>(() => callPreferences.speechLanguage);
+  const [selectedSttModel, setSelectedSttModel] = useState<string | null>(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).model || null);
+  const [transcriptionNotice, setTranscriptionNotice] = useState(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).notice);
   const [modelPending, setModelPending] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const sttModel = selectedSttModel || defaultSttModel;
@@ -1110,6 +1111,7 @@ function RoomContent({
     try {
       await serverSpeech.prepareTrackChange();
       setSelectedSttModel(model);
+      setTranscriptionNotice(null);
     } catch (error) {
       setModelError(error instanceof Error ? error.message : 'Gagal mengganti model transkripsi.');
     } finally {
@@ -1124,6 +1126,7 @@ function RoomContent({
     try {
       if (sttProvider === 'server') await prepareTrackChange();
       apply();
+      setTranscriptionNotice(null);
     } catch (error) {
       setModelError(error instanceof Error ? error.message : 'Gagal mengganti pengaturan transkripsi.');
     } finally {
@@ -1148,7 +1151,7 @@ function RoomContent({
     finally { finishRequest.current = false; setFinishing(false); }
   };
 
-  return <><MeetingRoom
+  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}

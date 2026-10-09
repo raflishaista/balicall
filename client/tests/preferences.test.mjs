@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PREFERENCES, PREFERENCES_KEY, normalizePreferences, readPreferences, writePreferences, mediaChoices } from '../src/preferences.ts';
+import { DEFAULT_PREFERENCES, PREFERENCES_KEY, normalizePreferences, readPreferences, writePreferences, mediaChoices, resolveTranscriptionPreferences } from '../src/preferences.ts';
 
 test('preferences round-trip restores media and display choices without identity data', () => {
   let raw;
@@ -25,4 +25,40 @@ test('corrupt, unsupported and inaccessible storage return defaults with a notic
 });
 test('failed storage write throws instead of reporting success', () => {
   assert.throws(() => writePreferences({ setItem: () => { throw new Error('quota'); } }, DEFAULT_PREFERENCES), /quota/);
+});
+
+test('older saved preferences gain AI defaults without losing existing device choices', () => {
+  const saved = readPreferences({ getItem: () => JSON.stringify({ version: 1, preferences: { microphoneId: 'office-mic', cameraEnabled: false } }) });
+  assert.equal(saved.notice, null);
+  assert.equal(saved.preferences.microphoneId, 'office-mic');
+  assert.equal(saved.preferences.cameraEnabled, false);
+  assert.equal(saved.preferences.speechLanguage, 'id-ID');
+  assert.equal(saved.preferences.transcriptionProvider, 'auto');
+  assert.equal(saved.preferences.transcriptionModel, '');
+});
+
+test('AI choices survive storage round-trip and invalid inputs are rejected', () => {
+  let raw;
+  const storage = { getItem: () => raw, setItem: (_, value) => { raw = value; } };
+  const choices = { ...DEFAULT_PREFERENCES, speechLanguage: 'en-US', transcriptionProvider: 'server', transcriptionModel: 'whisperlivekit-small' };
+  writePreferences(storage, choices);
+  assert.deepEqual(readPreferences(storage).preferences, choices);
+  assert.deepEqual(normalizePreferences({ speechLanguage: 'xx', transcriptionProvider: 'other', transcriptionModel: '../unsafe' }), DEFAULT_PREFERENCES);
+});
+
+test('AI defaults respect explicit Browser, automatic provider, and advertised models', () => {
+  const models = ['small', 'small-id', 'whisperlivekit-small'];
+  const preferences = { ...DEFAULT_PREFERENCES, transcriptionProvider: 'server', transcriptionModel: 'small-id' };
+  assert.deepEqual(resolveTranscriptionPreferences(preferences, true, models, 'small', 'browser'), { provider: 'server', model: 'small-id', notice: null });
+  assert.equal(resolveTranscriptionPreferences({ ...preferences, transcriptionProvider: 'browser' }, true, models, 'small', 'server').provider, 'browser');
+  assert.equal(resolveTranscriptionPreferences(DEFAULT_PREFERENCES, true, models, 'small', 'server').provider, 'server');
+  assert.equal(resolveTranscriptionPreferences(DEFAULT_PREFERENCES, true, models, 'small', 'browser').provider, 'browser');
+});
+
+test('unavailable services and models fall back with a notice instead of requesting unsupported models', () => {
+  const preferences = { ...DEFAULT_PREFERENCES, transcriptionProvider: 'server', transcriptionModel: 'removed-model' };
+  const offline = resolveTranscriptionPreferences(preferences, false, [], '', 'server');
+  assert.equal(offline.provider, 'browser'); assert.ok(offline.notice);
+  const removed = resolveTranscriptionPreferences(preferences, true, ['small'], 'missing-default', 'server');
+  assert.equal(removed.model, 'small'); assert.ok(removed.notice);
 });
