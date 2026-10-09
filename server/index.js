@@ -6,9 +6,9 @@ import { initDb } from './db.js';
 
 dotenv.config({ path: fileURLToPath(new URL('./.env', import.meta.url)) });
 const config = loadConfig();
-const { app } = createApp(config);
+const { app, close } = createApp(config);
 
-app.listen(config.port, async () => {
+const server = app.listen(config.port, async () => {
   console.log(`====================================================`);
   console.log(`🚀 BaliCall API: http://localhost:${config.port}`);
   console.log(`📡 LiveKit configured: ${config.livekitUrl} (checked by /api/health)`);
@@ -23,3 +23,5 @@ app.listen(config.port, async () => {
   }
   console.log(`====================================================`);
 });
+
+server.on('close', close);

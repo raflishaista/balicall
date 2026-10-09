@@ -316,19 +316,21 @@ export async function saveAttendees(meetingId, attendees) {
     INSERT INTO balicall_attendees (meeting_id, employee_id, employee_name, department, joined_at, left_at)
     VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (meeting_id, employee_id) DO UPDATE SET
+      joined_at = EXCLUDED.joined_at,
       left_at = EXCLUDED.left_at,
       department = COALESCE(EXCLUDED.department, balicall_attendees.department);
   `;
 
   try {
     for (const att of attendees) {
+      if (!att.livekitJoinedAt && !att.joinedAt) continue;
       await activePool.query(query, [
         meetingId,
         att.employeeId || att.id,
         att.employeeName || att.name || 'Anonymous',
         att.department || 'General',
-        att.joinedAt || new Date().toISOString(),
-        att.leftAt || null,
+        att.livekitJoinedAt || att.joinedAt,
+        att.livekitLeftAt || att.leftAt || null,
       ]);
     }
     return true;

@@ -33,11 +33,13 @@ export function loadConfig(env = process.env) {
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
+    attendanceGraceMs: Number(env.ATTENDANCE_FINALIZE_GRACE_MS ?? 10000),
     verifyEmployeeId: env.VERIFY_EMPLOYEE_ID !== undefined
       ? env.VERIFY_EMPLOYEE_ID !== 'false'
       : Boolean(env.DATABASE_URL),
   };
   if (env.NODE_ENV === 'production' && config.authEnabled && !config.authCookieSecure) throw new Error('Production login requires secure cookies over HTTPS.');
+  if (!Number.isInteger(config.attendanceGraceMs) || config.attendanceGraceMs < 0 || config.attendanceGraceMs > 30000) throw new Error('ATTENDANCE_FINALIZE_GRACE_MS must be 0–30000 milliseconds');
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);

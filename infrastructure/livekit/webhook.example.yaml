@@ -1,0 +1,9 @@
+# Merge this block into the LiveKit server configuration, then restart LiveKit.
+# api_key must name an existing entry under keys, matching backend LIVEKIT_API_KEY.
+# Use a URL reachable FROM LiveKit (127.0.0.1 works only for native same-host services).
+# For Docker, replace the host with the backend's reachable service name or LAN address.
+# Backend LIVEKIT_API_SECRET must match that key's secret; do not put secrets here.
+webhook:
+  api_key: devkey
+  urls:
+    - http://127.0.0.1:3001/api/livekit/webhook

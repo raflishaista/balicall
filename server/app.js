@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { randomUUID, createHmac } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
+import { createAttendanceFinalizer } from './attendanceFinalizer.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
 import {
   isDbConnected,
@@ -72,6 +73,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
   app.use(express.json({
     limit: '256kb',
+    type: ['application/json', 'application/webhook+json'],
     verify: (req, _res, buf) => {
       req.rawBody = buf ? buf.toString('utf8') : '';
     },
@@ -379,7 +381,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
 
   function writable(req, res) {
     const meeting = store.get(req.meetingId);
-    if (meeting.status !== 'active' || meeting.participants.get(req.speakerId).leftAt) {
+    if (meeting.status !== 'active' || meeting.closingForUploads || meeting.participants.get(req.speakerId).leftAt) {
       res.status(409).json({ error: 'You have left this meeting. Start or join another session to add speech.' });
       return false;
     }
@@ -401,7 +403,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const meeting = store.get(req.meetingId);
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
       isSummarizing: inFlightSummarize.has(meeting.id),
-      transcripts: meeting.transcripts, participants: [...meeting.participants.values()], summary: meeting.summary });
+      transcripts: meeting.transcripts, participants: [...meeting.participants.values()], summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
   });
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
@@ -565,21 +567,16 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     try { res.json(await work); } finally { if (inFlightAudio.get(key) === work) inFlightAudio.delete(key); }
   }));
 
-  app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
-    const meeting = store.get(req.meetingId);
-    if (!meeting.transcripts.length) return res.status(400).json({ error: 'No saved speech to summarize. Speak or add text first.' });
-
-    if (meeting.summary && meeting.summary.transcriptCount === meeting.transcripts.length) {
-      return res.json({ success: true, summary: meeting.summary, meetingStatus: meeting.status });
-    }
-
-    if (!inFlightSummarize.has(req.meetingId)) {
+  async function summarizeMeeting(id) {
+    const meeting = store.get(id);
+    if (meeting.summary && meeting.summary.transcriptCount === meeting.transcripts.length) return meeting.summary;
+    if (!inFlightSummarize.has(id)) {
       const task = (async () => {
         const snapshot = structuredClone(meeting);
         const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
-        const current = store.get(req.meetingId);
+        const current = store.get(id);
         if (current && current.transcripts.length === snapshot.transcripts.length) {
-          store.transact(() => { store.get(req.meetingId).summary = summary; });
+          store.transact(() => { store.get(id).summary = summary; });
         }
 
         // Persist to PostgreSQL database
@@ -608,19 +605,34 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
 
         return summary;
       })();
-      inFlightSummarize.set(req.meetingId, task);
+      inFlightSummarize.set(id, task);
     }
 
-    const task = inFlightSummarize.get(req.meetingId);
-    try {
-      const summary = await task;
-      const current = store.get(req.meetingId);
-      res.json({ success: true, summary, meetingStatus: current ? current.status : 'ended' });
-    } finally {
-      if (inFlightSummarize.get(req.meetingId) === task) {
-        inFlightSummarize.delete(req.meetingId);
-      }
-    }
+    const task = inFlightSummarize.get(id);
+    try { return await task; }
+    finally { if (inFlightSummarize.get(id) === task) inFlightSummarize.delete(id); }
+  }
+
+  const attendanceFinalizer = createAttendanceFinalizer({
+    store,
+    pendingAudio: id => [...inFlightAudio].filter(([key]) => key.startsWith(`${id}:`)).map(([, work]) => work),
+    persist: async meeting => {
+      await saveMeeting(meeting);
+      await saveAttendees(meeting.id, [...meeting.participants.values()]);
+      if (meeting.transcripts.length) await saveTranscripts(meeting.id, meeting.roomName, meeting.transcripts);
+    },
+    summarize: summarizeMeeting,
+  });
+
+  app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (!meeting.transcripts.length) return res.status(400).json({ error: 'No saved speech to summarize. Speak or add text first.' });
+    const summary = await summarizeMeeting(req.meetingId);
+    if (store.get(req.meetingId).attendanceFinalization?.status === 'failed') store.transact(() => {
+      const final = store.get(req.meetingId).attendanceFinalization;
+      final.status = 'complete'; final.error = null;
+    });
+    res.json({ success: true, summary, meetingStatus: store.get(req.meetingId).status });
   }));
 
   // Persisted summaries and details from PostgreSQL + in-memory store
@@ -1011,16 +1023,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const rawBody = req.rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
     const authHeader = req.headers['authorization'] || req.headers['authorize'];
     let event;
-    const isDev = process.env.NODE_ENV !== 'production';
 
     try {
       event = await webhookReceiver.receive(rawBody, authHeader);
     } catch (verifyErr) {
-      if (isDev && req.body?.event) {
-        event = req.body;
-      } else {
-        return res.status(401).json({ error: 'Unauthorized webhook signature', details: verifyErr.message });
-      }
+      return res.status(401).json({ error: 'Unauthorized webhook signature' });
     }
 
     const logItem = {
@@ -1034,7 +1041,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     webhookLogs.unshift(logItem);
     if (webhookLogs.length > 50) webhookLogs.pop();
 
-    res.json({ success: true, event: event.event });
+    const applied = store.applyLivekitEvent(event, config.attendanceGraceMs ?? 10000);
+    if (applied.meetingId && !applied.duplicate) {
+      const meeting = store.get(applied.meetingId);
+      await saveMeeting(meeting);
+      await saveAttendees(meeting.id, [...meeting.participants.values()]);
+    }
+    if (applied.finalize || applied.duplicate) attendanceFinalizer.enqueue(applied.meetingId);
+    res.json({ success: true, event: event.event, ...applied });
   }));
 
   app.get('/api/livekit/webhooks', (_req, res) => {
@@ -1076,5 +1090,5 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message });
   });
 
-  return { app, store };
+  return { app, store, close: attendanceFinalizer.close };
 }
