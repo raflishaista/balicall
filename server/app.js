@@ -4,10 +4,11 @@ import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID, createHmac } from 'node:crypto';
+import { randomUUID, randomBytes, createHmac } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
 import { createAttendanceFinalizer } from './attendanceFinalizer.js';
+import { createGuestAccess } from './guestAccess.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
 import {
   isDbConnected,
@@ -28,6 +29,7 @@ import {
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const requestIdValid = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const publicParticipant = ({ guestSessionHash, guestSessionExpiresAt, ...person }) => person;
 
 const asArray = value => {
   if (Array.isArray(value)) return value;
@@ -79,7 +81,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     },
   }));
 
-  attachAuth(app, config, authStore);
+  attachAuth(app, config, authStore, createGuestAccess(store));
 
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
@@ -142,9 +144,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     }
 
     const cleanId = employeeId.trim();
+    const guestMeeting = req.auth?.user.isGuest ? store.get(req.auth.user.guestMeetingId) : null;
+    if (req.auth?.user.isGuest && (!guestMeeting || guestMeeting.status !== 'active' || guestMeeting.attendanceFinalization || guestMeeting.closingForUploads || roomName.trim() !== guestMeeting.roomName)) return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
 
     // Verify employee ID format and database registration
-    if (config.verifyEmployeeId) {
+    if (config.verifyEmployeeId && !req.auth?.user.isGuest) {
       const empCheck = await verifyEmployeeId(cleanId);
       if (!empCheck.valid) {
         if (empCheck.formatError) {
@@ -177,17 +181,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
 
     const active = [...store.meetings.values()].find(meeting => meeting.roomName === roomName.trim() && meeting.status === 'active');
     const duplicate = active?.participants.get(cleanId);
-    if (duplicate && !duplicate.leftAt && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
+    if (duplicate && !duplicate.leftAt && (!req.auth?.user.isGuest || duplicate.guestTokenIssued) && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
     }
-    const meeting = store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
+    const meeting = guestMeeting || store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
+    if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
     
     // Asynchronously record meeting in PostgreSQL if configured
     saveMeeting({ id: meeting.id, roomName: meeting.roomName, status: 'active', createdAt: meeting.createdAt }).catch(() => {});
 
     const at = new AccessToken(config.livekitKey, config.livekitSecret, {
       identity: cleanId, name: employeeName.trim(), ttl: '12h',
-      metadata: JSON.stringify({ meetingId: meeting.id, department: department.trim(), employeeId: cleanId }) });
+      metadata: JSON.stringify({ meetingId: meeting.id, department: department.trim(), employeeId: cleanId, isGuest: Boolean(req.auth?.user.isGuest) }) });
     at.addGrant({ room: meeting.livekitRoom, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
     res.json({ token: await at.toJwt(), url: config.livekitUrl, roomName: meeting.roomName, meetingId: meeting.id, sttProvider: config.sttProvider });
   }));
@@ -388,6 +393,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     return true;
   }
 
+  app.post('/api/meetings/:id/guest-invite', (req, res) => {
+    if (!config.authEnabled) return res.status(409).json({ error: 'Aktifkan login sebelum mengundang tamu.' });
+    if (!writable(req, res)) return;
+    const meeting = store.get(req.meetingId);
+    // This endpoint is excluded from guest authorization above.
+    store.transact(() => { meeting.guestInviteCode ||= randomBytes(16).toString('base64url'); });
+    res.json({ inviteCode: meeting.guestInviteCode });
+  });
+
   app.post('/api/meetings/:id/live-session', (req, res) => {
     if (!writable(req, res)) return;
     if (!config.liveSttSecret || !config.liveSttUrl) return res.status(503).json({ error: 'WhisperLiveKit belum dikonfigurasi.' });
@@ -403,7 +417,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const meeting = store.get(req.meetingId);
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
       isSummarizing: inFlightSummarize.has(meeting.id),
-      transcripts: meeting.transcripts, participants: [...meeting.participants.values()], summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
+      transcripts: meeting.transcripts, participants: [...meeting.participants.values()].map(publicParticipant), summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
   });
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
@@ -418,7 +432,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   app.post('/api/meetings/:id/presence', (req, res) => {
     if (typeof req.body?.connected !== 'boolean') return res.status(400).json({ error: 'connected must be boolean' });
     if (!writable(req, res)) return;
-    res.json({ participant: store.presence(req.meetingId, req.speakerId, req.body.connected) });
+    res.json({ participant: publicParticipant(store.presence(req.meetingId, req.speakerId, req.body.connected)) });
   });
 
   app.post('/api/meetings/:id/recording/start', asyncRoute(async (req, res) => {
@@ -598,7 +612,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
             roomName: snapshot.roomName,
             summary,
             transcriptsCount: snapshot.transcripts.length,
-            attendees: [...snapshot.participants.values()],
+            attendees: [...snapshot.participants.values()].map(publicParticipant),
             timestamp: new Date().toISOString(),
           });
         }
@@ -649,7 +663,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
             roomName: meeting.roomName,
             status: 'summarizing',
             transcriptCount: meeting.transcripts.length,
-            participants: [...meeting.participants.values()],
+            participants: [...meeting.participants.values()].map(publicParticipant),
             createdAt: meeting.createdAt,
           });
         }
@@ -681,7 +695,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
           },
           summary: storeMeeting.summary,
           transcripts: storeMeeting.transcripts,
-          attendees: [...storeMeeting.participants.values()],
+          attendees: [...storeMeeting.participants.values()].map(publicParticipant),
         });
       }
       return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });

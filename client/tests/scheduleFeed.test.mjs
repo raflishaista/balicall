@@ -5,6 +5,19 @@ import { act, create } from 'react-test-renderer';
 import { useScheduleFeed } from '../src/useScheduleFeed.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+test('guest mode disables schedule requests, timers and manual refresh', async () => {
+  const originals = { window: globalThis.window, document: globalThis.document, fetch, setInterval };
+  globalThis.window = new EventTarget(); globalThis.document = new EventTarget();
+  let root, current, calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error('Guest must not fetch company schedules'); };
+  globalThis.setInterval = () => { calls++; throw new Error('Guest must not poll company schedules'); };
+  function Harness() { const feed = useScheduleFeed(false); React.useEffect(() => { current = feed; }); return null; }
+  try {
+    await act(async () => { root = create(React.createElement(Harness)); });
+    await act(async () => { await current.refresh(); window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+    assert.equal(calls, 0); assert.deepEqual(current.schedules, []);
+  } finally { if (root) act(() => root.unmount()); Object.assign(globalThis, originals); }
+});
 test('schedule feed refreshes on focus, suppresses failed data, ignores stale fetches after mutation and cleans up', async () => {
   const originals = { window: globalThis.window, document: globalThis.document, fetch, setInterval, clearInterval };
   globalThis.window = new EventTarget(); globalThis.document = new EventTarget();

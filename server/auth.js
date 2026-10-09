@@ -34,8 +34,8 @@ export async function verifyPassword(password, encoded) {
 }
 const wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
 const emailOf=body=>typeof body?.email==='string'?body.email.trim().toLowerCase().slice(0,254):'';
-function cookieToken(req) {
-  const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(COOKIE+'='))?.slice(COOKIE.length+1);
+function cookieToken(req, name = COOKIE) {
+  const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='))?.slice(name.length+1);
   return typeof value==='string' && /^[A-Za-z0-9_-]{43}$/.test(value)?value:null;
 }
 const csrfFor=token=>hashToken('balicall-csrf:'+token);
@@ -43,11 +43,13 @@ function csrfValid(req,token) {
   const supplied=req.get('X-CSRF-Token')||'', expected=csrfFor(token);
   return /^[a-f0-9]{64}$/.test(supplied) && timingSafeEqual(Buffer.from(supplied),Buffer.from(expected));
 }
-export function attachAuth(app,config,injectedStore) {
+export function attachAuth(app,config,injectedStore,guestAccess) {
   const store=injectedStore||new PgAuthStore();
   const enabled=config.authEnabled;
   const cookieOptions={httpOnly:true,sameSite:'lax',secure:config.authCookieSecure,path:'/',maxAge:8*3600000};
   const clearOptions={httpOnly:true,sameSite:'lax',secure:config.authCookieSecure,path:'/'};
+  const guestCookie='balicall_guest';
+  const guestLimits=new Map();
   const originAllowed=req=>{
     const origin=req.get('Origin');
     if(!origin) return req.get('Sec-Fetch-Site')!=='cross-site';
@@ -59,7 +61,8 @@ export function attachAuth(app,config,injectedStore) {
     if(!enabled) return res.json({enabled:false,user:null});
     const token=cookieToken(req),user=token?await store.session(hashToken(token)):null;
     if(token&&!user) res.clearCookie(COOKIE,clearOptions);
-    res.json({enabled:true,user,csrfToken:user?csrfFor(token):null});
+    const guestToken=cookieToken(req,guestCookie), guest=!user?guestAccess?.session(guestToken):null;
+    res.json({enabled:true,user:user||guest||null,csrfToken:user?csrfFor(token):guest?csrfFor(guestToken):null});
   }));
   async function limit(req,res,kind,email) {
     const ip=req.socket.remoteAddress||'unknown';
@@ -84,7 +87,25 @@ export function attachAuth(app,config,injectedStore) {
     if(previous)await store.revoke(hashToken(previous));
     const token=randomBytes(32).toString('base64url');
     await store.createSession(hashToken(token),account.employee_id,8);
+    const guestToken=cookieToken(req,guestCookie);
+    if(guestToken){guestAccess?.revoke(guestToken);res.clearCookie(guestCookie,clearOptions);}
     res.cookie(COOKIE,token,cookieOptions).json({enabled:true,user:publicUser(account),csrfToken:csrfFor(token)});
+  }));
+  router.post('/guest',wrap(async(req,res)=>{
+    if(!guestAccess)return res.status(503).json({error:'Akses tamu belum tersedia.'});
+    // Bounded per-process admission limit; random invitation codes are never enumerable.
+    const now=Date.now();
+    for(const [key,value] of guestLimits)if(value.until<=now)guestLimits.delete(key);
+    const ip=req.socket.remoteAddress||'unknown';
+    const bucket=guestLimits.get(ip)||{count:0,until:now+15*60000};
+    if((guestLimits.size>=1000&&!guestLimits.has(ip))||++bucket.count>30)return res.set('Retry-After','900').status(429).json({error:'Terlalu banyak percobaan. Coba lagi nanti.'});
+    guestLimits.set(ip,bucket);
+    const employeeToken=cookieToken(req);
+    if(employeeToken&&await store.session(hashToken(employeeToken)))return res.status(409).json({error:'Keluar dari akun karyawan sebelum masuk sebagai tamu.'});
+    const joined=guestAccess.join(req.body);
+    const previous=cookieToken(req,guestCookie);if(previous)guestAccess.revoke(previous);
+    res.clearCookie(COOKIE,clearOptions);
+    res.cookie(guestCookie,joined.token,cookieOptions).json({enabled:true,user:joined.user,csrfToken:csrfFor(joined.token)});
   }));
   router.post('/activate',wrap(async(req,res)=>{
     const email=emailOf(req.body),code=req.body?.activationCode,password=req.body?.password;
@@ -97,8 +118,12 @@ export function attachAuth(app,config,injectedStore) {
   }));
   router.post('/logout',wrap(async(req,res)=>{
     const token=cookieToken(req);
+    const guestToken=cookieToken(req,guestCookie);
+    if(guestToken&&!csrfValid(req,guestToken))return res.status(403).json({error:'Permintaan tidak valid. Muat ulang halaman.'});
     if(token&&!csrfValid(req,token))return res.status(403).json({error:'Permintaan tidak valid. Muat ulang halaman.'});
     if(token)await store.revoke(hashToken(token));
+    if(guestToken)guestAccess?.revoke(guestToken);
+    res.clearCookie(guestCookie,clearOptions);
     res.clearCookie(COOKIE,clearOptions).json({success:true});
   }));
   app.use('/api/auth',router);
@@ -106,8 +131,16 @@ export function attachAuth(app,config,injectedStore) {
     if(!enabled)return next();
     if(req.path==='/health'||(req.path==='/livekit/webhook'&&req.method==='POST'))return next();
     res.set('Cache-Control','no-store');
-    const token=cookieToken(req),user=token?await store.session(hashToken(token)):null;
+    const employeeToken=cookieToken(req),employee=employeeToken?await store.session(hashToken(employeeToken)):null;
+    const guestToken=cookieToken(req,guestCookie),guest=!employee?guestAccess?.session(guestToken):null;
+    const token=employee?employeeToken:guestToken,user=employee||guest;
     if(!user)return res.status(401).json({error:'Silakan masuk untuk melanjutkan.',code:'AUTH_REQUIRED'});
+    if(guest) {
+      const endpoint=req.path.match(/^\/meetings\/([^/]+)\/(transcript|presence|leave|audio|live-session)$/);
+      const allowed=(req.method==='POST'&&req.path==='/token')||(endpoint&&endpoint[1]===guest.guestMeetingId&&
+        (req.method==='POST'||(req.method==='GET'&&endpoint[2]==='transcript')));
+      if(!allowed)return res.status(403).json({error:'Akses tamu hanya untuk rapat yang diundang.'});
+    }
     if(!['GET','HEAD','OPTIONS'].includes(req.method)&&(!originAllowed(req)||!csrfValid(req,token)))return res.status(403).json({error:'Permintaan tidak valid. Muat ulang halaman.',code:'CSRF_INVALID'});
     req.auth={user};
     next();

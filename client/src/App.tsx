@@ -71,6 +71,8 @@ const PRESET_PERSONAS = [
 ];
 
 export default function App({ authUser = null, onLogout, logoutPending = false }: { authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
+  const isGuest = Boolean(authUser?.isGuest);
+  const [guestInviteCode, setGuestInviteCode] = useState('');
   const [summaryStorage] = useState(() => scopedSummaryStorage(authUser?.employeeId || null));
   const { readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor,
     readInProgressSummaries, saveInProgressSummary, removeInProgressSummary, readActiveView, saveActiveView } = summaryStorage;
@@ -94,13 +96,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(() => {
+    if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
     return 'home';
   });
-  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>('create');
+  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(isGuest ? 'join' : 'create');
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
-  const scheduleFeed = useScheduleFeed();
+  const scheduleFeed = useScheduleFeed(!isGuest);
   const schedules = scheduleFeed.schedules;
   const setSchedules = scheduleFeed.update;
   
@@ -123,7 +126,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     authUser?.department || (import.meta.env.DEV ? DEV_EMPLOYEE.department : '')
   );
   const [roomName, setRoomName] = useState(
-    import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : ''
+    authUser?.guestRoomName || (import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : '')
   );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -372,7 +375,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     void check();
 
     // Fetch authorized employee directory from backend / PostgreSQL
-    apiRequest<{ employees?: { employee_id: string; name: string; department: string }[] }>('/employees', {}, 5000)
+    if (!isGuest) apiRequest<{ employees?: { employee_id: string; name: string; department: string }[] }>('/employees', {}, 5000)
       .then(data => {
         if (!cancelled && data?.employees && data.employees.length > 0) {
           setPersonas(data.employees.map(e => ({
@@ -386,7 +389,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
 
     const timer = setInterval(() => void check(), 15000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, []);
+  }, [isGuest]);
 
   const fetchDbSummaries = useCallback(async () => {
     try {
@@ -415,8 +418,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   }, [saveSummaryHistory]);
 
   useEffect(() => {
-    void fetchDbSummaries();
-  }, [fetchDbSummaries]);
+    if (!isGuest) void fetchDbSummaries();
+  }, [fetchDbSummaries, isGuest]);
 
   useEffect(() => {
     if (view !== 'in-call' || !meetingStartTime) return;
@@ -497,7 +500,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     }
     // Format validation check (e.g. reject non-ID text such as "ns-12nsunauu")
     const cleanId = employeeId.trim();
-    if (!/^BT-\d{4,6}$/i.test(cleanId)) {
+    if (!isGuest && !/^BT-\d{4,6}$/i.test(cleanId)) {
       setJoinError('Format ID Salah.');
       return;
     }
@@ -523,6 +526,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       transcriptDelivery.beginMeeting(data.meetingId);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
+      setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
@@ -597,6 +601,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   };
 
   const handleEndMeeting = async (generate = true) => {
+    if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
     const currentMeetingId = meetingId;
@@ -615,7 +620,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       setMeetingId(null);
       setTranscripts([]);
       saveActiveView('home');
-      setView('home');
+      setView(isGuest ? 'lobby' : 'home');
       void (async () => {
         try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
         await apiRequest(meetingPath(currentMeetingId, 'leave'), {
@@ -827,7 +832,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
     preJoinMedia.applyChoices(mediaChoices(preferences));
-    setMeetingIntent(intent);
+    setMeetingIntent(isGuest ? 'join' : intent);
     setJoinError(null);
     setView('lobby');
   };
@@ -836,6 +841,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
       {view !== 'in-call' && (
         <WorkspaceSidebar
+          isGuest={isGuest}
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
@@ -876,6 +882,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         )}
 
         <div className="header-meta">
+          {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
+            void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
+              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(error instanceof Error ? error.message : 'Tidak dapat membuat undangan tamu.'));
+          }}>Undang tamu</button>}
+          {isGuest && <span className="service-status">Akses tamu</span>}
           {view === 'in-call' ? <div className="call-clock"><Clock size={15} />{callDuration}</div> : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div className={`service-status ${backendHealth ? 'is-online' : healthChecked ? 'is-offline' : 'is-checking'}`} role="status">
@@ -893,6 +904,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
           <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{initials(employeeName)}</span>
         </div>
       </header>
+      {view === 'in-call' && guestInviteCode && <div className="guest-invite-strip" role="status"><label>Kode undangan tamu <input readOnly value={guestInviteCode} onFocus={event=>event.currentTarget.select()} /></label><button className="button-secondary" type="button" onClick={()=>void navigator.clipboard.writeText(guestInviteCode).catch(()=>setCallError('Salin kode undangan dari kolom di atas.'))}>Salin kode</button><button className="text-button" type="button" onClick={()=>setGuestInviteCode('')}>Tutup</button></div>}
 
       <ScheduleReminders schedules={schedules} enabled={userPreferences.preferences.scheduleReminders}
         available={scheduleFeed.available} failed={scheduleFeed.error} suppressed={view === 'in-call'}
@@ -927,10 +939,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
+            isGuest={isGuest}
             intent={meetingIntent}
             onIntentChange={setMeetingIntent}
             employeeId={employeeId}

@@ -22,6 +22,7 @@
 .login-forgot{display:block;margin:-8px 0 32px auto;font-size:14px;text-decoration:none}
 .login-submit{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;border:0;border-radius:9px;background:#087bff;color:#fff;font:inherit;font-size:18px;padding:17px;cursor:pointer;box-shadow:0 6px 18px #087bff12}
 .login-submit:hover:not(:disabled){background:#0066e5}
+.login-guest-button{width:100%;margin-top:14px;padding:14px;border:1px solid #bdd6f4;border-radius:8px;background:#f1f7ff;color:#004b91;font:inherit;cursor:pointer}
 .login-page button:disabled,.login-page input:disabled{opacity:.6;cursor:not-allowed}
 .login-assistance{text-align:center;margin-top:26px;color:#61769d;font-size:14px}
 .login-admin-help,.login-help{font-size:12px;line-height:1.6;color:#61769d}

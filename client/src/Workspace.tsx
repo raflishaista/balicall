@@ -19,8 +19,8 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending }: {
-  onLogout?: () => Promise<void>; logoutPending?: boolean;
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending, isGuest = false }: {
+  onLogout?: () => Promise<void>; logoutPending?: boolean; isGuest?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
   onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void;
 }) {
@@ -28,15 +28,15 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
     <p className="sidebar-label">WORKSPACE</p>
     <nav className="sidebar-navigation" aria-label="Navigasi utama">
-      <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>
-      <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>
+      {!isGuest && <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>}
+      {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
-      <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>
-      <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'summary' ? 'page' : undefined} title="Lihat notulen & riwayat rapat" onClick={onSummary}>
+      {!isGuest && <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>}
+      {!isGuest && <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'summary' ? 'page' : undefined} title="Lihat notulen & riwayat rapat" onClick={onSummary}>
         <FileText size={19} />
         <span>Notulen rapat</span>
         {hasSummary && <span className="sidebar-has-summary-dot" title="Tersedia notulen tersimpan" />}
-      </button>
+      </button>}
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
     </nav>
     <div className="sidebar-bottom">
@@ -137,26 +137,26 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
   </div>;
 }
 
-export function LobbyView({ intent, onIntentChange, employeeId, setEmployeeId, employeeName, setEmployeeName, department, setDepartment, roomName, setRoomName, isJoining, joinError, onJoin, mediaPreview, personas, identityLocked = false }: {
+export function LobbyView({ intent, onIntentChange, employeeId, setEmployeeId, employeeName, setEmployeeName, department, setDepartment, roomName, setRoomName, isJoining, joinError, onJoin, mediaPreview, personas, identityLocked = false, isGuest = false }: {
   intent: 'create' | 'join'; onIntentChange: (intent: 'create' | 'join') => void;
   employeeId: string; setEmployeeId: (value: string) => void; employeeName: string; setEmployeeName: (value: string) => void;
   department: string; setDepartment: (value: string) => void; roomName: string; setRoomName: (value: string) => void;
   isJoining: boolean; joinError: string | null; onJoin: () => void; mediaPreview: ReactNode;
-  identityLocked?: boolean;
+  identityLocked?: boolean; isGuest?: boolean;
   personas: {id: string; name: string; dept: string}[];
 }) {
   return <div className="lobby-page"><div className="lobby-page-heading"><span className="page-kicker">LET'S CONNECT</span><h1>{intent === 'create' ? 'Mulai percakapan baru.' : 'Tim kamu sudah menunggu.'}</h1><p>Siapkan identitas, periksa kamera dan mikrofon, lalu masuk ke ruang rapat.</p></div>
     <div className="lobby-layout"><section className="lobby-preview"><div className="preview-photo" /><div className="preview-heading"><span className="preview-live-dot" /> SIAPKAN RUANG KOLABORASI</div>{mediaPreview}<div className="preview-footer"><Mic size={15} /><span>Gunakan headset untuk suara yang lebih jernih.</span></div></section>
-      <section className="lobby-card"><div className="lobby-switch" role="group" aria-label="Pilih aksi rapat"><button className={intent === 'create' ? 'selected' : ''} onClick={() => onIntentChange('create')}><Plus size={16} />Buat rapat</button><button className={intent === 'join' ? 'selected' : ''} onClick={() => onIntentChange('join')}><LogIn size={16} />Gabung rapat</button></div><h2>{intent === 'create' ? 'Buat ruang untuk timmu' : 'Gabung ke ruang rapat'}</h2><p className="lobby-intro">{intent === 'create' ? 'Peserta dapat bergabung menggunakan nama ruang yang sama.' : 'Masukkan nama ruang yang dibagikan penyelenggara.'}</p>
+      <section className="lobby-card">{!isGuest && <div className="lobby-switch" role="group" aria-label="Pilih aksi rapat"><button className={intent === 'create' ? 'selected' : ''} onClick={() => onIntentChange('create')}><Plus size={16} />Buat rapat</button><button className={intent === 'join' ? 'selected' : ''} onClick={() => onIntentChange('join')}><LogIn size={16} />Gabung rapat</button></div>}<h2>{intent === 'create' ? 'Buat ruang untuk timmu' : 'Gabung ke ruang rapat'}</h2><p className="lobby-intro">{intent === 'create' ? 'Peserta dapat bergabung menggunakan nama ruang yang sama.' : 'Masukkan nama ruang yang dibagikan penyelenggara.'}</p>
         <form onSubmit={event => { event.preventDefault(); onJoin(); }}>
-          <div className="form-grid"><label>NIK karyawan<input autoComplete="username" readOnly={identityLocked} value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Contoh: BT-10492" required /></label><label>Nama lengkap<input autoComplete="name" readOnly={identityLocked} value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Masukkan nama kamu" required /></label></div>
-          <label className="form-field">Departemen<select required disabled={identityLocked} value={department} onChange={event => setDepartment(event.target.value)}><option value="">Pilih departemen</option>{identityLocked && <option value={department}>{department}</option>}<option>NOC & Core Network</option><option>Field Transmission</option><option>Fiber Infrastructure</option><option>Project Management</option><option>IT Operations</option></select></label>
-          <label className="form-field">{intent === 'create' ? 'Nama ruang rapat' : 'Kode / nama ruang'}<input value={roomName} onChange={event => setRoomName(event.target.value)} placeholder={intent === 'create' ? 'Contoh: koordinasi-jaringan' : 'Masukkan nama ruang dari tim'} required /></label>
+          <div className="form-grid">{!isGuest && <label>NIK karyawan<input autoComplete="username" readOnly={identityLocked} value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Contoh: BT-10492" required /></label>}<label>Nama lengkap<input autoComplete="name" readOnly={identityLocked} value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Masukkan nama kamu" required /></label></div>
+          {!isGuest && <label className="form-field">Departemen<select required disabled={identityLocked} value={department} onChange={event => setDepartment(event.target.value)}><option value="">Pilih departemen</option>{identityLocked && <option value={department}>{department}</option>}<option>NOC & Core Network</option><option>Field Transmission</option><option>Fiber Infrastructure</option><option>Project Management</option><option>IT Operations</option></select></label>}
+          <label className="form-field">{intent === 'create' ? 'Nama ruang rapat' : 'Kode / nama ruang'}<input readOnly={isGuest} value={roomName} onChange={event => setRoomName(event.target.value)} placeholder={intent === 'create' ? 'Contoh: koordinasi-jaringan' : 'Masukkan nama ruang dari tim'} required /></label>
           <div className="form-note"><AudioLines size={18} /><span>Pilihan perangkat dan status mic/kamera di preview dipakai saat masuk. Preview berhenti sebelum koneksi dimulai. Kamu bisa bergabung dengan kamera atau mikrofon nonaktif.</span></div>
           {joinError && <div className="form-error" role="alert">{joinError}</div>}
           <button className="button-primary full-width lobby-submit" disabled={isJoining} type="submit" aria-busy={isJoining}>{isJoining ? <><Loader2 className="ui-spinner" size={16} aria-hidden="true" />Menghubungkan...</> : <>{intent === 'create' ? 'Mulai rapat' : 'Gabung rapat'}<ArrowRight size={17} /></>}</button>
         </form>
-        {import.meta.env.DEV && <details className="dev-tools"><summary>Data demo untuk pengujian lokal</summary><div className="persona-list">{personas.map(persona => <button key={persona.id} onClick={() => { setEmployeeId(persona.id); setEmployeeName(persona.name); setDepartment(persona.dept); }}><strong>{persona.name}</strong><span>{persona.id}</span></button>)}</div></details>}
+        {import.meta.env.DEV && !identityLocked && <details className="dev-tools"><summary>Data demo untuk pengujian lokal</summary><div className="persona-list">{personas.map(persona => <button key={persona.id} onClick={() => { setEmployeeId(persona.id); setEmployeeName(persona.name); setDepartment(persona.dept); }}><strong>{persona.name}</strong><span>{persona.id}</span></button>)}</div></details>}
       </section>
     </div>
   </div>;
