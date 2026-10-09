@@ -82,15 +82,30 @@ if errorlevel 1 (
 
 :: Optional Launch: Local Whisper STT Server if STT_PROVIDER=server and targeting local port 8000
 if exist "server\.env" (
-    findstr /i "STT_PROVIDER=server" "server\.env" >nul 2>nul
+    findstr /b /i /c:"STT_PROVIDER=server" "server\.env" >nul 2>nul
     if not errorlevel 1 (
-        findstr /i "8000" "server\.env" >nul 2>nul
+        findstr /b /i /c:"STT_BASE_URL=http://127.0.0.1:8000/v1" /c:"STT_BASE_URL=http://localhost:8000/v1" "server\.env" >nul 2>nul
         if not errorlevel 1 (
             netstat -ano | findstr ":8000" >nul
             if errorlevel 1 (
                 echo [*] Starting Local Whisper STT Server on Port 8000...
                 start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
                 ping -n 3 127.0.0.1 >nul
+            )
+        )
+    )
+)
+
+:: Optional multi-model worker: keep the main port 8000 path above unchanged.
+if exist "server\.env" (
+    findstr /b /i /c:"STT_PROVIDER=server" "server\.env" >nul 2>nul
+    if not errorlevel 1 (
+        findstr /b /i /c:"STT_BASE_URL=http://127.0.0.1:8001/v1" /c:"STT_BASE_URL=http://localhost:8001/v1" "server\.env" >nul 2>nul
+        if not errorlevel 1 (
+            netstat -ano | findstr ":8001" >nul
+            if errorlevel 1 (
+                echo [*] Starting multi-model Whisper worker on Port 8001...
+                start "BaliCall Whisper Models" /D "%~dp0" cmd /k "start_whisper.bat --models"
             )
         )
     )

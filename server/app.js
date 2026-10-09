@@ -4,7 +4,7 @@ import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
@@ -107,6 +107,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
       hasLlmKey: llmEffectiveProvider !== 'demo',
       sttProvider: config.sttProvider,
       sttConfigured: Boolean(config.sttBaseUrl && config.sttModel),
+      sttDiarization: Boolean(config.sttDiarization),
+      sttModel: config.sttModel,
+      sttModels: [...(config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : [])),
+        ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : [])],
       database: {
         connected: isDbConnected(),
         configured: Boolean(config.databaseUrl),
@@ -382,6 +386,17 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     return true;
   }
 
+  app.post('/api/meetings/:id/live-session', (req, res) => {
+    if (!writable(req, res)) return;
+    if (!config.liveSttSecret || !config.liveSttUrl) return res.status(503).json({ error: 'WhisperLiveKit belum dikonfigurasi.' });
+    const { language, model } = req.body || {};
+    if (!['id', 'en'].includes(language) || model !== 'whisperlivekit-small') return res.status(400).json({ error: 'Bahasa atau model streaming tidak valid.' });
+    const payload = Buffer.from(JSON.stringify({ meetingId: req.meetingId, speakerId: req.speakerId,
+      language, model, exp: Math.floor(Date.now() / 1000) + 60, nonce: randomUUID() })).toString('base64url');
+    const signature = createHmac('sha256', config.liveSttSecret).update(payload).digest('base64url');
+    res.set('Cache-Control', 'no-store').json({ url: `${config.liveSttUrl}?ticket=${payload}.${signature}` });
+  });
+
   app.get('/api/meetings/:id/transcript', (req, res) => {
     const meeting = store.get(req.meetingId);
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
@@ -527,19 +542,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   app.post('/api/meetings/:id/audio', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '5mb' }), asyncRoute(async (req, res) => {
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
+    const model = req.get('X-Speech-Model') || config.sttModel;
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
     if (store.hasEmptyAudioRequest(req.meetingId, req.speakerId, requestId)) return res.json({ success: true, text: '', entry: null });
+    const allowedModels = config.sttModels?.length ? config.sttModels : [config.sttModel];
+    if (model && !allowedModels.includes(model)) return res.status(400).json({ error: 'Model transkripsi tidak tersedia di server' });
     if (!writable(req, res)) return;
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;
     if (!inFlightAudio.has(key)) {
       const work = (async () => {
-        const text = await transcribeAudio(req.body, req.get('Content-Type') || '', language, config, fetchImpl);
+        const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model }, fetchImpl);
         const meeting = store.get(req.meetingId);
         if (meeting.status !== 'active' || meeting.participants.get(req.speakerId).leftAt) throw new ServiceError('Meeting ended before audio could be saved', 409);
         if (!text) store.saveEmptyAudioRequest(req.meetingId, req.speakerId, requestId);
-        return { success: true, text, entry: text ? store.append(req.meetingId, req.speakerId, text, requestId) : null };
+        return { success: true, text, entry: text ? store.append(req.meetingId, req.speakerId, text, requestId, segments, model) : null };
       })();
       inFlightAudio.set(key, work);
     }

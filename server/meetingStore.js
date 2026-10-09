@@ -98,13 +98,15 @@ export class MeetingStore {
       meeting.emptyAudioRequests.push({ speakerId, requestId });
     });
   }
-  append(id, speakerId, text, requestId) {
+  append(id, speakerId, text, requestId, segments, sttModel) {
     const existing = this.findEntry(this.get(id), speakerId, requestId);
     if (existing) return existing;
     return this.transact(() => {
       const meeting = this.get(id);
       const speaker = meeting.participants.get(speakerId);
       const entry = { id: randomUUID(), requestId, speakerId, speakerName: speaker.employeeName, text: text.trim(), timestamp: new Date().toISOString() };
+      if (segments) entry.segments = structuredClone(segments);
+      if (sttModel) entry.sttModel = sttModel;
       meeting.transcripts.push(entry);
       meeting.summary = null;
       speaker.lastSeen = entry.timestamp;

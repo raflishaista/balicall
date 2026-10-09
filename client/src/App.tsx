@@ -1,3 +1,4 @@
+import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
 import { apiRequest, meetingPath, API_BASE } from './api';
 import { SettingsPage } from './SettingsPage';
@@ -5,7 +6,7 @@ import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
-import { mediaChoices } from './preferences';
+import { mediaChoices, resolveTranscriptionPreferences } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
@@ -329,6 +330,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     livekitStatus?: string;
     sttProvider?: 'browser' | 'server';
     sttConfigured?: boolean;
+    sttModel?: string;
+    sttModels?: string[];
     database?: {
       connected: boolean;
       configured: boolean;
@@ -514,7 +517,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       setIsSummarizing(false);
       setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
-      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(data.sttProvider);
+      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
@@ -738,12 +741,20 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     }));
   };
 
-  const handleAddAudio = (audio: Blob, language: string) => {
+  const handleCreateLiveSession = (language: string) => {
+    if (!meetingId || !token) return Promise.reject(new Error('Akses rapat tidak tersedia.'));
+    return apiRequest<{ url: string }>(meetingPath(meetingId, 'live-session'), {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'whisperlivekit-small', language: language.split('-')[0] }),
+    });
+  };
+
+  const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
     saveQueue.enqueue(requestId => apiRequest(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
-        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0] }, body: audio,
+        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}) }, body: audio,
     }, 125000));
   };
 
@@ -912,7 +923,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -946,8 +957,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
             sttConfigured={backendHealth?.sttConfigured || false}
+            sttModels={backendHealth?.sttModels || []}
+            defaultSttModel={backendHealth?.sttModel || ''}
             saveBlocked={Boolean(transcriptSaveError)}
-            onAddAudio={handleAddAudio}
+            onAddAudio={handleAddAudio} onCreateLiveSession={handleCreateLiveSession}
             onPresence={handlePresence}
             serverUrl={serverUrl}
             roomName={roomName}
@@ -1027,6 +1040,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 }
 
 function InCallView({
+  sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
   recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
@@ -1068,6 +1082,7 @@ function InCallView({
     >
       <RoomAudioRenderer />
       <RoomContent
+        sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
         recordingError={recordingError}
@@ -1091,6 +1106,7 @@ function InCallView({
 }
 
 function RoomContent({
+  sttModels, defaultSttModel, onCreateLiveSession,
   startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
@@ -1133,21 +1149,58 @@ function RoomContent({
   }, [connected]);
   const volume = useTrackVolume(microphoneTrack ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone } : undefined);
   const micVolume = isMuted ? 0 : Math.min(100, Math.round(volume * 100));
-  const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>('id-ID');
+  const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>(() => callPreferences.speechLanguage);
+  const [selectedSttModel, setSelectedSttModel] = useState<string | null>(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).model || null);
+  const [transcriptionNotice, setTranscriptionNotice] = useState(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).notice);
+  const [modelPending, setModelPending] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const sttModel = selectedSttModel || defaultSttModel;
+  const isLiveModel = sttModel === 'whisperlivekit-small';
   const paused = isMuted || !connected || isSummarizing || saveBlocked;
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
-  const backendSpeech = useBackendTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'server',
+  const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, volume, onAudio: onAddAudio });
-  const { prepareTrackChange, resumeTrackChange } = backendSpeech;
+  const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
+    muted: paused || sttProvider !== 'server' || !isLiveModel,
+    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine });
+  const serverSpeech = isLiveModel ? liveSpeech : backendSpeech;
+  const changeSttModel = async (model: string) => {
+    if (modelPending || finishing || isSummarizing || microphone.pending || model === sttModel || !sttModels.includes(model)) return;
+    setModelPending(true); setModelError(null);
+    try {
+      await serverSpeech.prepareTrackChange();
+      setSelectedSttModel(model);
+      setTranscriptionNotice(null);
+    } catch (error) {
+      setModelError(error instanceof Error ? error.message : 'Gagal mengganti model transkripsi.');
+    } finally {
+      serverSpeech.resumeTrackChange();
+      setModelPending(false);
+    }
+  };
+  const { prepareTrackChange, resumeTrackChange } = serverSpeech;
+  const changeSpeechSettings = async (apply: () => void) => {
+    if (modelPending || finishing || isSummarizing || microphone.pending) return;
+    setModelPending(true); setModelError(null);
+    try {
+      if (sttProvider === 'server') await prepareTrackChange();
+      apply();
+      setTranscriptionNotice(null);
+    } catch (error) {
+      setModelError(error instanceof Error ? error.message : 'Gagal mengganti pengaturan transkripsi.');
+    } finally {
+      resumeTrackChange(); setModelPending(false);
+    }
+  };
   const prepareMicrophoneChange = useCallback(async () => {
     if (sttProvider === 'server') await prepareTrackChange();
   }, [sttProvider, prepareTrackChange]);
   const resumeMicrophoneChange = useCallback(() => {
     resumeTrackChange();
   }, [resumeTrackChange]);
-  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || camera.pending || microphone.pending, prepareMicrophoneChange, resumeMicrophoneChange);
+  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || modelPending || camera.pending || microphone.pending, prepareMicrophoneChange, resumeMicrophoneChange);
   const { isListeningSpeechApi, interimText, speechError, toggleSpeechRecognition, speechEnabled, finishTranscription } =
-    sttProvider === 'server' ? backendSpeech : browserSpeech;
+    sttProvider === 'server' ? serverSpeech : browserSpeech;
   const finishMeeting = async (generate: boolean) => {
     if (finishRequest.current) return;
     finishRequest.current = true;
@@ -1157,7 +1210,7 @@ function RoomContent({
     finally { finishRequest.current = false; setFinishing(false); }
   };
 
-  return <><MeetingRoom
+  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
@@ -1169,7 +1222,9 @@ function RoomContent({
     connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
     finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
     speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
-    setSttProvider={setSttProvider} speechLanguage={speechLanguage} setSpeechLanguage={setSpeechLanguage}
+    setSttProvider={provider => void changeSpeechSettings(() => setSttProvider(provider))} speechLanguage={speechLanguage}
+    setSpeechLanguage={language => void changeSpeechSettings(() => setSpeechLanguage(language))}
+    sttModel={sttModel} sttModels={sttModels} onChangeSttModel={changeSttModel} modelPending={modelPending} modelError={modelError}
     activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
     recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
     onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}

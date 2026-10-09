@@ -93,9 +93,22 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   form.append('model', config.sttModel);
   form.append('language', language);
   form.append('response_format', 'json');
+  if (config.sttDiarization) form.append('diarize', 'true');
   const data = await fetchJson(`${config.sttBaseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
     method: 'POST', headers: config.sttKey ? { Authorization: `Bearer ${config.sttKey}` } : {}, body: form,
   }, config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
-  return data.text.trim();
+  const text = data.text.trim();
+  if (!config.sttDiarization) return { text };
+  if (!Array.isArray(data.segments) || data.segments.length > 10000) throw new ServiceError('The speech service returned invalid diarization segments');
+  const segments = data.segments.map(segment => {
+    if (!segment || typeof segment.text !== 'string' || typeof segment.speaker !== 'string' ||
+        !segment.speaker || segment.speaker.length > 100 || !Number.isFinite(segment.start) ||
+        !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
+      throw new ServiceError('The speech service returned invalid diarization segments');
+    }
+    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+  }).filter(segment => segment.text);
+  if (text && !segments.length) throw new ServiceError('The speech service returned no diarization for its text');
+  return { text, segments };
 }

@@ -22,7 +22,11 @@ export function loadConfig(env = process.env) {
     sttProvider: env.STT_PROVIDER || 'browser',
     sttBaseUrl: env.STT_BASE_URL || '',
     sttModel: env.STT_MODEL || '',
+    sttModels: (env.STT_MODELS || env.STT_MODEL || '').split(',').map(value => value.trim()).filter(Boolean),
     sttKey: env.STT_API_KEY || '',
+    liveSttSecret: env.LIVE_STT_SECRET || '',
+    liveSttUrl: env.LIVE_STT_URL || '',
+    sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
@@ -31,12 +35,14 @@ export function loadConfig(env = process.env) {
       : Boolean(env.DATABASE_URL),
   };
   if (env.NODE_ENV === 'production' && config.authEnabled && !config.authCookieSecure) throw new Error('Production login requires secure cookies over HTTPS.');
+  if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }
   if (!['office', 'gemini', 'demo'].includes(config.llmProvider)) throw new Error('Unknown LLM_PROVIDER');
   if (!['browser', 'server'].includes(config.sttProvider)) throw new Error('STT_PROVIDER must be browser or server');
   if (config.sttProvider === 'server' && (!config.sttBaseUrl || !config.sttModel)) throw new Error('Server STT requires STT_BASE_URL and STT_MODEL');
+  if (config.sttModel && !config.sttModels.includes(config.sttModel)) throw new Error('STT_MODELS must include STT_MODEL');
   for (const [field, protocols] of [['livekitUrl', ['ws:', 'wss:']], ['llmBaseUrl', ['http:', 'https:']], ['sttBaseUrl', ['http:', 'https:']]]) {
     if (config[field] && !protocols.includes(new URL(config[field]).protocol)) throw new Error(`Invalid ${field} protocol`);
   }

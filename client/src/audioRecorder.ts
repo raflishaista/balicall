@@ -17,6 +17,8 @@ export function startAudioRecorder(options: {
   onError: (message: string) => void;
   segmentMs?: number;
   pauseMs?: number;
+  minSegmentMs?: number;
+  silenceMs?: number;
   finishTimeoutMs?: number;
 }) {
   let recorder: Recorder;
@@ -64,7 +66,7 @@ export function startAudioRecorder(options: {
           silentMs = 0;
         } else if (heardVoice) {
           silentMs += 100;
-          if (options.pauseMs && silentMs >= options.pauseMs && elapsedMs >= 1200) {
+          if (silentMs >= (options.pauseMs ?? options.silenceMs ?? 700) && elapsedMs >= (options.minSegmentMs ?? 1200)) {
             if (recorder.state !== 'inactive') recorder.stop();
           }
         }
@@ -72,7 +74,7 @@ export function startAudioRecorder(options: {
       segmentTimer = setTimeout(() => {
         heardVoice ||= options.hasVoice();
         if (recorder.state !== 'inactive') recorder.stop();
-      }, options.segmentMs ?? 8000);
+      }, options.segmentMs ?? 3500);
     } catch {
       disposed = true;
       clearTimers();
