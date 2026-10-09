@@ -19,6 +19,9 @@ export function loadConfig(env = process.env) {
     llmModel: env.LLM_MODEL || env.TEXT_MODEL || 'qwen-35b',
     geminiKey: env.GEMINI_API_KEY || '',
     llmTimeoutMs: Number(env.LLM_TIMEOUT_MS || 60000),
+    llmRetryCount: Number(env.LLM_RETRY_COUNT ?? 2),
+    llmRetryDelayMs: Number(env.LLM_RETRY_DELAY_MS ?? 500),
+    llmRetryBudgetMs: Number(env.LLM_RETRY_BUDGET_MS || Math.min(Number(env.LLM_TIMEOUT_MS || 60000) * 2, 120000)),
     sttProvider: env.STT_PROVIDER || 'browser',
     sttBaseUrl: env.STT_BASE_URL || '',
     sttModel: env.STT_MODEL || '',
@@ -39,6 +42,9 @@ export function loadConfig(env = process.env) {
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }
+  if (!Number.isInteger(config.llmRetryCount) || config.llmRetryCount < 0 || config.llmRetryCount > 3) throw new Error('LLM_RETRY_COUNT must be an integer from 0 to 3');
+  if (!Number.isInteger(config.llmRetryDelayMs) || config.llmRetryDelayMs < 0 || config.llmRetryDelayMs > 5000) throw new Error('LLM_RETRY_DELAY_MS must be 0–5000 milliseconds');
+  if (!Number.isInteger(config.llmRetryBudgetMs) || config.llmRetryBudgetMs < 100 || config.llmRetryBudgetMs > 120000) throw new Error('LLM_RETRY_BUDGET_MS must be 100–120000 milliseconds');
   if (!['office', 'gemini', 'demo'].includes(config.llmProvider)) throw new Error('Unknown LLM_PROVIDER');
   if (!['browser', 'server'].includes(config.sttProvider)) throw new Error('STT_PROVIDER must be browser or server');
   if (config.sttProvider === 'server' && (!config.sttBaseUrl || !config.sttModel)) throw new Error('Server STT requires STT_BASE_URL and STT_MODEL');

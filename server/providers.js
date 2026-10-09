@@ -1,7 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export class ServiceError extends Error {
-  constructor(message, status = 502) { super(message); this.status = status; }
+  constructor(message, status = 502, details = {}) { super(message); this.status = status; Object.assign(this, details); }
 }
 
 export function parseSummary(text) {
@@ -28,13 +29,46 @@ export function parseSummary(text) {
 export async function fetchJson(url, options, timeoutMs, fetchImpl = fetch) {
   try {
     const response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) throw new ServiceError(`The upstream service returned HTTP ${response.status}`);
+    if (!response.ok) {
+      const retryAfter = response.headers.get('retry-after');
+      const seconds = retryAfter === null ? NaN : Number(retryAfter);
+      const retryAfterMs = Number.isFinite(seconds) ? Math.max(0, seconds * 1000)
+        : Math.max(0, Date.parse(retryAfter) - Date.now()) || 0;
+      // Release the response before another attempt can reuse the connection.
+      await response.body?.cancel().catch(() => {});
+      throw new ServiceError(`The upstream service returned HTTP ${response.status}`, 502, {
+        retryable: [408, 429, 500, 502, 503, 504].includes(response.status), retryAfterMs,
+      });
+    }
     return await response.json();
   } catch (error) {
     if (error instanceof ServiceError) throw error;
-    if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new ServiceError('The upstream service timed out. Please retry.', 504);
-    if (error.cause?.code === 'ECONNREFUSED') throw new ServiceError('The upstream service is not reachable (ECONNREFUSED). Make sure the service is running.');
-    throw new ServiceError('The upstream service is unavailable or returned invalid JSON');
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new ServiceError('The upstream service timed out. Please retry.', 504, { retryable: true });
+    const retryable = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'].includes(error.cause?.code)
+      || (error instanceof TypeError && error.message === 'fetch failed');
+    if (error.cause?.code === 'ECONNREFUSED') throw new ServiceError('The upstream service is not reachable (ECONNREFUSED). Make sure the service is running.', 502, { retryable });
+    throw new ServiceError('The upstream service is unavailable or returned invalid JSON', 502, { retryable });
+  }
+}
+
+// Retry only Office transport failures. The same immutable prompt is used for every
+// attempt; summary validation, persistence and dispatch happen once outside this loop.
+async function fetchOfficeJson(url, options, config, fetchImpl) {
+  const retries = config.llmRetryCount ?? 2;
+  const budget = config.llmRetryBudgetMs ?? Math.min(config.llmTimeoutMs * 2, 120000);
+  const deadline = Date.now() + budget;
+  for (let attempt = 0; ; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new ServiceError('The upstream service timed out. Please retry.', 504);
+    try {
+      return await fetchJson(url, options, Math.min(config.llmTimeoutMs, remaining), fetchImpl);
+    } catch (error) {
+      if (!error.retryable || attempt >= retries) throw error;
+      const wait = Math.max((config.llmRetryDelayMs ?? 500) * 2 ** attempt, error.retryAfterMs || 0);
+      // Never ignore Retry-After or exceed the overall request budget.
+      if (wait >= deadline - Date.now()) throw error;
+      await delay(wait);
+    }
   }
 }
 
@@ -61,7 +95,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
   }
   let content;
   if (provider === 'office') {
-    const data = await fetchJson(`${config.llmBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const data = await fetchOfficeJson(`${config.llmBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llmKey}` },
       body: JSON.stringify({
         model: config.llmModel,
@@ -69,7 +103,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
         chat_template_kwargs: { enable_thinking: false },
         temperature: 0.2,
       }),
-    }, config.llmTimeoutMs, fetchImpl);
+    }, config, fetchImpl);
     content = data.choices?.[0]?.message?.content;
   } else {
     try {

@@ -170,12 +170,41 @@ test('bad upstream summary schema is an error, not a successful demo fallback', 
 });
 
 test('upstream timeout is bounded and retryable', async t => {
-  const f = await fixture(t, { llmProvider: 'office', llmKey: 'test-key', llmTimeoutMs: 100 }, {
+  const f = await fixture(t, { llmProvider: 'office', llmKey: 'test-key', llmTimeoutMs: 100, llmRetryDelayMs: 10, llmRetryBudgetMs: 450 }, {
     fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
   });
   const a = await f.joinRoom(); await a.post('transcript', { text: 'hello' });
   const start = Date.now(); const result = await a.post('summarize');
   assert.equal(result.status, 504); assert.ok(Date.now() - start < 1500);
+});
+
+test('concurrent summary requests share Office retry and cache only the successful summary', async t => {
+  let calls = 0;
+  const valid = { title: 'Recovered Office', executiveSummary: 'Saved speech', keyDiscussionPoints: [], decisions: [], actionItems: [], attendanceSummary: [] };
+  const f = await fixture(t, { llmProvider: 'office', llmKey: 'test-key', llmRetryDelayMs: 20 }, {
+    fetchImpl: async () => ++calls === 1 ? new Response('', { status: 503 })
+      : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })),
+  });
+  const a = await f.joinRoom(); await a.post('transcript', { text: 'Saved speech' });
+  const results = await Promise.all([a.post('summarize'), a.post('summarize')]);
+  assert.equal(calls, 2);
+  for (const result of results) { assert.equal(result.status, 200); assert.equal(result.data.summary.title, valid.title); }
+  assert.equal((await a.post('summarize')).data.summary.title, valid.title);
+  assert.equal(calls, 2);
+});
+
+test('exhausted Office retries leave transcript intact and allow a later manual retry', async t => {
+  let recovered = false; let calls = 0;
+  const valid = { title: 'Recovered later', executiveSummary: 'Saved speech', keyDiscussionPoints: [], decisions: [], actionItems: [], attendanceSummary: [] };
+  const f = await fixture(t, { llmProvider: 'office', llmKey: 'test-key', llmRetryDelayMs: 1 }, {
+    fetchImpl: async () => { calls++; return recovered ? new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })) : new Response('', { status: 503 }); },
+  });
+  const a = await f.joinRoom(); await a.post('transcript', { text: 'Saved speech' });
+  assert.equal((await a.post('summarize')).status, 502); assert.equal(calls, 3);
+  const saved = await a.get('transcript');
+  assert.equal(saved.data.summary, null); assert.equal(saved.data.transcripts.length, 1);
+  recovered = true;
+  assert.equal((await a.post('summarize')).data.summary.title, valid.title); assert.equal(calls, 4);
 });
 
 test('backend STT forwards complete audio with language and keeps keys on server; retries deduplicate', async t => {
