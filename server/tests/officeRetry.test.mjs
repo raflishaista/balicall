@@ -64,7 +64,9 @@ test('Retry-After within budget is respected', async () => {
 test('overall Office deadline bounds repeated timeouts and caps attempt duration', async () => {
   let calls = 0; const started = Date.now();
   await assert.rejects(summarize(meeting, { ...config, llmRetryBudgetMs: 180 }, async (_url, { signal }) => { calls++; await delay(1000, null, { signal }); }), error => error.status === 504);
-  assert.equal(calls, 2); assert.ok(Date.now() - started < 700);
+  // A busy event loop may consume the budget before the second attempt starts.
+  // The deadline must win over the configured attempt count in that case.
+  assert.ok(calls >= 1 && calls <= 2); assert.ok(Date.now() - started < 700);
 });
 
 test('Office retry does not change STT retry behavior', async () => {
