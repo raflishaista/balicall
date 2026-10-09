@@ -16,6 +16,7 @@ export function startAudioRecorder(options: {
   onAudio: (audio: Blob) => void;
   onError: (message: string) => void;
   segmentMs?: number;
+  pauseMs?: number;
   minSegmentMs?: number;
   silenceMs?: number;
   finishTimeoutMs?: number;
@@ -33,9 +34,9 @@ export function startAudioRecorder(options: {
     if (disposed || finishing) return;
     const chunks: Blob[] = [];
     let heardVoice = options.hasVoice();
-    const startedAt = Date.now();
-    let lastVoiceAt = startedAt;
     let finalized = false;
+    let elapsedMs = 0;
+    let silentMs = 0;
     try {
       recorder = options.createRecorder();
       recorder.ondataavailable = ({ data }) => { if (!disposed && !finalized && data.size) chunks.push(data); };
@@ -58,15 +59,22 @@ export function startAudioRecorder(options: {
       };
       recorder.start();
       levelTimer = setInterval(() => {
-        const now = Date.now();
-        if (options.hasVoice()) { heardVoice = true; lastVoiceAt = now; }
-        if (heardVoice && now - startedAt >= (options.minSegmentMs ?? 1200) &&
-            now - lastVoiceAt >= (options.silenceMs ?? 600) && recorder.state !== 'inactive') recorder.stop();
+        const active = options.hasVoice();
+        elapsedMs += 100;
+        if (active) {
+          heardVoice = true;
+          silentMs = 0;
+        } else if (heardVoice) {
+          silentMs += 100;
+          if (silentMs >= (options.pauseMs ?? options.silenceMs ?? 700) && elapsedMs >= (options.minSegmentMs ?? 1200)) {
+            if (recorder.state !== 'inactive') recorder.stop();
+          }
+        }
       }, 100);
       segmentTimer = setTimeout(() => {
         heardVoice ||= options.hasVoice();
         if (recorder.state !== 'inactive') recorder.stop();
-      }, options.segmentMs ?? 3000);
+      }, options.segmentMs ?? 3500);
     } catch {
       disposed = true;
       clearTimers();

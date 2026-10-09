@@ -67,10 +67,25 @@ test('speech is uploaded after a pause without waiting for the maximum clip leng
   controller.dispose();
 });
 
-test('continuous speech uploads a complete clip every three seconds by default', async t => {
+test('main pause settings wait for 700 ms of silence before uploading speech', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  let speaking = true;
+  const { controller, audio } = setup({ hasVoice: () => speaking, segmentMs: 3500, pauseMs: 700 });
+  t.mock.timers.tick(1000);
+  speaking = false;
+  t.mock.timers.tick(699);
+  await Promise.resolve();
+  assert.equal(audio.length, 0);
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(audio.length, 1);
+  controller.dispose();
+});
+
+test('continuous speech uploads a complete clip every 3.5 seconds by default', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
   const { controller, audio } = setup({ segmentMs: undefined });
-  t.mock.timers.tick(2999);
+  t.mock.timers.tick(3499);
   await Promise.resolve();
   assert.equal(audio.length, 0);
   t.mock.timers.tick(1);
