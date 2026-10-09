@@ -10,6 +10,8 @@ import { mediaChoices, resolveTranscriptionPreferences } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
+import { TranscriptRealtimeBridge } from './TranscriptRealtimeBridge';
+import { createTranscriptDelivery } from './transcriptDelivery';
 import { useBackendTranscription } from './useBackendTranscription';
 import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
@@ -143,8 +145,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const [syncError, setSyncError] = useState<string | null>(null);
   const [recordingPending, setRecordingPending] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
-  const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null }>({
-    onSaved: ({ entry }) => { if (entry) setTranscripts(previous => mergeTranscripts(previous, [entry])); },
+  const [transcriptDelivery] = useState(() => createTranscriptDelivery(entry => setTranscripts(previous => mergeTranscripts(previous, [entry]))));
+  const receiveTranscripts = useCallback((entries: TranscriptEntry[]) => setTranscripts(previous => mergeTranscripts(previous, entries)), []);
+  const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null; meetingId: string }>({
+    onSaved: transcriptDelivery.saved,
     onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
   }));
 
@@ -407,23 +411,6 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     return () => clearInterval(interval);
   }, [view, meetingStartTime]);
 
-  useEffect(() => {
-    if (view !== 'in-call' || !meetingId || !token) return;
-    let cancelled = false;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const sync = async () => {
-      try {
-        const data = await apiRequest<{ transcripts: TranscriptEntry[] }>(meetingPath(meetingId, 'transcript'), {
-          headers: { Authorization: 'Bearer ' + token }, signal: abort.signal,
-        });
-        if (!cancelled) { setTranscripts(previous => mergeTranscripts(previous, data.transcripts)); setSyncError(null); }
-      } catch { if (!cancelled) setSyncError('Transkrip belum tersinkron. Periksa koneksi layanan.'); }
-      if (!cancelled) timer = setTimeout(sync, 2000);
-    };
-    void sync();
-    return () => { cancelled = true; abort.abort(); clearTimeout(timer); };
-  }, [view, meetingId, token]);
 
   useEffect(() => {
     if (!pendingSaves) return;
@@ -517,6 +504,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       setIsSummarizing(false);
       setCallPreferences({ ...userPreferences.preferences });
       setJoinMedia(mediaChoices);
+      transcriptDelivery.beginMeeting(data.meetingId);
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
@@ -735,10 +723,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const handleAddSpeechLine = (text: string) => {
     if (!text.trim() || !meetingId || !token) return;
     const path = meetingPath(meetingId, 'transcript');
-    saveQueue.enqueue(requestId => apiRequest(path, {
+    saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text.trim(), requestId }),
-    }));
+    }).then(result => ({ ...result, meetingId })));
   };
 
   const handleCreateLiveSession = (language: string) => {
@@ -752,10 +740,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    saveQueue.enqueue(requestId => apiRequest(path, {
+    saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
         'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}) }, body: audio,
-    }, 125000));
+    }, 125000).then(result => ({ ...result, meetingId })));
   };
 
   const handlePresence = async (connected: boolean) => {
@@ -948,6 +936,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
         {view === 'in-call' && token && (
           <InCallView
+            meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
@@ -1040,6 +1029,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 }
 
 function InCallView({
+  meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
   recordingPending, recordingError, onToggleRecording,
@@ -1081,6 +1071,7 @@ function InCallView({
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
+      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} register={registerTranscriptPublisher} />
       <RoomContent
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
