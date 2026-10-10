@@ -58,6 +58,7 @@ import {
   Home,
 } from 'lucide-react';
 
+type MeetingRole = 'host' | 'co-host' | 'participant';
 function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[]) {
   const byId = new Map([...current, ...incoming].map(entry => [entry.id, entry]));
   return [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -143,6 +144,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   // Connection state
   const [token, setToken] = useState<string | null>(null);
   const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [meetingRole, setMeetingRole] = useState<MeetingRole>('participant');
+  const [meetingHostId, setMeetingHostId] = useState<string | null>(null);
+  const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
   const [sttProvider, setSttProvider] = useState<'browser' | 'server'>('browser');
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
@@ -170,6 +174,47 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     onSaved: transcriptDelivery.saved,
     onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
   }));
+
+  useEffect(() => {
+    if (view !== 'in-call' || !meetingId || !token) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+
+    const syncMeetingRole = async () => {
+      try {
+        const data = await apiRequest<{
+          currentRole?: MeetingRole;
+          hostId?: string;
+          coHostIds?: string[];
+        }>(meetingPath(meetingId, 'transcript'), {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
+        if (cancelled) return;
+
+        setMeetingRole(data.currentRole || 'participant');
+        setMeetingHostId(data.hostId || null);
+        setMeetingCoHostIds(data.coHostIds || []);
+      } catch {
+        // Abaikan kegagalan polling sementara; coba lagi pada interval berikutnya.
+      }
+
+      if (!cancelled) {
+        timer = setTimeout(syncMeetingRole, 2000);
+      }
+    };
+
+    void syncMeetingRole();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [view, meetingId, token]);
 
   useEffect(() => {
     if (view !== 'in-call' && view !== 'lobby') {
@@ -750,6 +795,47 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     }).then(result => ({ ...result, meetingId })));
   };
 
+  const manageParticipant = async (
+    participantId: string,
+    action: 'promote' | 'demote' | 'mute' | 'remove'
+  ) => {
+    if (!meetingId || !token) return;
+
+    const participantPath = meetingPath(
+      meetingId,
+      `participants/${encodeURIComponent(participantId)}`
+    );
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    if (action === 'promote' || action === 'demote') {
+      headers['Content-Type'] = 'application/json';
+
+      await apiRequest(`${participantPath}/role`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          role: action === 'promote' ? 'co-host' : 'participant',
+        }),
+      });
+    } else if (action === 'mute') {
+      headers['Content-Type'] = 'application/json';
+
+      await apiRequest(`${participantPath}/mute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({}),
+      });
+    } else {
+      await apiRequest(participantPath, {
+        method: 'DELETE',
+        headers,
+      });
+    }
+  };
+
   const handleCreateLiveSession = (language: string) => {
     if (!meetingId || !token) return Promise.reject(new Error('Akses rapat tidak tersedia.'));
     return apiRequest<{ url: string }>(meetingPath(meetingId, 'live-session'), {
@@ -966,6 +1052,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
+            meetingRole={meetingRole}
+            meetingHostId={meetingHostId}
+            meetingCoHostIds={meetingCoHostIds}
+            onManageParticipant={manageParticipant}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
@@ -1074,6 +1164,10 @@ function InCallView({
   onAddSpeechLine,
   onEndMeeting,
   isSummarizing,
+  meetingRole,
+  meetingHostId,
+  meetingCoHostIds,
+  onManageParticipant,
 }: any) {
   const [mediaOptions] = useState(() => ({
     audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
@@ -1119,6 +1213,10 @@ function InCallView({
         onAddSpeechLine={onAddSpeechLine}
         onEndMeeting={onEndMeeting}
         isSummarizing={isSummarizing}
+        meetingRole={meetingRole}
+        meetingHostId={meetingHostId}
+        meetingCoHostIds={meetingCoHostIds}
+        onManageParticipant={onManageParticipant}
       />
     </LiveKitRoom>
     </div>
@@ -1130,6 +1228,10 @@ function RoomContent({
   startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
+  meetingRole,
+  meetingHostId,
+  meetingCoHostIds,
+  onManageParticipant,
   employeeId,
   transcripts,
   activeTab,
@@ -1231,6 +1333,10 @@ function RoomContent({
   };
 
   return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom
+    meetingRole={meetingRole}
+    meetingHostId={meetingHostId}
+    meetingCoHostIds={meetingCoHostIds}
+    onManageParticipant={onManageParticipant}
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}

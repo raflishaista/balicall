@@ -55,6 +55,7 @@ export class MeetingStore {
       }
       if (!meeting) {
         const id = randomUUID();
+
         meeting = {
           id,
           roomName,
@@ -62,6 +63,11 @@ export class MeetingStore {
           status: 'active',
           createdAt: new Date().toISOString(),
           endedAt: null,
+
+          // Host utama tidak berubah ketika peserta reconnect.
+          hostId: participant.hostId || participant.employeeId,
+          coHostIds: [],
+
           participants: new Map(),
           transcripts: [],
           emptyAudioRequests: [],
@@ -74,17 +80,92 @@ export class MeetingStore {
             filepath: null,
           },
         };
+
         this.meetings.set(id, meeting);
       }
       const previous = meeting.participants.get(participant.employeeId);
       meeting.participants.set(participant.employeeId, {
-        ...previous, ...participant, joinedAt: previous?.joinedAt || null,
-        lastSeen: new Date().toISOString(), connected: false, leftAt: null,
+        ...previous,
+        ...participant,
+
+        // Role ditentukan oleh data meeting, bukan input peserta.
+        role: participant.employeeId === meeting.hostId
+          ? 'host'
+          : (meeting.coHostIds || []).includes(participant.employeeId)
+            ? 'co-host'
+            : 'participant',
+
+        joinedAt: previous?.joinedAt || null,
+        lastSeen: new Date().toISOString(),
+        connected: false,
+        leftAt: null,
       });
       return meeting;
     });
+    
   }
   get(id) { return this.meetings.get(id); }
+  setCoHost(id, actorId, targetId, makeCoHost) {
+    return this.transact(() => {
+      const meeting = this.get(id);
+
+      if (!meeting) {
+        const error = new Error('Meeting tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+
+      if (meeting.status !== 'active') {
+        const error = new Error('Meeting sudah berakhir.');
+        error.status = 409;
+        throw error;
+      }
+
+      // Hanya host utama yang boleh mengelola co-host.
+      if (actorId !== meeting.hostId) {
+        const error = new Error('Hanya host utama yang dapat mengelola co-host.');
+        error.status = 403;
+        throw error;
+      }
+
+      const target = meeting.participants.get(targetId);
+
+      if (!target || target.leftAt) {
+        const error = new Error('Peserta tidak ditemukan atau sudah meninggalkan meeting.');
+        error.status = 404;
+        throw error;
+      }
+
+      // Host utama tidak boleh diturunkan menjadi co-host atau peserta.
+      if (targetId === meeting.hostId) {
+        const error = new Error('Host utama tidak dapat diubah perannya.');
+        error.status = 400;
+        throw error;
+      }
+
+      meeting.coHostIds ||= [];
+
+      if (makeCoHost) {
+        // Tambahkan co-host tanpa menduplikasi ID.
+        if (!meeting.coHostIds.includes(targetId)) {
+          meeting.coHostIds.push(targetId);
+        }
+      } else {
+        // Hapus status co-host.
+        meeting.coHostIds = meeting.coHostIds.filter(
+          employeeId => employeeId !== targetId
+        );
+      }
+
+      target.role = makeCoHost ? 'co-host' : 'participant';
+
+      return {
+        employeeId: targetId,
+        role: target.role,
+        coHostIds: [...meeting.coHostIds],
+      };
+    });
+  }
   applyLivekitEvent(event, graceMs) {
     const meeting = [...this.meetings.values()].find(value => value.livekitRoom === event.room?.name);
     if (!meeting) return { ignored: 'unknown-room' };

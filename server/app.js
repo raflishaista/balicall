@@ -184,7 +184,29 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     if (duplicate && !duplicate.leftAt && (!req.auth?.user.isGuest || duplicate.guestTokenIssued) && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
     }
-    const meeting = guestMeeting || store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
+    // const meeting = guestMeeting || store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
+    let scheduledHostId = '';
+
+    if (!guestMeeting) {
+      const schedules = await getUpcomingSchedules().catch(() => []);
+      const now = Date.now();
+
+      const scheduled = schedules.find(item =>
+        item.roomName === roomName.trim() &&
+        item.hostId &&
+        Date.parse(item.scheduledStart) <= now + 60_000 &&
+        Date.parse(item.scheduledEnd) > now
+      );
+
+      scheduledHostId = scheduled?.hostId || '';
+    }
+
+    const meeting = guestMeeting || store.join(roomName.trim(), {
+      employeeId: cleanId,
+      employeeName: employeeName.trim(),
+      department: department.trim(),
+      hostId: scheduledHostId || cleanId,
+    });
     if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
     
     // Asynchronously record meeting in PostgreSQL if configured
@@ -393,6 +415,167 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     return true;
   }
 
+  function requireMeetingManager(req, res, allowedRoles = ['host', 'co-host']) {
+    const meeting = store.get(req.meetingId);
+
+    if (!meeting || meeting.status !== 'active') {
+      res.status(409).json({ error: 'Meeting tidak aktif atau tidak ditemukan.' });
+      return null;
+    }
+
+    const actor = meeting.participants.get(req.speakerId);
+
+    if (!actor || actor.leftAt) {
+      res.status(403).json({ error: 'Peserta tidak lagi aktif dalam meeting.' });
+      return null;
+    }
+
+    if (req.auth?.user?.isGuest) {
+      res.status(403).json({ error: 'Tamu tidak memiliki izin mengelola peserta.' });
+      return null;
+    }
+
+    const role = actor.employeeId === meeting.hostId
+      ? 'host'
+      : (meeting.coHostIds || []).includes(actor.employeeId)
+        ? 'co-host'
+        : 'participant';
+
+    if (!allowedRoles.includes(role)) {
+      res.status(403).json({ error: 'Anda tidak memiliki izin untuk tindakan ini.' });
+      return null;
+    }
+
+    return { meeting, actor, role };
+  }
+
+  app.patch(
+    '/api/meetings/:id/participants/:participantId/role',
+    (req, res) => {
+      const access = requireMeetingManager(req, res, ['host']);
+      if (!access) return;
+
+      const { role } = req.body || {};
+
+      if (!['co-host', 'participant'].includes(role)) {
+        return res.status(400).json({
+          error: 'Role harus co-host atau participant.',
+        });
+      }
+
+      const result = store.setCoHost(
+        req.meetingId,
+        req.speakerId,
+        req.params.participantId,
+        role === 'co-host'
+      );
+
+      res.json({ success: true, participant: result });
+    }
+  );
+
+  app.post(
+    '/api/meetings/:id/participants/:participantId/mute',
+    asyncRoute(async (req, res) => {
+      const access = requireMeetingManager(req, res);
+      if (!access) return;
+
+      const targetId = req.params.participantId;
+      const target = access.meeting.participants.get(targetId);
+
+      if (!target || target.leftAt) {
+        return res.status(404).json({
+          error: 'Peserta tidak ditemukan atau sudah meninggalkan meeting.',
+        });
+      }
+
+      if (targetId === req.speakerId) {
+        return res.status(400).json({
+          error: 'Gunakan kontrol mikrofon sendiri untuk mute diri Anda.',
+        });
+      }
+
+      // Co-host tidak boleh mengelola host utama atau co-host lain.
+      if (
+        access.role === 'co-host' &&
+        (targetId === access.meeting.hostId ||
+          (access.meeting.coHostIds || []).includes(targetId))
+      ) {
+        return res.status(403).json({
+          error: 'Co-host hanya dapat mute peserta biasa.',
+        });
+      }
+
+      const participants = await roomService.listParticipants(
+        access.meeting.livekitRoom
+      );
+
+      const liveParticipant = participants.find(
+        person => person.identity === targetId
+      );
+
+  
+      const microphone = liveParticipant?.tracks?.find(
+        track => Number(track.source) === 2
+      );
+
+      if (!microphone?.sid) {
+        return res.status(409).json({
+          error: 'Track mikrofon peserta tidak ditemukan atau belum aktif.',
+        });
+      }
+
+      await roomService.mutePublishedTrack(
+        access.meeting.livekitRoom,
+        targetId,
+        microphone.sid,
+        true
+      );
+
+      res.json({ success: true, muted: true });
+    })
+  );
+
+  app.delete(
+    '/api/meetings/:id/participants/:participantId',
+    asyncRoute(async (req, res) => {
+      const access = requireMeetingManager(req, res);
+      if (!access) return;
+
+      const targetId = req.params.participantId;
+      const target = access.meeting.participants.get(targetId);
+
+      if (!target || target.leftAt) {
+        return res.status(404).json({
+          error: 'Peserta tidak ditemukan atau sudah meninggalkan meeting.',
+        });
+      }
+
+      if (targetId === req.speakerId) {
+        return res.status(400).json({
+          error: 'Anda tidak dapat mengeluarkan diri sendiri melalui fitur ini.',
+        });
+      }
+
+      if (
+        access.role === 'co-host' &&
+        (targetId === access.meeting.hostId ||
+          (access.meeting.coHostIds || []).includes(targetId))
+      ) {
+        return res.status(403).json({
+          error: 'Co-host hanya dapat mengeluarkan peserta biasa.',
+        });
+      }
+
+      await roomService.removeParticipant(
+        access.meeting.livekitRoom,
+        targetId
+      );
+
+      res.json({ success: true, removed: targetId });
+    })
+  );
+
   app.post('/api/meetings/:id/guest-invite', (req, res) => {
     if (!config.authEnabled) return res.status(409).json({ error: 'Aktifkan login sebelum mengundang tamu.' });
     if (!writable(req, res)) return;
@@ -415,8 +598,17 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
 
   app.get('/api/meetings/:id/transcript', (req, res) => {
     const meeting = store.get(req.meetingId);
+    const currentParticipant = meeting.participants.get(req.speakerId);
+
+    const currentRole = currentParticipant
+      ? currentParticipant.employeeId === meeting.hostId
+        ? 'host'
+        : (meeting.coHostIds || []).includes(currentParticipant.employeeId)
+          ? 'co-host'
+          : 'participant'
+      : 'participant';
     res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
-      isSummarizing: inFlightSummarize.has(meeting.id),
+      isSummarizing: inFlightSummarize.has(meeting.id), hostId: meeting.hostId, coHostIds: meeting.coHostIds || [], currentRole,
       transcripts: meeting.transcripts, participants: [...meeting.participants.values()].map(publicParticipant), summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
   });
 

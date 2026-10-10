@@ -75,3 +75,30 @@
   .meeting-layout .participant-grid .participant-tile-footer { font-size: 9px; bottom: 5px; }
   .meeting-layout .participant-grid .speaker-label { font-size: 8px; padding: 3px; }
 }
+
+.participant-management {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.participant-management button {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.participant-management button:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.participant-management button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
