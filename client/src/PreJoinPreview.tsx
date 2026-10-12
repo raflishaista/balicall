@@ -96,7 +96,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
       />
       <div>
         <strong>Mode Mikrofon Ruang Rapat (Diarization)</strong>
-        <small>Opsi untuk mengidentifikasi danmemisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
+        <small>Memerlukan upload audio Server dan model diarization aktif. Browser dan WhisperLiveKit belum mendukung pemisahan pembicara pada alur ini. Label pembicara berlaku per potongan audio, bukan identitas karyawan.</small>
       </div>
     </label>
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}

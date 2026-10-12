@@ -173,6 +173,7 @@ export function MeetingRoom({ callDuration, participants, roomName, employeeId, 
                 </select>
               </div>
               {sttProvider === 'browser' && <p className="transcription-hint-text" role="status">Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.</p>}
+              <p className="transcription-hint-text">{sttProvider === 'browser' || sttModel === 'whisperlivekit-small' ? 'Layanan ini belum mendukung diarization pada alur BaliCall. Pilihan mikrofon bersama tidak memisahkan pembicara di layanan ini.' : 'Diarization memerlukan pilihan mikrofon bersama dan model aktif di layanan upload audio Server. Konfigurasi saja belum membuktikan pemisahan pembicara berhasil.'} Label pembicara berlaku per potongan audio, bukan identitas karyawan.</p>
               {modelPending && <p className="transcription-hint-text" role="status">Menyelesaikan transkrip sebelum mengganti model…</p>}
               {modelError && <p className="transcription-hint-error" role="alert">{modelError}</p>}
             </div>

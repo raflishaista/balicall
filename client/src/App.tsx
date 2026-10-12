@@ -2,6 +2,7 @@ import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
+import { useBackendHealth } from './useBackendHealth';
 import { UserAvatar } from './ProfileEditor';
 import { NotificationCenter } from './NotificationCenter';
 import { EmployeeInvites } from './EmployeeInvites';
@@ -349,53 +350,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     void triggerSummarize(record.meetingId, savedToken, record.roomName, record.transcripts);
   };
 
-  // Backend Health and LLM status
-  const [backendHealth, setBackendHealth] = useState<{
-    status: string;
-    llmProvider?: string;
-    llmModel?: string;
-    llmBaseUrl?: string;
-    hasLlmKey?: boolean;
-    llmEffectiveProvider?: string;
-    livekitStatus?: string;
-    sttProvider?: 'browser' | 'server';
-    sttConfigured?: boolean;
-    sttModel?: string;
-    sttModels?: string[];
-    database?: {
-      connected: boolean;
-      configured: boolean;
-    };
-    outboundWebhookConfigured?: boolean;
-  } | null>(null);
-  const [healthChecked, setHealthChecked] = useState(false);
+  const healthStatus = useBackendHealth();
+  const backendHealth = healthStatus.health;
+  const healthChecked = healthStatus.checked;
 
   useEffect(() => {
     let cancelled = false;
-    const check = async () => {
-      try {
-        const data = await apiRequest<NonNullable<typeof backendHealth>>('/health', {}, 5000);
-        if (!cancelled) setBackendHealth(data);
-      } catch { if (!cancelled) setBackendHealth(null); }
-      finally { if (!cancelled) setHealthChecked(true); }
-    };
-    void check();
-
-    // Fetch authorized employee directory from backend / PostgreSQL
     if (!isGuest) apiRequest<{ employees?: { employee_id: string; name: string; department: string }[] }>('/employees', {}, 5000)
       .then(data => {
         if (!cancelled && data?.employees && data.employees.length > 0) {
-          setPersonas(data.employees.map(e => ({
-            id: e.employee_id,
-            name: e.name,
-            dept: e.department,
-          })));
+          setPersonas(data.employees.map(employee => ({ id: employee.employee_id, name: employee.name, dept: employee.department })));
         }
-      })
-      .catch(() => {});
-
-    const timer = setInterval(() => void check(), 15000);
-    return () => { cancelled = true; clearInterval(timer); };
+      }).catch(() => {});
+    return () => { cancelled = true; };
   }, [isGuest]);
 
   const fetchDbSummaries = useCallback(async () => {
@@ -965,7 +932,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage aiStatus={healthStatus} transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
