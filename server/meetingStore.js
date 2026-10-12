@@ -105,6 +105,56 @@ export class MeetingStore {
     
   }
   get(id) { return this.meetings.get(id); }
+
+  setModeratorMute(meetingId, targetId, muted) {
+    return this.transact(() => {
+      const meeting = this.get(meetingId);
+      if (!meeting) {
+        const error = new Error('Meeting tidak ditemukan.');
+        error.status = 404;
+        throw error;
+      }
+
+      const target = meeting.participants.get(targetId);
+      if (!target || target.leftAt) {
+        const error = new Error('Peserta tidak ditemukan atau sudah meninggalkan meeting.');
+        error.status = 404;
+        throw error;
+      }
+
+      target.moderatorMuted = muted;
+      target.speakRequestAt = null;
+
+      return target;
+    });
+  }
+
+  requestToSpeak(meetingId, targetId) {
+    return this.transact(() => {
+      const meeting = this.get(meetingId);
+      if (!meeting || meeting.status !== 'active') {
+        const error = new Error('Meeting tidak aktif.');
+        error.status = 409;
+        throw error;
+      }
+
+      const target = meeting.participants.get(targetId);
+      if (!target || target.leftAt) {
+        const error = new Error('Peserta tidak ditemukan atau sudah meninggalkan meeting.');
+        error.status = 404;
+        throw error;
+      }
+
+      if (!target.moderatorMuted) {
+        const error = new Error('Mikrofon peserta tidak sedang dibatasi moderator.');
+        error.status = 409;
+        throw error;
+      }
+
+      target.speakRequestAt = new Date().toISOString();
+      return target;
+    });
+  }
   setCoHost(id, actorId, targetId, makeCoHost) {
     return this.transact(() => {
       const meeting = this.get(id);

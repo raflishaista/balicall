@@ -48,7 +48,7 @@ interface Transcript {
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
 
-type ParticipantAction = 'promote' | 'demote' | 'mute' | 'remove';
+type ParticipantAction = 'promote' | 'demote' | 'mute' | 'remove' | 'approve-speak';
 
 interface MeetingRoomProps {
   backgroundControl?: BackgroundBlurControl;
@@ -128,6 +128,15 @@ interface MeetingRoomProps {
   meetingRole: MeetingRole;
   meetingHostId: string | null;
   meetingCoHostIds: string[];
+  microphoneRestricted: boolean;
+  speakRequestPending: boolean;
+  onRequestToSpeak: () => Promise<void>;
+  pendingSpeakRequests: Array<{
+    identity: string;
+    name: string;
+    speakRequestAt: string;
+  }>;
+  speakRequestAt: string | null;
   onManageParticipant: (
     participantId: string,
     action: ParticipantAction
@@ -198,6 +207,11 @@ export function MeetingRoom({
   meetingRole,
   meetingHostId,
   meetingCoHostIds,
+  onRequestToSpeak,
+  speakRequestPending,
+  speakRequestAt,
+  pendingSpeakRequests,
+  microphoneRestricted,
   onManageParticipant,
 }: MeetingRoomProps) {
   const room = useRoomContext();
@@ -911,7 +925,6 @@ export function MeetingRoom({
               
 
                   <small>{participant.identity}</small>
-
                   {canManage && (
                     <div className="participant-management">
                       {meetingRole === 'host' && (
@@ -938,6 +951,23 @@ export function MeetingRoom({
                       >
                         Mute
                       </button>
+
+                      {pendingSpeakRequests.some(
+                        request => request.identity === participant.identity
+                      ) && (
+                        <button
+                          type="button"
+                          disabled={busy || !connected}
+                          onClick={() =>
+                            void handleParticipantAction(
+                              participant.identity,
+                              'approve-speak'
+                            )
+                          }
+                        >
+                          Izinkan Bicara
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -967,6 +997,11 @@ export function MeetingRoom({
           })}
         </div>
       </MeetingPanel>
+      {speakRequestAt && microphoneRestricted && (
+        <p className="speak-request-status" role="status">
+          Permintaan izin bicara telah dikirim. Menunggu persetujuan moderator.
+        </p>
+      )}
 
       <MeetingControls
         canManageMeeting={!employeeId.startsWith('GUEST-')}
@@ -975,6 +1010,9 @@ export function MeetingRoom({
         devicePending={devicePending}
         isMuted={isMuted}
         microphonePending={microphonePending}
+        microphoneRestricted={microphoneRestricted}
+        speakRequestPending={speakRequestPending}
+        onRequestToSpeak={onRequestToSpeak}
         isCameraEnabled={isCameraEnabled}
         cameraPending={cameraPending}
         isScreenShareEnabled={isScreenShareEnabled}

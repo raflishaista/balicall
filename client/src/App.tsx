@@ -147,6 +147,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const [meetingRole, setMeetingRole] = useState<MeetingRole>('participant');
   const [meetingHostId, setMeetingHostId] = useState<string | null>(null);
   const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
+  const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
+  const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
+  const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
+  const [speakRequestPending, setSpeakRequestPending] = useState(false);
+
   const [sttProvider, setSttProvider] = useState<'browser' | 'server'>('browser');
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
@@ -188,6 +193,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
           currentRole?: MeetingRole;
           hostId?: string;
           coHostIds?: string[];
+          microphoneRestricted?: boolean;
+          speakRequestAt?: string | null;
+          pendingSpeakRequests?: Array<{
+            identity: string;
+            name: string;
+            speakRequestAt: string;
+          }>;
         }>(meetingPath(meetingId, 'transcript'), {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
@@ -198,6 +210,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
         setMeetingCoHostIds(data.coHostIds || []);
+        setMicrophoneRestricted(Boolean(data.microphoneRestricted));
+        setSpeakRequestAt(data.speakRequestAt || null);
+        setPendingSpeakRequests(data.pendingSpeakRequests || []);
+     
       } catch {
         // Abaikan kegagalan polling sementara; coba lagi pada interval berikutnya.
       }
@@ -797,7 +813,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
 
   const manageParticipant = async (
     participantId: string,
-    action: 'promote' | 'demote' | 'mute' | 'remove'
+    action: 'promote' | 'demote' | 'mute' | 'remove' | 'approve-speak'
   ) => {
     if (!meetingId || !token) return;
 
@@ -828,11 +844,42 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
         headers,
         body: JSON.stringify({}),
       });
+    } else if (action === 'approve-speak') {
+      await apiRequest(
+        `${participantPath}/approve-speak`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }); 
     } else {
       await apiRequest(participantPath, {
         method: 'DELETE',
         headers,
       });
+    }
+  };
+
+  const requestToSpeak = async () => {
+    if (!meetingId || !token || speakRequestPending) return;
+
+    setSpeakRequestPending(true);
+
+    try {
+      await apiRequest(
+        meetingPath(meetingId, 'request-to-speak'),
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch (error) {
+      setCallError(
+        error instanceof Error
+          ? error.message
+          : 'Permintaan izin bicara gagal dikirim.'
+      );
+    } finally {
+      setSpeakRequestPending(false);
     }
   };
 
@@ -1080,6 +1127,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onAddSpeechLine={handleAddSpeechLine}
             onEndMeeting={handleEndMeeting}
             isSummarizing={isSummarizing}
+            microphoneRestricted={microphoneRestricted}
+            speakRequestPending={speakRequestPending}
+            speakRequestAt={speakRequestAt}
+            pendingSpeakRequests={pendingSpeakRequests}
+            onRequestToSpeak={requestToSpeak}
           />
         )}
 
@@ -1153,6 +1205,8 @@ function InCallView({
   joinMedia, callPreferences,
   recordingPending, recordingError, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+  microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
+  onRequestToSpeak,
   token,
   serverUrl,
   roomName,
@@ -1217,6 +1271,11 @@ function InCallView({
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
+        microphoneRestricted={microphoneRestricted}
+        speakRequestPending={speakRequestPending}
+        speakRequestAt={speakRequestAt}
+        pendingSpeakRequests={pendingSpeakRequests}
+        onRequestToSpeak={onRequestToSpeak}
       />
     </LiveKitRoom>
     </div>
@@ -1224,9 +1283,20 @@ function InCallView({
 }
 
 function RoomContent({
-  sttModels, defaultSttModel, onCreateLiveSession,
-  startWithCamera, callPreferences, recordingPending, recordingError, onToggleRecording,
-  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+  sttModels,
+  defaultSttModel,
+  onCreateLiveSession,
+  startWithCamera,
+  callPreferences,
+  recordingPending,
+  recordingError,
+  onToggleRecording,
+  sttProvider,
+  setSttProvider,
+  sttConfigured,
+  saveBlocked,
+  onAddAudio,
+  onPresence,
   roomName,
   meetingRole,
   meetingHostId,
@@ -1239,6 +1309,11 @@ function RoomContent({
   onAddSpeechLine,
   onEndMeeting,
   isSummarizing,
+  microphoneRestricted,
+  speakRequestPending,
+  speakRequestAt,
+  pendingSpeakRequests,
+  onRequestToSpeak,
 }: any) {
   const participants = useParticipants();
   const room = useRoomContext();
@@ -1337,6 +1412,11 @@ function RoomContent({
     meetingHostId={meetingHostId}
     meetingCoHostIds={meetingCoHostIds}
     onManageParticipant={onManageParticipant}
+    microphoneRestricted={microphoneRestricted}
+    speakRequestPending={speakRequestPending}
+    speakRequestAt={speakRequestAt}
+    onRequestToSpeak={onRequestToSpeak}
+    pendingSpeakRequests={pendingSpeakRequests}
     participants={participants} roomName={roomName} employeeId={employeeId}
     cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
     cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}

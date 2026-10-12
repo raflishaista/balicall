@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Circle, Square, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText, Sparkles } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
+  microphoneRestricted: boolean; speakRequestPending: boolean; onRequestToSpeak: () => Promise<void>;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
   speechEnabled: boolean; speechError: string | null; isListening: boolean; saveBlocked: boolean; finishLabel: string | null;
   onToggleMute: () => Promise<void>; onToggleCamera: () => Promise<void>; onToggleScreenShare: () => Promise<void>;
@@ -24,9 +25,53 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
   }, [moreOpen]);
   return <footer className="call-control-bar" role="group" aria-label="Kontrol rapat" id="meeting-controls">
     <div className="call-controls">
-      <button type="button" className={`call-control ${isMuted ? 'control-muted' : ''}`} aria-label={isMuted ? 'Aktifkan mikrofon' : 'Matikan mikrofon'} aria-pressed={!isMuted} aria-busy={microphonePending} disabled={busy || devicePending || microphonePending || !connected} onClick={() => void onToggleMute()}>
-        {microphonePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isMuted ? <MicOff size={22} /> : <Mic size={22} />}<span>{microphonePending ? 'Memproses…' : isMuted ? 'Aktifkan mic' : 'Mikrofon'}</span>
-      </button>
+    <button
+      type="button"
+      className={`call-control ${
+        isMuted || microphoneRestricted ? 'control-muted' : ''
+      }`}
+      aria-label={
+        microphoneRestricted
+          ? 'Minta izin bicara'
+          : isMuted
+            ? 'Aktifkan mikrofon'
+            : 'Matikan mikrofon'
+      }
+      aria-pressed={!isMuted && !microphoneRestricted}
+      aria-busy={microphonePending || speakRequestPending}
+      disabled={
+        busy ||
+        devicePending ||
+        microphonePending ||
+        speakRequestPending ||
+        !connected
+      }
+      onClick={() =>
+        void (
+          microphoneRestricted
+            ? onRequestToSpeak()
+            : onToggleMute()
+        )
+      }
+    >
+      {microphonePending || speakRequestPending ? (
+        <Loader2 className="ui-spinner" size={22} aria-hidden="true" />
+      ) : isMuted || microphoneRestricted ? (
+        <MicOff size={22} />
+      ) : (
+        <Mic size={22} />
+      )}
+
+      <span>
+        {microphonePending || speakRequestPending
+          ? 'Memproses…'
+          : microphoneRestricted
+            ? 'Minta Izin Bicara'
+            : isMuted
+              ? 'Aktifkan mic'
+              : 'Mikrofon'}
+      </span>
+    </button>
       <button type="button" className={`call-control ${isCameraEnabled ? 'control-active' : 'control-muted'}`} aria-label={isCameraEnabled ? 'Matikan kamera' : 'Aktifkan kamera'} aria-pressed={isCameraEnabled} aria-busy={cameraPending} disabled={busy || cameraPending || devicePending || !connected} onClick={() => void onToggleCamera()}>
         {cameraPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isCameraEnabled ? <Video size={22} /> : <VideoOff size={22} />}<span>{cameraPending ? 'Memproses…' : isCameraEnabled ? 'Kamera' : 'Aktifkan kamera'}</span>
       </button>

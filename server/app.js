@@ -211,11 +211,46 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     
     // Asynchronously record meeting in PostgreSQL if configured
     saveMeeting({ id: meeting.id, roomName: meeting.roomName, status: 'active', createdAt: meeting.createdAt }).catch(() => {});
+    const participant = meeting.participants.get(cleanId);
+    const microphoneIsRestricted = Boolean(participant?.moderatorMuted);
 
     const at = new AccessToken(config.livekitKey, config.livekitSecret, {
-      identity: cleanId, name: employeeName.trim(), ttl: '12h',
-      metadata: JSON.stringify({ meetingId: meeting.id, department: department.trim(), employeeId: cleanId, isGuest: Boolean(req.auth?.user.isGuest) }) });
-    at.addGrant({ room: meeting.livekitRoom, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
+      identity: cleanId,
+      name: employeeName.trim(),
+      ttl: '12h',
+      metadata: JSON.stringify({
+        meetingId: meeting.id,
+        department: department.trim(),
+        employeeId: cleanId,
+        isGuest: Boolean(req.auth?.user.isGuest),
+      }),
+    });
+
+    const grant = {
+      room: meeting.livekitRoom,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    };
+
+    if (microphoneIsRestricted) {
+      // TrackSource: camera=1, microphone=2,
+      // screen_share=3, screen_share_audio=4.
+      grant.canPublishSources = [1, 3, 4];
+    }
+
+    at.addGrant(grant);
+
+    res.json({
+      token: await at.toJwt(),
+      url: config.livekitUrl,
+      roomName: meeting.roomName,
+      meetingId: meeting.id,
+      sttProvider: config.sttProvider,
+    });
+
+    at.addGrant(grant);
     res.json({ token: await at.toJwt(), url: config.livekitUrl, roomName: meeting.roomName, meetingId: meeting.id, sttProvider: config.sttProvider });
   }));
 
@@ -495,44 +530,183 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
         });
       }
 
-      // Co-host tidak boleh mengelola host utama atau co-host lain.
       if (
         access.role === 'co-host' &&
-        (targetId === access.meeting.hostId ||
-          (access.meeting.coHostIds || []).includes(targetId))
+        (
+          targetId === access.meeting.hostId ||
+          (access.meeting.coHostIds || []).includes(targetId)
+        )
       ) {
         return res.status(403).json({
           error: 'Co-host hanya dapat mute peserta biasa.',
         });
       }
 
-      const participants = await roomService.listParticipants(
-        access.meeting.livekitRoom
-      );
+      // Simpan pembatasan terlebih dahulu agar status tetap ada saat reconnect.
+      store.setModeratorMute(access.meeting.id, targetId, true);
 
-      const liveParticipant = participants.find(
-        person => person.identity === targetId
-      );
+      try {
+        const participants = await roomService.listParticipants(
+          access.meeting.livekitRoom
+        );
 
-  
-      const microphone = liveParticipant?.tracks?.find(
-        track => Number(track.source) === 2
-      );
+        const liveParticipant = participants.find(
+          person => person.identity === targetId
+        );
 
-      if (!microphone?.sid) {
-        return res.status(409).json({
-          error: 'Track mikrofon peserta tidak ditemukan atau belum aktif.',
+        if (liveParticipant) {
+          const currentPermission = liveParticipant.permission || {};
+
+          // Pertahankan izin yang ada, tetapi cabut izin publish mikrofon.
+          const currentSources = currentPermission.canPublishSources;
+          const allowedSources = Array.isArray(currentSources)
+            ? currentSources.filter(source => Number(source) !== 2)
+            : [1, 3, 4];
+
+          await roomService.updateParticipant(
+            access.meeting.livekitRoom,
+            targetId,
+            {
+              permission: {
+                canSubscribe: currentPermission.canSubscribe ?? true,
+                canPublish: currentPermission.canPublish ?? true,
+                canPublishData: currentPermission.canPublishData ?? true,
+                canPublishSources: allowedSources,
+              },
+            }
+          );
+          
+          const audioTracks = (liveParticipant.tracks || []).filter(
+            track => Number(track.type) === 0 && !track.muted
+          );
+
+          for (const track of audioTracks) {
+            await roomService.mutePublishedTrack(
+              access.meeting.livekitRoom,
+              targetId,
+              track.sid,
+              true
+            );
+          }
+        }
+
+        return res.json({ success: true, muted: true });
+      } catch (error) {
+        console.error('Gagal menerapkan pembatasan mikrofon:', error);
+
+        return res.status(502).json({
+          error:
+            'Status mute sudah tersimpan, tetapi izin LiveKit gagal diperbarui. Periksa koneksi LiveKit.',
+        });
+      }
+    })
+  );
+
+  // Peserta meminta izin untuk berbicara.
+  app.post(
+    '/api/meetings/:id/request-to-speak',
+    asyncRoute(async (req, res) => {
+      const meeting = store.get(req.meetingId);
+
+      if (!meeting || meeting.status !== 'active') {
+        return res.status(409).json({ error: 'Meeting tidak aktif.' });
+      }
+
+      const participant = meeting.participants.get(req.speakerId);
+
+      if (!participant || participant.leftAt) {
+        return res.status(404).json({ error: 'Peserta tidak ditemukan.' });
+      }
+
+      const result = store.requestToSpeak(meeting.id, req.speakerId);
+
+      return res.json({
+        success: true,
+        speakRequestAt: result.speakRequestAt,
+      });
+    })
+  );
+
+  // Host/co-host menyetujui permintaan bicara.
+  app.post(
+    '/api/meetings/:id/participants/:participantId/approve-speak',
+    asyncRoute(async (req, res) => {
+      const access = requireMeetingManager(req, res);
+      if (!access) return;
+
+      const targetId = req.params.participantId;
+      const target = access.meeting.participants.get(targetId);
+
+      if (!target || target.leftAt) {
+        return res.status(404).json({
+          error: 'Peserta tidak ditemukan atau sudah meninggalkan meeting.',
         });
       }
 
-      await roomService.mutePublishedTrack(
-        access.meeting.livekitRoom,
-        targetId,
-        microphone.sid,
-        true
-      );
+      if (
+        access.role === 'co-host' &&
+        (
+          targetId === access.meeting.hostId ||
+          (access.meeting.coHostIds || []).includes(targetId)
+        )
+      ) {
+        return res.status(403).json({
+          error: 'Co-host hanya dapat menyetujui peserta biasa.',
+        });
+      }
 
-      res.json({ success: true, muted: true });
+      if (!target.moderatorMuted || !target.speakRequestAt) {
+        return res.status(409).json({
+          error: 'Tidak ada permintaan izin bicara yang menunggu.',
+        });
+      }
+
+      // Hapus pembatasan yang tersimpan.
+      store.setModeratorMute(access.meeting.id, targetId, false);
+
+      try {
+        const participants = await roomService.listParticipants(
+          access.meeting.livekitRoom
+        );
+
+        const liveParticipant = participants.find(
+          person => person.identity === targetId
+        );
+
+        if (liveParticipant) {
+          const permission = liveParticipant.permission || {};
+          const sources = Array.isArray(permission.canPublishSources)
+            ? permission.canPublishSources.map(Number)
+            : [1, 2, 3, 4];
+
+          if (!sources.includes(2)) sources.push(2);
+
+          await roomService.updateParticipant(
+            access.meeting.livekitRoom,
+            targetId,
+            {
+              permission: {
+                canSubscribe: permission.canSubscribe ?? true,
+                canPublish: permission.canPublish ?? true,
+                canPublishData: permission.canPublishData ?? true,
+                canPublishSources: sources,
+              },
+            }
+          );
+        }
+
+        return res.json({
+          success: true,
+          microphoneRestricted: false,
+          // Persetujuan tidak menyalakan mikrofon secara otomatis.
+        });
+      } catch (error) {
+        console.error('Gagal memperbarui izin bicara:', error);
+
+        return res.status(502).json({
+          error: 'Izin bicara tersimpan, tetapi izin LiveKit gagal diperbarui.',
+        });
+      }
     })
   );
 
@@ -607,9 +781,35 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
           ? 'co-host'
           : 'participant'
       : 'participant';
-    res.json({ meetingId: meeting.id, roomName: meeting.roomName, status: meeting.status,
-      isSummarizing: inFlightSummarize.has(meeting.id), hostId: meeting.hostId, coHostIds: meeting.coHostIds || [], currentRole,
-      transcripts: meeting.transcripts, participants: [...meeting.participants.values()].map(publicParticipant), summary: meeting.summary, attendanceFinalization: meeting.attendanceFinalization || null });
+    res.json({
+      meetingId: meeting.id,
+      roomName: meeting.roomName,
+      status: meeting.status,
+      isSummarizing: inFlightSummarize.has(meeting.id),
+      hostId: meeting.hostId,
+      coHostIds: meeting.coHostIds || [],
+      currentRole,
+      transcripts: meeting.transcripts,
+      participants: [...meeting.participants.values()].map(publicParticipant),
+      summary: meeting.summary,
+      attendanceFinalization: meeting.attendanceFinalization || null,
+
+      microphoneRestricted: Boolean(meeting.participants.get(req.speakerId)?.moderatorMuted),
+      speakRequestAt:
+        meeting.participants.get(req.speakerId)?.speakRequestAt || null,
+      pendingSpeakRequests: [...meeting.participants.values()]
+        .filter(
+          person =>
+            !person.leftAt &&
+            person.moderatorMuted &&
+            person.speakRequestAt
+        )
+        .map(person => ({
+          identity: person.employeeId,
+          name: person.name,
+          speakRequestAt: person.speakRequestAt,
+        })),
+    });
   });
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
