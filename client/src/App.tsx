@@ -9,7 +9,7 @@ import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
-import { mediaChoices, resolveTranscriptionPreferences } from './preferences';
+import { mediaChoices, resolveTranscriptionPreferences, getRecommendedProvider } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
@@ -525,10 +525,12 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       endingMeeting.current = false;
       summaryGeneration.current++;
       setIsSummarizing(false);
-      setCallPreferences({ ...userPreferences.preferences });
+      setCallPreferences({ ...userPreferences.preferences, sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false });
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
-      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
+      const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
+      const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : data.sttProvider;
+      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
@@ -766,9 +768,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
+    const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
-        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}) }, body: audio,
+        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
+        ...(isSharedMic ? { 'X-Speech-Diarize': 'true' } : {}) }, body: audio,
     }, 125000).then(result => ({ ...result, meetingId })));
   };
 
@@ -799,6 +803,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation === joinGeneration.current) setRecordingPending(false);
     }
   };
+
+  const handleToggleSharedMic = useCallback((enabled: boolean) => {
+    setCallPreferences(prev => ({ ...prev, sharedRoomMic: enabled }));
+    setJoinMedia(prev => ({ ...prev, sharedRoomMic: enabled }));
+  }, []);
 
   const copyMarkdownSummary = () => {
     if (!summary) return;
@@ -970,7 +979,19 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isJoining={isJoining}
             joinError={joinError}
             onJoin={handleJoin}
-            mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} mirror={userPreferences.preferences.mirrorLocalVideo} />}
+            mediaPreview={<PreJoinPreview
+              media={preJoinMedia}
+              employeeName={employeeName}
+              blocked={isJoining}
+              mirror={userPreferences.preferences.mirrorLocalVideo}
+              onToggleSharedMic={enabled => userPreferences.save({ ...userPreferences.preferences, sharedRoomMic: enabled })}
+              transcriptionProvider={userPreferences.preferences.transcriptionProvider}
+              onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
+              transcriptionModel={userPreferences.preferences.transcriptionModel}
+              onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
+              sttConfigured={backendHealth?.sttConfigured ?? false}
+              sttModels={backendHealth?.sttModels ?? []}
+            />}
             identityLocked={Boolean(authUser)}
             personas={authUser ? [] : personas}
           />
@@ -989,6 +1010,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               else if (rec?.status === 'stopped') setIsRecording(false);
             }}
             callPreferences={callPreferences}
+            onToggleSharedMic={handleToggleSharedMic}
             token={token}
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
@@ -1092,6 +1114,7 @@ function InCallView({ callDuration,
   onAddSpeechLine,
   onEndMeeting,
   isSummarizing,
+  onToggleSharedMic,
 }: any) {
   const [mediaOptions] = useState(() => ({
     audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
@@ -1127,6 +1150,7 @@ function InCallView({ callDuration,
         isRecording={isRecording}
         onToggleRecording={onToggleRecording}
         callPreferences={callPreferences}
+        onToggleSharedMic={onToggleSharedMic}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
@@ -1146,7 +1170,7 @@ function InCallView({ callDuration,
 
 function RoomContent({ callDuration,
   sttModels, defaultSttModel, onCreateLiveSession,
-  startWithCamera, callPreferences, recordingPending, recordingError, isRecording, onToggleRecording,
+  startWithCamera, callPreferences, onToggleSharedMic, recordingPending, recordingError, isRecording, onToggleRecording,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   roomName,
   employeeId,
@@ -1270,7 +1294,7 @@ function RoomContent({ callDuration,
     backgroundControl={blur}
     isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
     cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} onClose={closeDevices} />}</>;
+  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} sharedRoomMic={callPreferences.sharedRoomMic} onToggleSharedMic={onToggleSharedMic} onClose={closeDevices} />}</>;
 }
 
 function SummaryView({
@@ -1365,9 +1389,13 @@ function SummaryView({
       setExporting(null);
     }
   };
-  const filteredTranscripts = transcripts.filter(entry =>
-    `${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID'))
-  );
+  const filteredTranscripts = transcripts.filter(entry => {
+    const q = query.trim().toLocaleLowerCase('id-ID');
+    if (!q) return true;
+    if (`${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(q)) return true;
+    if (entry.segments?.some(s => `${s.speaker} ${s.text}`.toLocaleLowerCase('id-ID').includes(q))) return true;
+    return false;
+  });
 
   if (isSummarizing && !summary) {
     return (
@@ -1420,14 +1448,29 @@ function SummaryView({
             </div>
             {transcripts.length > 0 ? (
               <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                {transcripts.map(entry => (
-                  <article className="recap-transcript-entry" key={entry.id}>
-                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-                    <div>
-                      <strong>{entry.speakerName}</strong>
-                      <p>{entry.text}</p>
-                    </div>
-                  </article>
+                {transcripts.flatMap(entry => (
+                  entry.segments && entry.segments.length > 0 ? (
+                    entry.segments.map((segment, sIdx) => (
+                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                        <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                        <div>
+                          <strong>
+                            {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
+                            <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </strong>
+                          <p>{segment.text}</p>
+                        </div>
+                      </article>
+                    ))
+                  ) : [
+                    <article className="recap-transcript-entry" key={entry.id}>
+                      <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                      <div>
+                        <strong>{entry.speakerName}</strong>
+                        <p>{entry.text}</p>
+                      </div>
+                    </article>
+                  ]
                 ))}
               </div>
             ) : (
@@ -1489,14 +1532,29 @@ function SummaryView({
             </div>
             {transcripts.length > 0 ? (
               <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                {transcripts.map(entry => (
-                  <article className="recap-transcript-entry" key={entry.id}>
-                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-                    <div>
-                      <strong>{entry.speakerName}</strong>
-                      <p>{entry.text}</p>
-                    </div>
-                  </article>
+                {transcripts.flatMap(entry => (
+                  entry.segments && entry.segments.length > 0 ? (
+                    entry.segments.map((segment, sIdx) => (
+                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                        <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                        <div>
+                          <strong>
+                            {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
+                            <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </strong>
+                          <p>{segment.text}</p>
+                        </div>
+                      </article>
+                    ))
+                  ) : [
+                    <article className="recap-transcript-entry" key={entry.id}>
+                      <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                      <div>
+                        <strong>{entry.speakerName}</strong>
+                        <p>{entry.text}</p>
+                      </div>
+                    </article>
+                  ]
                 ))}
               </div>
             ) : (
@@ -1606,7 +1664,30 @@ function SummaryView({
 
         {tab === 'transcript' && <div className="summary-panel"><section className="summary-section">
           <div className="transcript-heading"><div><h2>Transkrip lengkap</h2><p>{filteredTranscripts.length} dari {transcripts.length} ucapan</p></div><label className="transcript-search"><Search size={15} /><input aria-label="Cari transkrip" value={query} onChange={event => setQuery(event.target.value)} placeholder="Cari nama atau isi ucapan" /></label></div>
-          {filteredTranscripts.length ? <div className="recap-transcript-list">{filteredTranscripts.map(entry => <article className="recap-transcript-entry" key={entry.id}><time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time><div><strong>{entry.speakerName}</strong><p>{entry.text}</p></div></article>)}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
+          {filteredTranscripts.length ? <div className="recap-transcript-list">{filteredTranscripts.flatMap(entry => (
+            entry.segments && entry.segments.length > 0 ? (
+              entry.segments.map((segment, sIdx) => (
+                <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                  <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                  <div>
+                    <strong>
+                      {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
+                      <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                    </strong>
+                    <p>{segment.text}</p>
+                  </div>
+                </article>
+              ))
+            ) : [
+              <article className="recap-transcript-entry" key={entry.id}>
+                <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                <div>
+                  <strong>{entry.speakerName}</strong>
+                  <p>{entry.text}</p>
+                </div>
+              </article>
+            ]
+          ))}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
         </section></div>}
       </section>
     </div>

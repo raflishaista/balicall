@@ -50,7 +50,7 @@ test('opening lobby only enumerates devices, captures require user action', asyn
 });
 test('saved preferences can be applied without capture and replace a running preview safely', async t => {
   const h = await mount(t);
-  const preferences = { microphoneEnabled: false, cameraEnabled: false, microphoneId: 'mic-b', cameraId: 'cam-b' };
+  const preferences = { microphoneEnabled: false, cameraEnabled: false, microphoneId: 'mic-b', cameraId: 'cam-b', sharedRoomMic: false };
   await act(async () => h.current.applyChoices(preferences));
   assert.equal(h.media.calls.length, 0); assert.deepEqual(h.current.choices, preferences);
   await act(async () => h.current.capture('videoinput'));
@@ -65,7 +65,7 @@ test('joining snapshots chosen input devices and stops both preview tracks', asy
   const h = await mount(t);
   await act(async () => { h.current.select('audioinput', 'mic-b'); h.current.select('videoinput', 'cam-b'); await h.current.capture('audioinput'); await h.current.capture('videoinput'); });
   let choices; await act(async () => { choices = h.current.prepareJoin(); });
-  assert.deepEqual(choices, { microphoneEnabled: true, cameraEnabled: true, microphoneId: 'mic-b', cameraId: 'cam-b' });
+  assert.deepEqual(choices, { microphoneEnabled: true, cameraEnabled: true, microphoneId: 'mic-b', cameraId: 'cam-b', sharedRoomMic: false });
   assert.ok(h.media.captures.every(capture => capture.track.readyState === 'ended'));
   assert.equal(h.current.streams.audioinput, null); assert.equal(h.current.streams.videoinput, null);
 });

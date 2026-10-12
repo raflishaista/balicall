@@ -9,7 +9,7 @@ test('preferences round-trip restores media and display choices without identity
   const written = writePreferences(storage, choices);
   assert.deepEqual(readPreferences(storage).preferences, written);
   assert.ok(!raw.includes('DO-NOT-STORE'));
-  assert.deepEqual(mediaChoices(written), { microphoneEnabled: false, cameraEnabled: false, microphoneId: 'mic-2', cameraId: 'cam-2' });
+  assert.deepEqual(mediaChoices(written), { microphoneEnabled: false, cameraEnabled: false, microphoneId: 'mic-2', cameraId: 'cam-2', sharedRoomMic: false });
 });
 test('invalid preference types and device identifiers cannot become capture constraints', () => {
   assert.deepEqual(normalizePreferences({ microphoneEnabled: 'false', cameraEnabled: 0, microphoneId: {}, cameraId: '', outputId: 'a'.repeat(257), autoSpotlight: null }), DEFAULT_PREFERENCES);

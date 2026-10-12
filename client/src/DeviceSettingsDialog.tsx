@@ -6,8 +6,9 @@ import type { useDeviceSettings } from './useDeviceSettings';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
-export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, onClose }: {
-  settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean; onClose: () => void;
+export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, sharedRoomMic = false, onToggleSharedMic, onClose }: {
+  settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
+  sharedRoomMic?: boolean; onToggleSharedMic?: (enabled: boolean) => void; onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -43,6 +44,7 @@ export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, 
     <div className="device-settings-grid"><div className="device-selectors">
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
+      {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedRoomMic} disabled={disabled} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />
       {!settings.outputSupported ? <p className="device-help">Browser ini belum mendukung pemilihan speaker. Atur output melalui pengaturan suara sistem.</p> : settings.outputPickerSupported && <button type="button" className="text-button" disabled={disabled} onClick={() => void settings.requestOutput()}>Izinkan / pilih speaker melalui browser</button>}

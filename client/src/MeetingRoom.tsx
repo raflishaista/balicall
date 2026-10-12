@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react';
-import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { AudioLines, Check, ChevronDown, FileText, Loader2, Mic, Send, Users, VideoOff, Grid2X2, UserRound, ChevronLeft, ChevronRight, Sparkles, SlidersHorizontal } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
 import { shouldMirrorCamera } from './backgroundEffects';
@@ -137,10 +137,81 @@ export function MeetingRoom({ callDuration, participants, roomName, employeeId, 
     <MeetingPanel open={panelVisible} compact={compact} onClose={closePanel}>
 <div className="call-panel-tabs" role="tablist" aria-label="Panel rapat"><button ref={transcriptTab} role="tab" id={`${tabId}-transcript-tab`} aria-controls={`${tabId}-transcript-panel`} aria-selected={activeTab === 'transcript'} tabIndex={activeTab === 'transcript' ? 0 : -1} className={activeTab === 'transcript' ? 'active' : ''} onKeyDown={tabKeys} onClick={() => setActiveTab('transcript')}><FileText size={17} />Transkrip</button><button ref={attendanceTab} role="tab" id={`${tabId}-attendance-tab`} aria-controls={`${tabId}-attendance-panel`} aria-selected={activeTab === 'attendance'} tabIndex={activeTab === 'attendance' ? 0 : -1} className={activeTab === 'attendance' ? 'active' : ''} onKeyDown={tabKeys} onClick={() => setActiveTab('attendance')}><Users size={17} />Peserta <span>{participants.length}</span></button></div>
       <div className="call-tab-panel" role="tabpanel" id={`${tabId}-transcript-panel`} aria-labelledby={`${tabId}-transcript-tab`} hidden={activeTab !== 'transcript'} tabIndex={0}>
-        <div className="transcription-settings"><div className="transcription-status" role="status"><i className={isListening ? 'status-dot online' : speechError ? 'status-dot offline' : 'status-dot'} />{transcriptStatus}</div><select aria-label="Bahasa transkripsi" value={speechLanguage} disabled={busy} onChange={event => setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select><label>Layanan transkripsi<select aria-label="Layanan transkripsi" value={sttProvider} disabled={busy} onChange={event => setSttProvider(event.target.value as 'browser' | 'server')}><option value="browser">Browser</option><option value="server" disabled={!sttConfigured}>Server{!sttConfigured ? ' · belum tersedia' : ''}</option></select></label><label>Model transkripsi<select aria-label="Model transkripsi" value={sttModel} disabled={busy || devicePending || microphonePending || sttProvider !== 'server' || !sttConfigured || !sttModels.length} onChange={event => void onChangeSttModel(event.target.value)}>{!sttModels.length && <option value="">Belum tersedia</option>}{sttModels.map(model => <option key={model} value={model}>{model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)' : model === 'small-id' ? 'faster-whisper · Small Indonesian' : model === 'small' ? 'faster-whisper · Small' : model}</option>)}</select></label></div>{sttProvider === 'browser' && <p role="status">Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.</p>}{modelPending && <p role="status">Menyelesaikan transkrip sebelum mengganti model…</p>}{modelError && <p role="alert">{modelError}</p>}
+        <div className="transcription-bar">
+          <details className="transcription-dropdown">
+            <summary className="transcription-bar-header" aria-label="Opsi transkripsi">
+              <div className="transcription-status" role="status">
+                <i className={isListening ? 'status-dot online' : speechError ? 'status-dot offline' : 'status-dot'} />
+                <span>{transcriptStatus}</span>
+              </div>
+              <span className="transcription-options-btn">
+                <SlidersHorizontal size={12} />
+                <span>Opsi</span>
+                <ChevronDown size={11} className="dropdown-chevron" />
+              </span>
+            </summary>
+            <div className="transcription-dropdown-panel">
+              <div className="transcription-dropdown-field">
+                <label htmlFor="stt-lang-select">Bahasa</label>
+                <select id="stt-lang-select" aria-label="Bahasa transkripsi" value={speechLanguage} disabled={busy} onChange={event => setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')}>
+                  <option value="id-ID">Bahasa Indonesia</option>
+                  <option value="en-US">English</option>
+                </select>
+              </div>
+              <div className="transcription-dropdown-field">
+                <label htmlFor="stt-provider-select">Layanan</label>
+                <select id="stt-provider-select" aria-label="Layanan transkripsi" value={sttProvider} disabled={busy} onChange={event => setSttProvider(event.target.value as 'browser' | 'server')}>
+                  <option value="browser">Browser</option>
+                  <option value="server" disabled={!sttConfigured}>Server{!sttConfigured ? ' · belum tersedia' : ''}</option>
+                </select>
+              </div>
+              <div className="transcription-dropdown-field">
+                <label htmlFor="stt-model-select">Model</label>
+                <select id="stt-model-select" aria-label="Model transkripsi" value={sttModel} disabled={busy || devicePending || microphonePending || sttProvider !== 'server' || !sttConfigured || !sttModels.length} onChange={event => void onChangeSttModel(event.target.value)}>
+                  {!sttModels.length && <option value="">Belum tersedia</option>}
+                  {sttModels.map(model => <option key={model} value={model}>{model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)' : model === 'small-id' ? 'faster-whisper · Small Indonesian' : model === 'small' ? 'faster-whisper · Small' : model}</option>)}
+                </select>
+              </div>
+              {sttProvider === 'browser' && <p className="transcription-hint-text" role="status">Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.</p>}
+              {modelPending && <p className="transcription-hint-text" role="status">Menyelesaikan transkrip sebelum mengganti model…</p>}
+              {modelError && <p className="transcription-hint-error" role="alert">{modelError}</p>}
+            </div>
+          </details>
+        </div>
         {speechError && <div className="transcription-error" role="alert"><p>{speechError}</p><button disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}>Coba transkripsi lagi</button></div>}
         <div className="live-transcript-list" role="log" aria-label="Transkrip langsung" aria-live="polite" aria-relevant="additions" tabIndex={0}>
-          {transcripts.length ? transcripts.map(entry => <article className="live-transcript-entry" key={entry.id}><time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time><span className={entry.speakerId === employeeId ? 'transcript-avatar local' : 'transcript-avatar'}>{initials(entry.speakerName)}</span><div><strong>{entry.speakerName}</strong><p>{entry.segments?.length ? entry.segments.map((segment, index) => <span key={index} style={{ display: 'block' }}><small>{segment.start.toFixed(1)}–{segment.end.toFixed(1)}s · {segment.speaker} (klip ini)</small><br />{segment.text}</span>) : entry.text}</p></div></article>) : <div className="transcript-empty"><span><AudioLines size={31} /></span><h3>Ruang untuk setiap suara.</h3><p>{isListening ? 'Mulai berbicara. Ucapan yang dikenali akan muncul di sini.' : 'Transkrip akan tampil setelah layanan mulai mendengarkan mikrofonmu.'}</p></div>}
+          {transcripts.length ? transcripts.flatMap(entry => {
+            if (entry.segments && entry.segments.length > 0) {
+              return entry.segments.map((segment, index) => (
+                <article className="live-transcript-entry diarized" key={`${entry.id}-${index}`}>
+                  <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                  <span className="transcript-avatar diarized" title={`${segment.speaker} (${entry.speakerName})`}>
+                    {initials(segment.speaker)}
+                  </span>
+                  <div>
+                    <div className="transcript-speaker-heading">
+                      <strong>{segment.speaker}</strong>
+                      <span className="transcript-origin-user">({entry.speakerName})</span>
+                      <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                    </div>
+                    <p>{segment.text}</p>
+                  </div>
+                </article>
+              ));
+            }
+            return [
+              <article className="live-transcript-entry" key={entry.id}>
+                <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                <span className={entry.speakerId === employeeId ? 'transcript-avatar local' : 'transcript-avatar'}>
+                  {initials(entry.speakerName)}
+                </span>
+                <div>
+                  <strong>{entry.speakerName}</strong>
+                  <p>{entry.text}</p>
+                </div>
+              </article>
+            ];
+          }) : <div className="transcript-empty"><span><AudioLines size={31} /></span><h3>Ruang untuk setiap suara.</h3><p>{isListening ? 'Mulai berbicara. Ucapan yang dikenali akan muncul di sini.' : 'Transkrip akan tampil setelah layanan mulai mendengarkan mikrofonmu.'}</p></div>}
         </div>
         {interimText && <div className="interim-transcript"><AudioLines size={16} /><p>{interimText}</p></div>}
         {import.meta.env.DEV && <details className="manual-transcript"><summary>Tambahkan ucapan manual <ChevronDown size={14} /></summary><form onSubmit={event => { event.preventDefault(); if (manualText.trim()) { onAddSpeechLine(manualText.trim()); setManualText(''); } }}><input aria-label="Ucapan manual" value={manualText} disabled={busy || saveBlocked} onChange={event => setManualText(event.target.value)} placeholder="Ketik ucapan untuk pengujian" required /><button type="submit" aria-label="Simpan ucapan manual" disabled={busy || saveBlocked}><Send size={16} /></button></form></details>}

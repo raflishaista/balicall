@@ -595,6 +595,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
     const model = req.get('X-Speech-Model') || config.sttModel;
+    const diarize = req.get('X-Speech-Diarize') === 'true' || config.sttDiarization;
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
@@ -605,7 +606,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;
     if (!inFlightAudio.has(key)) {
       const work = (async () => {
-        const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model }, fetchImpl);
+        const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model, sttDiarization: diarize }, fetchImpl);
         const meeting = store.get(req.meetingId);
         if (meeting.status !== 'active' || meeting.participants.get(req.speakerId).leftAt) throw new ServiceError('Meeting ended before audio could be saved', 409);
         if (!text) store.saveEmptyAudioRequest(req.meetingId, req.speakerId, requestId);

@@ -79,7 +79,12 @@ export function effectiveLlm(config) {
 }
 
 export async function summarize(meeting, config, fetchImpl = fetch) {
-  const dialogue = meeting.transcripts.map(entry => `[${entry.speakerName}]: ${entry.text}`).join('\n');
+  const dialogue = meeting.transcripts.map(entry => {
+    if (entry.segments && entry.segments.length > 0) {
+      return entry.segments.map(seg => `[${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
+    }
+    return `[${entry.speakerName}]: ${entry.text}`;
+  }).join('\n');
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
   const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines or assignments. Use empty arrays if none were stated. Return only JSON with this exact shape:
 {"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":["string"]}
@@ -88,7 +93,12 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
   if (provider === 'demo') {
     return {
       title: `Meeting: ${meeting.roomName}`, executiveSummary: `Pratinjau demo: ${meeting.transcripts.length} kalimat tersimpan. Ringkasan AI belum tersedia.`,
-      keyDiscussionPoints: meeting.transcripts.map(entry => `${entry.speakerName}: ${entry.text}`),
+      keyDiscussionPoints: meeting.transcripts.flatMap(entry => {
+        if (entry.segments && entry.segments.length > 0) {
+          return entry.segments.map(seg => `${entry.speakerName} (${seg.speaker}): ${seg.text}`);
+        }
+        return [`${entry.speakerName}: ${entry.text}`];
+      }),
       decisions: [], actionItems: [], attendanceSummary: attendance,
       provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
@@ -133,7 +143,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   }, config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
   const text = data.text.trim();
-  if (!config.sttDiarization) return { text };
+  if (!config.sttDiarization || !data.segments) return { text };
   if (!Array.isArray(data.segments) || data.segments.length > 10000) throw new ServiceError('The speech service returned invalid diarization segments');
   const segments = data.segments.map(segment => {
     if (!segment || typeof segment.text !== 'string' || typeof segment.speaker !== 'string' ||
