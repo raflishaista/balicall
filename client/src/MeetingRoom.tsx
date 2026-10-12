@@ -18,6 +18,7 @@ import './MeetingLayout.css';
 import { ScreenShareStage } from './ScreenShareStage';
 import { usePresentationView } from './usePresentationView';
 import { usePresentationFullscreen } from './usePresentationFullscreen';
+import { usePresentationEscape } from './usePresentationEscape';
 
 interface Transcript {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
@@ -65,6 +66,7 @@ export function MeetingRoom({ callDuration, participants, roomName, employeeId, 
   const sharing=screenTracks.length>0;
   const presentation=usePresentationView(sharing,panelOpen);
   const fullScreen=usePresentationFullscreen(roomRef,sharing);
+  usePresentationEscape(presentation.focused, presentation.toggleFocus);
   const panelVisible=presentation.panelVisible;
   const changePanel=(value:boolean)=>{if(sharing)presentation.setPanelVisible(value);else setPanelOpen(value);};
   const minPercent = Math.max(20, roomWidth ? 280 / roomWidth * 100 : 20);
@@ -100,9 +102,7 @@ export function MeetingRoom({ callDuration, participants, roomName, employeeId, 
   };
   const transcriptStatus = !connected ? 'Menunggu koneksi' : isMuted ? 'Mikrofon nonaktif' : saveBlocked ? 'Penyimpanan tertunda' : speechError ? 'Transkripsi bermasalah' : isListening ? 'Mendengarkan' : speechEnabled ? 'Memulai transkripsi' : 'Transkripsi dihentikan';
 
-  return <div ref={roomRef} className={`call-room meeting-layout ${panelVisible && !compact ? 'panel-open' : 'panel-closed'} ${presentation.focused?'presentation-focused':''}`} style={{ gridTemplateColumns: panelVisible && !compact ? `minmax(0, 1fr) 10px ${panelWidth}%` : 'minmax(0, 1fr)' }} onKeyDown={event=>{
-    if(event.key==='Escape'&&!event.defaultPrevented&&presentation.focused&&!document.fullscreenElement&&!roomRef.current?.querySelector('dialog[open], #meeting-more-options:not([hidden])')){event.preventDefault();presentation.toggleFocus();}
-  }}>
+  return <div ref={roomRef} className={`call-room meeting-layout ${panelVisible && !compact ? 'panel-open' : 'panel-closed'} ${presentation.focused?'presentation-focused':''}`} style={{ gridTemplateColumns: panelVisible && !compact ? `minmax(0, 1fr) 10px ${panelWidth}%` : 'minmax(0, 1fr)' }}>
     <section className={`call-stage ${screenTracks.length ? 'has-screen-share' : ''}`}>
       <div className="call-info-bar"><div><span className="room-label">#{roomName}</span><span className="call-connection" role="status"><i className={connected ? 'status-dot online' : 'status-dot offline'} />{connectionLabel}</span></div>{sharing && <span className="presentation-clock" aria-label="Durasi rapat">BaliCall · {callDuration}</span>}<span className="participant-count"><Users size={16} />{participants.length} peserta</span></div>
       <div className="meeting-view-bar"><div className="meeting-view-toggle" role="group" aria-label="Tampilan peserta">
