@@ -377,6 +377,10 @@ input::placeholder { color: #a1b1c6; }
 .recap-time-range { color: #94a3b8; font-size: 8px; font-weight: normal; margin-left: 6px; }
 .live-transcript-entry strong { color: #466485; font-size: 11px; font-weight: 600; }
 .live-transcript-entry p { margin: 5px 0 0; color: #5b7390; font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.transcript-username { display: block; font-weight: 600; color: #466485; font-size: 11px; }
+.recap-transcript-entry .transcript-username { color: #5377a3; }
+.transcript-diarized-row { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
+.transcript-diarized-speaker { display: inline-block; padding: 1px 6px; background: #e0f2fe; color: #0284c7; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .2px; }
 .segment-speaker-tag { display: inline-block; padding: 1px 7px; margin-bottom: 3px; background: #e0f2fe; color: #0284c7; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .2px; }
 .transcript-empty { display: flex; align-items: center; flex-direction: column; justify-content: center; min-height: 270px; padding: 20px; text-align: center; }
 .transcript-empty > span { display: grid; place-items: center; width: 61px; height: 61px; border-radius: 18px; background: #f1f6ff; color: #7aace5; }

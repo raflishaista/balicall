@@ -1459,10 +1459,11 @@ function SummaryView({
                       <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
                         <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                         <div>
-                          <strong>
-                            {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
-                            <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
-                          </strong>
+                          <strong className="transcript-username">{entry.speakerName}</strong>
+                          <div className="transcript-diarized-row">
+                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </div>
                           <p>{segment.text}</p>
                         </div>
                       </article>
@@ -1543,10 +1544,11 @@ function SummaryView({
                       <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
                         <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                         <div>
-                          <strong>
-                            {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
-                            <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
-                          </strong>
+                          <strong className="transcript-username">{entry.speakerName}</strong>
+                          <div className="transcript-diarized-row">
+                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </div>
                           <p>{segment.text}</p>
                         </div>
                       </article>
@@ -1686,10 +1688,11 @@ function SummaryView({
                 <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
                   <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                   <div>
-                    <strong>
-                      {segment.speaker} <span className="recap-source-tag">({entry.speakerName})</span>
-                      <span className="recap-time-range">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
-                    </strong>
+                    <strong className="transcript-username">{entry.speakerName}</strong>
+                    <div className="transcript-diarized-row">
+                      <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                      <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                    </div>
                     <p>{segment.text}</p>
                   </div>
                 </article>
