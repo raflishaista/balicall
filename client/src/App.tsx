@@ -1,5 +1,5 @@
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
-import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
+import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
 import { UserAvatar } from './ProfileEditor';
@@ -35,6 +35,7 @@ import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
 import { usePreJoinMedia } from './usePreJoinMedia';
+import { usePageFocus } from './usePageFocus';
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { PreJoinPreview } from './PreJoinPreview';
 import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
@@ -105,6 +106,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     return 'home';
   });
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(isGuest ? 'join' : 'create');
+  const contentRef = useRef<HTMLElement>(null);
+  usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
   const scheduleFeed = useScheduleFeed(!isGuest);
   const schedules = scheduleFeed.schedules;
@@ -856,6 +859,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
+      <a className="skip-link" href="#main-content">Lewati navigasi ke konten</a>
       {view !== 'in-call' && (
         <WorkspaceSidebar
           isGuest={isGuest} authUser={authUser}
@@ -938,7 +942,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main className="app-main">
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1327,6 +1331,7 @@ function SummaryView({
   onBackToHistory?: () => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
+  const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -1644,10 +1649,21 @@ function SummaryView({
             {exportError}
           </div>
         )}
-        <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist">
-          {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={`summary-tab ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}
+        <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist" onKeyDown={event => {
+          if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+          const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+          const current = buttons.indexOf(event.target as HTMLButtonElement);
+          if (current < 0) return;
+          event.preventDefault();
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+          setTab(tabs[next].id);
+          buttons[next].focus();
+          buttons[next].scrollIntoView({block:'nearest',inline:'nearest'});
+        }}>
+          {tabs.map(item => <button key={item.id} type="button" role="tab" id={`${tabsId}-${item.id}`} aria-controls={`${tabsId}-panel`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} className={`summary-tab ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}
         </nav>
 
+        <div id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-${tab}`} tabIndex={0}>
         {tab === 'summary' && <div className="summary-panel">
           <section className="summary-section"><h2>Ringkasan rapat</h2><p>{summary.executiveSummary || 'Belum ada ringkasan yang tersedia.'}</p></section>
           <div className="summary-preview-grid">
@@ -1689,6 +1705,7 @@ function SummaryView({
             ]
           ))}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
         </section></div>}
+        </div>
       </section>
     </div>
   );
