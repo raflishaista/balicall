@@ -1,5 +1,13 @@
 import { apiRequest } from './api';
 export const pushSupported=()=>typeof window!=='undefined'&&window.isSecureContext&&'serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window;
+export type PushDeviceStatus = 'active' | 'inactive' | 'denied' | 'unsupported';
+export async function getPushDeviceStatus(): Promise<PushDeviceStatus> {
+  if (!pushSupported()) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  if (Notification.permission !== 'granted') return 'inactive';
+  const registration = await navigator.serviceWorker.getRegistration('/notifications-sw.js');
+  return await registration?.pushManager.getSubscription() ? 'active' : 'inactive';
+}
 function applicationKey(key:string){return Uint8Array.from(atob(key.replace(/-/g,'+').replace(/_/g,'/')),char=>char.charCodeAt(0));}
 export async function enablePush(publicKey:string){
   if(!pushSupported())throw new Error('Web Push memerlukan HTTPS dan browser yang mendukung.');
