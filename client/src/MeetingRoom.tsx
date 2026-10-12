@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
@@ -31,6 +32,9 @@ import { useMeasuredBox, useCompactMeeting } from './useMeetingGeometry';
 import { orderParticipants, participantPage } from './meetingLayout';
 import './MeetingLayout.css';
 import { ScreenShareStage } from './ScreenShareStage';
+import { usePresentationView } from './usePresentationView';
+import { usePresentationFullscreen } from './usePresentationFullscreen';
+import { usePresentationEscape } from './usePresentationEscape';
 
 interface Transcript {
   id: string;
@@ -48,9 +52,16 @@ interface Transcript {
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
 
-type ParticipantAction = 'promote' | 'demote' | 'mute' | 'remove' | 'approve-speak';
+type ParticipantAction =
+  | 'promote'
+  | 'demote'
+  | 'mute'
+  | 'remove'
+  | 'approve-speak';
 
 interface MeetingRoomProps {
+  callDuration?: string;
+  isRecording?: boolean;
   backgroundControl?: BackgroundBlurControl;
 
   participants: Participant[];
@@ -144,6 +155,7 @@ interface MeetingRoomProps {
 }
 
 export function MeetingRoom({
+  callDuration,
   participants,
   roomName,
   employeeId,
@@ -196,6 +208,7 @@ export function MeetingRoom({
   mirrorLocalVideo = true,
   recordingPending,
   recordingError,
+  isRecording,
   onToggleRecording,
   isCameraBlur = false,
   cameraBlurPending = false,
@@ -219,6 +232,7 @@ export function MeetingRoom({
   const subscribeRecording = useCallback(
     (notify: () => void) => {
       room.on(RoomEvent.RecordingStatusChanged, notify);
+
       return () => {
         room.off(RoomEvent.RecordingStatusChanged, notify);
       };
@@ -226,12 +240,17 @@ export function MeetingRoom({
     [room]
   );
 
-  const recording = useSyncExternalStore(
+  const livekitRecording = useSyncExternalStore(
     subscribeRecording,
     () => room.isRecording,
     () => false
   );
 
+  // Gunakan status recording yang sudah dikonfirmasi.
+  const recording = livekitRecording || isRecording === true;
+
+  const handleToggleRecording = () =>
+    onToggleRecording(!recording);
   const [backgroundsOpen, setBackgroundsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'speaker'>('grid');
   const compact = useCompactMeeting();
@@ -240,7 +259,13 @@ export function MeetingRoom({
   const [requestedPage, setRequestedPage] = useState(0);
   const { ref: roomRef, width: roomWidth } = useMeasuredBox<HTMLDivElement>();
 
-  const minPercent = Math.max(20, roomWidth ? (280 / roomWidth) * 100 : 20);
+  const sharing=screenTracks.length>0;
+  const presentation=usePresentationView(sharing,panelOpen);
+  const fullScreen=usePresentationFullscreen(roomRef,sharing);
+  usePresentationEscape(presentation.focused, presentation.toggleFocus);
+  const panelVisible=presentation.panelVisible;
+  const changePanel=(value:boolean)=>{if(sharing)presentation.setPanelVisible(value);else setPanelOpen(value);};
+  const minPercent = Math.max(20, roomWidth ? 280 / roomWidth * 100 : 20);
   const panelWidth = Math.max(minPercent, Math.min(42, panelPercent));
 
   const resizePanel = (value: number) =>
@@ -249,7 +274,8 @@ export function MeetingRoom({
   const orderedParticipants = orderParticipants(participants);
 
   const closePanel = () => {
-    setPanelOpen(false);
+    changePanel(false);
+
     if (!compact) {
       document.getElementById('toggle-meeting-transcript')?.focus();
     }
@@ -287,7 +313,6 @@ export function MeetingRoom({
   const [finishMode, setFinishMode] = useState<'summary' | 'leave' | null>(null);
 
   const busy = finishing || isSummarizing || modelPending;
-
   const reconnecting =
     connectionState === ConnectionState.Reconnecting ||
     connectionState === ConnectionState.SignalReconnecting;
@@ -320,7 +345,7 @@ export function MeetingRoom({
     Boolean(spotlight);
 
   const videoWidth =
-    roomWidth * (panelOpen && !compact ? 1 - panelWidth / 100 : 1) - 50;
+    roomWidth * (panelVisible && !compact ? 1 - panelWidth / 100 : 1) - 50;
 
   const stripCapacity = Math.max(
     1,
@@ -385,11 +410,11 @@ export function MeetingRoom({
     <div
       ref={roomRef}
       className={`call-room meeting-layout ${
-        panelOpen && !compact ? 'panel-open' : 'panel-closed'
-      }`}
+        panelVisible && !compact ? 'panel-open' : 'panel-closed'
+      } ${presentation.focused ? 'presentation-focused' : ''}`}
       style={{
         gridTemplateColumns:
-          panelOpen && !compact
+          panelVisible && !compact
             ? `minmax(0, 1fr) 10px ${panelWidth}%`
             : 'minmax(0, 1fr)',
       }}
@@ -403,6 +428,13 @@ export function MeetingRoom({
               {connectionLabel}
             </span>
           </div>
+
+          {sharing && (
+            <span className="presentation-clock" aria-label="Durasi rapat">
+              BaliCall · {callDuration}
+            </span>
+          )}
+
           <span className="participant-count">
             <Users size={16} />
             {participants.length} peserta
@@ -422,6 +454,7 @@ export function MeetingRoom({
               <Grid2X2 size={16} />
               Grid
             </button>
+
             <button
               type="button"
               aria-pressed={viewMode === 'speaker'}
@@ -457,7 +490,27 @@ export function MeetingRoom({
 
         {finishError && <div className="call-error" role="alert">{finishError}</div>}
         {deviceError && <div className="call-error" role="alert">{deviceError}</div>}
-        {recordingError && <div className="call-error" role="alert">{recordingError}</div>}
+
+        {recordingError && (
+          <div className="call-error" role="alert">
+            <span>{recordingError}</span>
+            <button
+              type="button"
+              disabled={busy || recordingPending || !connected}
+              onClick={() => void handleToggleRecording()}
+            >
+              Coba rekaman lagi
+            </button>
+          </div>
+        )}
+
+        {fullScreen.error && (
+          <div className="call-error" role="alert">
+            <span>{fullScreen.error}</span>
+            <button type="button" onClick={fullScreen.clearError}>Tutup</button>
+          </div>
+        )}
+
         {microphoneError && <div className="call-error" role="alert">{microphoneError}</div>}
 
         {cameraError && (
@@ -479,16 +532,12 @@ export function MeetingRoom({
             <Sparkles size={17} />
             <span>{cameraBlurError}</span>
             {onClearCameraBlurError && (
-              <button type="button" onClick={onClearCameraBlurError}>
-                Tutup
-              </button>
+              <button type="button" onClick={onClearCameraBlurError}>Tutup</button>
             )}
           </div>
         )}
 
-        {screenShareError && (
-          <div className="call-error" role="alert">{screenShareError}</div>
-        )}
+        {screenShareError && <div className="call-error" role="alert">{screenShareError}</div>}
 
         {!screenShareSupported && (
           <div className="screen-share-hint" role="status">
@@ -505,9 +554,19 @@ export function MeetingRoom({
                 : 'grid-layout'
           }`}
         >
-          {screenTracks.length > 0 ? (
-            <ScreenShareStage tracks={screenTracks} />
-          ) : showingSpeaker && spotlight ? (
+          {sharing ? (
+            <ScreenShareStage
+              tracks={screenTracks}
+              focused={presentation.focused}
+              showThumbnails={presentation.showThumbnails}
+              fullscreen={fullScreen.fullscreen}
+              fullscreenPending={fullScreen.pending}
+              fullscreenSupported={fullScreen.supported}
+              onFocus={presentation.toggleFocus}
+              onThumbnails={presentation.toggleThumbnails}
+              onFullscreen={() => void fullScreen.toggle()}
+            />
+          ) : showingSpeaker ? (
             <div className="speaker-primary">
               <ParticipantLayout
                 participants={[spotlight]}
@@ -518,12 +577,14 @@ export function MeetingRoom({
             </div>
           ) : null}
 
-          <ParticipantLayout
-            participants={paging.items}
-            cameras={camerasByIdentity}
-            mirrorLocalVideo={mirrorCamera}
-            strip={screenTracks.length > 0 || showingSpeaker}
-          />
+          {(!sharing || presentation.showThumbnails) && (
+            <ParticipantLayout
+              participants={paging.items}
+              cameras={camerasByIdentity}
+              mirrorLocalVideo={mirrorCamera}
+              strip={sharing || showingSpeaker}
+            />
+          )}
 
           {!participants.length && (
             <div className="waiting-participants">
@@ -533,7 +594,7 @@ export function MeetingRoom({
           )}
         </div>
 
-        {paging.pages > 1 && (
+        {paging.pages > 1 && (!sharing || presentation.showThumbnails) && (
           <nav className="meeting-pagination" aria-label="Halaman peserta">
             <button
               type="button"
@@ -571,12 +632,14 @@ export function MeetingRoom({
             aria-valuenow={micVolume}
           >
             <Mic size={14} />
-            <i><b style={{ width: micVolume + '%' }} /></i>
+            <i>
+              <b style={{ width: `${micVolume}%` }} />
+            </i>
           </span>
         </div>
       </section>
 
-      {panelOpen && !compact && (
+      {panelVisible && !compact && (
         <div
           className="meeting-panel-divider"
           role="separator"
@@ -611,7 +674,7 @@ export function MeetingRoom({
         />
       )}
 
-      <MeetingPanel open={panelOpen} compact={compact} onClose={closePanel}>
+      <MeetingPanel open={panelVisible} compact={compact} onClose={closePanel}>
         <div className="call-panel-tabs" role="tablist" aria-label="Panel rapat">
           <button
             ref={transcriptTab}
@@ -627,7 +690,6 @@ export function MeetingRoom({
             <FileText size={17} />
             Transkrip
           </button>
-
           <button
             ref={attendanceTab}
             role="tab"
@@ -652,93 +714,107 @@ export function MeetingRoom({
           hidden={activeTab !== 'transcript'}
           tabIndex={0}
         >
-          <div className="transcription-settings">
-            <div className="transcription-status" role="status">
-              <i
-                className={
-                  isListening
-                    ? 'status-dot online'
-                    : speechError
-                      ? 'status-dot offline'
-                      : 'status-dot'
-                }
-              />
-              {transcriptStatus}
-            </div>
+          <div className="transcription-bar">
+            <details className="transcription-dropdown">
+              <summary className="transcription-bar-header" aria-label="Opsi transkripsi">
+                <div className="transcription-status" role="status">
+                  <i
+                    className={
+                      isListening
+                        ? 'status-dot online'
+                        : speechError
+                          ? 'status-dot offline'
+                          : 'status-dot'
+                    }
+                  />
+                  <span>{transcriptStatus}</span>
+                </div>
+                <span className="transcription-options-btn">
+                  <SlidersHorizontal size={12} />
+                  <span>Opsi</span>
+                  <ChevronDown size={11} className="dropdown-chevron" />
+                </span>
+              </summary>
 
-            <select
-              aria-label="Bahasa transkripsi"
-              value={speechLanguage}
-              disabled={busy}
-              onChange={event =>
-                setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')
-              }
-            >
-              <option value="id-ID">Bahasa Indonesia</option>
-              <option value="en-US">English</option>
-            </select>
+              <div className="transcription-dropdown-panel">
+                <div className="transcription-dropdown-field">
+                  <label htmlFor="stt-lang-select">Bahasa</label>
+                  <select
+                    id="stt-lang-select"
+                    value={speechLanguage}
+                    disabled={busy}
+                    onChange={event =>
+                      setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')
+                    }
+                  >
+                    <option value="id-ID">Bahasa Indonesia</option>
+                    <option value="en-US">English</option>
+                  </select>
+                </div>
 
-            <label>
-              Layanan transkripsi
-              <select
-                aria-label="Layanan transkripsi"
-                value={sttProvider}
-                disabled={busy}
-                onChange={event =>
-                  setSttProvider(event.target.value as 'browser' | 'server')
-                }
-              >
-                <option value="browser">Browser</option>
-                <option value="server" disabled={!sttConfigured}>
-                  Server{!sttConfigured ? ' · belum tersedia' : ''}
-                </option>
-              </select>
-            </label>
+                <div className="transcription-dropdown-field">
+                  <label htmlFor="stt-provider-select">Layanan</label>
+                  <select
+                    id="stt-provider-select"
+                    value={sttProvider}
+                    disabled={busy}
+                    onChange={event =>
+                      setSttProvider(event.target.value as 'browser' | 'server')
+                    }
+                  >
+                    <option value="browser">Browser</option>
+                    <option value="server" disabled={!sttConfigured}>
+                      Server{!sttConfigured ? ' · belum tersedia' : ''}
+                    </option>
+                  </select>
+                </div>
 
-            <label>
-              Model transkripsi
-              <select
-                aria-label="Model transkripsi"
-                value={sttModel}
-                disabled={
-                  busy ||
-                  devicePending ||
-                  microphonePending ||
-                  sttProvider !== 'server' ||
-                  !sttConfigured ||
-                  !sttModels.length
-                }
-                onChange={event => void onChangeSttModel(event.target.value)}
-              >
-                {!sttModels.length && <option value="">Belum tersedia</option>}
-                {sttModels.map(model => (
-                  <option key={model} value={model}>
-                    {model === 'whisperlivekit-small'
-                      ? 'WhisperLiveKit · Small (Live)'
-                      : model === 'small-id'
-                        ? 'faster-whisper · Small Indonesian'
-                        : model === 'small'
-                          ? 'faster-whisper · Small'
-                          : model}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <div className="transcription-dropdown-field">
+                  <label htmlFor="stt-model-select">Model</label>
+                  <select
+                    id="stt-model-select"
+                    value={sttModel}
+                    disabled={
+                      busy ||
+                      devicePending ||
+                      microphonePending ||
+                      sttProvider !== 'server' ||
+                      !sttConfigured ||
+                      !sttModels.length
+                    }
+                    onChange={event => void onChangeSttModel(event.target.value)}
+                  >
+                    {!sttModels.length && <option value="">Belum tersedia</option>}
+                    {sttModels.map(model => (
+                      <option key={model} value={model}>
+                        {model === 'whisperlivekit-small'
+                          ? 'WhisperLiveKit · Small (Live)'
+                          : model === 'small-id'
+                            ? 'faster-whisper · Small Indonesian'
+                            : model === 'small'
+                              ? 'faster-whisper · Small'
+                              : model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {sttProvider === 'browser' && (
+                  <p className="transcription-hint-text" role="status">
+                    Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.
+                  </p>
+                )}
+                {modelPending && (
+                  <p className="transcription-hint-text" role="status">
+                    Menyelesaikan transkrip sebelum mengganti model…
+                  </p>
+                )}
+                {modelError && (
+                  <p className="transcription-hint-error" role="alert">{modelError}</p>
+                )}
+              </div>
+            </details>
           </div>
-
-          {sttProvider === 'browser' && (
-            <p role="status">
-              Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.
-            </p>
-          )}
-
-          {modelPending && (
-            <p role="status">
-              Menyelesaikan transkrip sebelum mengganti model…
-            </p>
-          )}
-
-          {modelError && <p role="alert">{modelError}</p>}
 
           {speechError && (
             <div className="transcription-error" role="alert">
@@ -761,45 +837,71 @@ export function MeetingRoom({
             tabIndex={0}
           >
             {transcripts.length ? (
-              transcripts.map(entry => (
-                <article className="live-transcript-entry" key={entry.id}>
-                  <time>
-                    {new Date(entry.timestamp).toLocaleTimeString('id-ID', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </time>
+              transcripts.flatMap(entry => {
+                if (entry.segments?.length) {
+                  return entry.segments.map((segment, index) => (
+                    <article
+                      className="live-transcript-entry diarized"
+                      key={`${entry.id}-${index}`}
+                    >
+                      <time>
+                        {new Date(entry.timestamp).toLocaleTimeString('id-ID', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                      <span
+                        className={
+                          entry.speakerId === employeeId
+                            ? 'transcript-avatar local'
+                            : 'transcript-avatar'
+                        }
+                        title={`${entry.speakerName} · ${segment.speaker}`}
+                      >
+                        {initials(entry.speakerName)}
+                      </span>
+                      <div>
+                        <strong className="transcript-username">
+                          {entry.speakerName}
+                        </strong>
+                        <div className="transcript-diarized-row">
+                          <span className="transcript-diarized-speaker">
+                            {segment.speaker}
+                          </span>
+                          <span className="segment-time-pill">
+                            {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s
+                          </span>
+                        </div>
+                        <p>{segment.text}</p>
+                      </div>
+                    </article>
+                  ));
+                }
 
-                  <span
-                    className={
-                      entry.speakerId === employeeId
-                        ? 'transcript-avatar local'
-                        : 'transcript-avatar'
-                    }
-                  >
-                    {initials(entry.speakerName)}
-                  </span>
-
-                  <div>
-                    <strong>{entry.speakerName}</strong>
-                    <p>
-                      {entry.segments?.length
-                        ? entry.segments.map((segment, index) => (
-                            <span key={index} style={{ display: 'block' }}>
-                              <small>
-                                {segment.start.toFixed(1)}–{segment.end.toFixed(1)}s
-                                {' · '}
-                                {segment.speaker} (klip ini)
-                              </small>
-                              <br />
-                              {segment.text}
-                            </span>
-                          ))
-                        : entry.text}
-                    </p>
-                  </div>
-                </article>
-              ))
+                return [
+                  <article className="live-transcript-entry" key={entry.id}>
+                    <time>
+                      {new Date(entry.timestamp).toLocaleTimeString('id-ID', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </time>
+                    <span
+                      className={
+                        entry.speakerId === employeeId
+                          ? 'transcript-avatar local'
+                          : 'transcript-avatar'
+                      }
+                    >
+                      {initials(entry.speakerName)}
+                    </span>
+                    <div>
+                      <strong>{entry.speakerName}</strong>
+                      <p>{entry.text}</p>
+                    </div>
+                  </article>,
+                ];
+              })
             ) : (
               <div className="transcript-empty">
                 <span><AudioLines size={31} /></span>
@@ -822,9 +924,7 @@ export function MeetingRoom({
 
           {import.meta.env.DEV && (
             <details className="manual-transcript">
-              <summary>
-                Tambahkan ucapan manual <ChevronDown size={14} />
-              </summary>
+              <summary>Tambahkan ucapan manual <ChevronDown size={14} /></summary>
               <form
                 onSubmit={event => {
                   event.preventDefault();
@@ -854,9 +954,9 @@ export function MeetingRoom({
           )}
 
           <div
-            className={`listening-footer ${
-              isListening ? 'listening' : ''
-            } ${isVoiceActive ? 'voice-active' : ''}`}
+            className={`listening-footer ${isListening ? 'listening' : ''} ${
+              isVoiceActive ? 'voice-active' : ''
+            }`}
           >
             <div className="waveform" aria-hidden="true">
               {[9, 16, 23, 13, 27, 18, 32, 15, 24, 11, 20, 29, 14, 23, 10, 17].map(
@@ -867,7 +967,7 @@ export function MeetingRoom({
                       height: isVoiceActive
                         ? Math.max(3, Math.round(height * Math.min(1, micVolume / 30)))
                         : 3,
-                      animationDelay: index * 0.06 + 's',
+                      animationDelay: `${index * 0.06}s`,
                     }}
                   />
                 )
@@ -903,7 +1003,6 @@ export function MeetingRoom({
             const isSelf = participant.identity === employeeId;
             const isHost = participant.identity === meetingHostId;
             const isCoHost = meetingCoHostIds.includes(participant.identity);
-
             const canManage =
               !isSelf &&
               (meetingRole === 'host' ||
@@ -914,7 +1013,6 @@ export function MeetingRoom({
                 <span className="transcript-avatar">
                   {initials(participant.name || participant.identity)}
                 </span>
-
                 <div>
                   <strong>
                     {participant.name || participant.identity}
@@ -922,9 +1020,8 @@ export function MeetingRoom({
                     {!isHost && isCoHost && ' (Co-host)'}
                     {isSelf && ' (Anda)'}
                   </strong>
-              
-
                   <small>{participant.identity}</small>
+
                   {canManage && (
                     <div className="participant-management">
                       {meetingRole === 'host' && (
@@ -973,11 +1070,7 @@ export function MeetingRoom({
                         type="button"
                         disabled={busy || !connected}
                         onClick={() => {
-                          if (
-                            window.confirm(
-                              'Keluarkan peserta ini dari meeting?'
-                            )
-                          ) {
+                          if (window.confirm('Keluarkan peserta ini dari meeting?')) {
                             void handleParticipantAction(
                               participant.identity,
                               'remove'
@@ -990,13 +1083,13 @@ export function MeetingRoom({
                     </div>
                   )}
                 </div>
-
                 <Check size={17} />
               </div>
             );
           })}
         </div>
       </MeetingPanel>
+
       {speakRequestAt && microphoneRestricted && (
         <p className="speak-request-status" role="status">
           Permintaan izin bicara telah dikirim. Menunggu persetujuan moderator.
@@ -1025,26 +1118,26 @@ export function MeetingRoom({
         finishLabel={finishLabel}
         recording={recording}
         recordingPending={recordingPending}
-        onToggleRecording={() => onToggleRecording(!recording)}
+        onToggleRecording={handleToggleRecording}
         onToggleMute={onToggleMute}
         onToggleCamera={onToggleCamera}
         onToggleScreenShare={onToggleScreenShare}
         onToggleTranscription={onToggleTranscription}
         onOpenDevices={onOpenDevices}
         onParticipants={() => {
-          setPanelOpen(true);
+          changePanel(true);
           setActiveTab('attendance');
         }}
-        transcriptOpen={panelOpen && activeTab === 'transcript'}
+        transcriptOpen={panelVisible && activeTab === 'transcript'}
         onTranscript={() => {
-          setPanelOpen(!panelOpen || activeTab !== 'transcript');
+          changePanel(!panelVisible || activeTab !== 'transcript');
           setActiveTab('transcript');
         }}
         onFinish={requestFinish}
         onOpenBackgrounds={
           backgroundControl
             ? () => {
-                setPanelOpen(false);
+                changePanel(false);
                 setBackgroundsOpen(true);
               }
             : undefined

@@ -13,6 +13,7 @@ export interface MeetingPreferences {
   speechLanguage: 'id-ID' | 'en-US';
   transcriptionProvider: 'auto' | 'browser' | 'server';
   transcriptionModel: string;
+  sharedRoomMic: boolean;
 }
 
 export const PREFERENCES_KEY = 'sentra.meeting-preferences.v1';
@@ -21,6 +22,7 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   microphoneId: 'default', cameraId: 'default', outputId: 'default',
   mirrorLocalVideo: true, autoSpotlight: true, reduceMotion: false, scheduleReminders: true,
   speechLanguage: 'id-ID', transcriptionProvider: 'auto', transcriptionModel: '',
+  sharedRoomMic: false,
 };
 
 export function normalizePreferences(value: unknown): MeetingPreferences {
@@ -30,7 +32,7 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   if (input.speechLanguage === 'id-ID' || input.speechLanguage === 'en-US') result.speechLanguage = input.speechLanguage;
   if (input.transcriptionProvider === 'auto' || input.transcriptionProvider === 'browser' || input.transcriptionProvider === 'server') result.transcriptionProvider = input.transcriptionProvider;
   if (typeof input.transcriptionModel === 'string' && /^[a-zA-Z0-9._-]{0,64}$/.test(input.transcriptionModel)) result.transcriptionModel = input.transcriptionModel;
-  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders'] as const) {
+  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders', 'sharedRoomMic'] as const) {
     if (typeof input[key] === 'boolean') result[key] = input[key];
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {
@@ -59,7 +61,8 @@ export function writePreferences(storage: Pick<Storage, 'setItem'>, value: Meeti
 
 export function mediaChoices(preferences: MeetingPreferences): JoinMediaChoices {
   return { microphoneEnabled: preferences.microphoneEnabled, cameraEnabled: preferences.cameraEnabled,
-    microphoneId: preferences.microphoneId, cameraId: preferences.cameraId };
+    microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
+    sharedRoomMic: preferences.sharedRoomMic ?? false };
 }
 
 export function resolveTranscriptionPreferences(preferences: MeetingPreferences, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
@@ -78,4 +81,22 @@ export function transcriptionModelLabel(model: string) {
   return model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
     : model === 'small-id' ? 'faster-whisper · Small Indonesian'
       : model === 'small' ? 'faster-whisper · Small' : model;
+}
+
+export function isChromiumBrowser(): boolean {
+  if (typeof window === 'undefined') return true;
+  const nav = navigator as any;
+  if (nav.userAgentData?.brands && Array.isArray(nav.userAgentData.brands)) {
+    return nav.userAgentData.brands.some((b: { brand: string }) => /Chromium|Chrome|Edge/i.test(b.brand));
+  }
+  const isChrome = Boolean((window as any).chrome);
+  const isFirefox = /Firefox|FxiOS/i.test(navigator.userAgent);
+  const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg/i.test(navigator.userAgent);
+  if (isFirefox || isSafari) return false;
+  return isChrome || Boolean((window as any).webkitSpeechRecognition);
+}
+
+export function getRecommendedProvider(configured = false): 'browser' | 'server' {
+  if (isChromiumBrowser()) return 'browser';
+  return configured ? 'server' : 'browser';
 }

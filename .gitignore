@@ -26,6 +26,17 @@ __pycache__/
 server/speech/models/
 */node_modules/
 
+# AI & Speech Models (NeMo, Whisper, PyTorch checkpoints, weights)
+models/*
+!models/.gitkeep
+*.nemo
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.ckpt
+
 # Build artifacts
 dist/
 dist-ssr/

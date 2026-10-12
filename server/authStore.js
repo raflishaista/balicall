@@ -1,8 +1,9 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { getPool } from './db.js';
+import { initWorkspaceDb } from './workspaceStore.js';
 
 export const hashToken = value => createHash('sha256').update(value).digest('hex');
-export const publicUser = row => ({ employeeId: row.employee_id, name: row.name, email: row.login_email, department: row.department, position: row.position });
+export const publicUser = row => ({ employeeId: row.employee_id, name: row.display_name||row.name, legalName:row.name, email: row.login_email, department: row.department, position: row.position, photoVersion:row.photo_version||null });
 export async function initAuthDb(pool = getPool()) {
   if (!pool) throw new Error('Login memerlukan PostgreSQL.');
   const client = await pool.connect();
@@ -44,6 +45,7 @@ export async function initAuthDb(pool = getPool()) {
     await client.query('COMMIT');
   } catch(error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
+  await initWorkspaceDb(pool);
 }
 export class PgAuthStore {
   constructor(pool = getPool()) { this.pool = pool; }
@@ -52,11 +54,11 @@ export class PgAuthStore {
     return this.pool.query(sql, params);
   }
   async account(email) {
-    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,e.status FROM balicall_auth_accounts a JOIN balicall_employees e USING(employee_id) WHERE a.login_email=$1`,[email]);
+    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,e.status,p.display_name,p.photo_version FROM balicall_auth_accounts a JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE a.login_email=$1`,[email]);
     return rows[0];
   }
   async session(tokenHash) {
-    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position FROM balicall_auth_sessions s JOIN balicall_auth_accounts a USING(employee_id) JOIN balicall_employees e USING(employee_id) WHERE s.token_hash=$1 AND s.expires_at>NOW() AND e.status='active' AND a.password_hash IS NOT NULL`,[tokenHash]);
+    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,p.display_name,p.photo_version FROM balicall_auth_sessions s JOIN balicall_auth_accounts a USING(employee_id) JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE s.token_hash=$1 AND s.expires_at>NOW() AND e.status='active' AND a.password_hash IS NOT NULL`,[tokenHash]);
     return rows[0] ? publicUser(rows[0]) : null;
   }
   async createSession(tokenHash, employeeId, hours) {

@@ -9,6 +9,9 @@ import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressC
 import { MeetingStore } from './meetingStore.js';
 import { createAttendanceFinalizer } from './attendanceFinalizer.js';
 import { createGuestAccess } from './guestAccess.js';
+import { WorkspaceStore } from './workspaceStore.js';
+import { attachWorkspaceApi } from './workspaceApi.js';
+import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
 import {
   isDbConnected,
@@ -49,9 +52,10 @@ const pdfText = value => {
   return String(value);
 };
 
-export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore } = {}) {
+export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush } = {}) {
   const app = express();
   const store = new MeetingStore(config.dataFile);
+  const workspace=workspaceStore||new WorkspaceStore();
   const verifier = new TokenVerifier(config.livekitKey, config.livekitSecret);
   const webhookReceiver = new WebhookReceiver(config.livekitKey, config.livekitSecret);
   const roomService = new RoomServiceClient(config.livekitInternalUrl.replace(/^ws/, 'http'), config.livekitKey, config.livekitSecret, { requestTimeout: 1.5 });
@@ -61,7 +65,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   const inFlightSummarize = new Map();
   const webhookLogs = [];
 
-  app.use(cors({ credentials: true, origin(origin, callback) {
+  app.use('/api', (req,res,next)=>{
+    req.requestId=randomUUID();
+    res.setHeader('X-Request-ID',req.requestId);
+    next();
+  });
+  app.use(cors({ credentials: true, exposedHeaders:['X-Request-ID'], origin(origin, callback) {
     if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
     try {
       const url = new URL(origin);
@@ -73,6 +82,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   } }));
 
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
+  app.use('/api/profile',express.json({limit:'2mb'}));
   app.use(express.json({
     limit: '256kb',
     type: ['application/json', 'application/webhook+json'],
@@ -82,6 +92,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
   }));
 
   attachAuth(app, config, authStore, createGuestAccess(store));
+  attachWorkspaceApi(app,config,workspace);
+  const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
@@ -177,6 +189,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
       // Use authoritative name and department from company DB if registered
       if (empCheck.employee?.name) employeeName = empCheck.employee.name;
       if (empCheck.employee?.department) department = empCheck.employee.department;
+      if(req.auth)employeeName=req.auth.user.name;
     }
 
     const active = [...store.meetings.values()].find(meeting => meeting.roomName === roomName.trim() && meeting.status === 'active');
@@ -758,6 +771,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     store.transact(() => { meeting.guestInviteCode ||= randomBytes(16).toString('base64url'); });
     res.json({ inviteCode: meeting.guestInviteCode });
   });
+  app.post('/api/meetings/:id/employee-invites',asyncRoute(async(req,res)=>{
+    if(!req.auth?.user||req.auth.user.isGuest)return res.status(403).json({error:'Masuk dengan akun karyawan untuk mengundang.'});
+    if(!writable(req,res))return;
+    const ids=req.body?.employeeIds;
+    if(!Array.isArray(ids)||ids.length<1||ids.length>20||ids.some(id=>typeof id!=='string'||!/^BT-\d{4,6}$/.test(id)))return res.status(400).json({error:'Pilih 1–20 NIK karyawan.'});
+    const meeting=store.get(req.meetingId);
+    for(const id of new Set(ids))await workspace.notify(id,{key:`invitation:${meeting.id}:${id}`,kind:'invitation',roomName:meeting.roomName,meetingId:meeting.id});
+    res.json({success:true});
+  }));
 
   app.post('/api/meetings/:id/live-session', (req, res) => {
     if (!writable(req, res)) return;
@@ -789,12 +811,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
       hostId: meeting.hostId,
       coHostIds: meeting.coHostIds || [],
       currentRole,
+      recording: meeting.recording || null,
       transcripts: meeting.transcripts,
       participants: [...meeting.participants.values()].map(publicParticipant),
       summary: meeting.summary,
       attendanceFinalization: meeting.attendanceFinalization || null,
-
-      microphoneRestricted: Boolean(meeting.participants.get(req.speakerId)?.moderatorMuted),
+      microphoneRestricted: Boolean(
+        meeting.participants.get(req.speakerId)?.moderatorMuted
+      ),
       speakRequestAt:
         meeting.participants.get(req.speakerId)?.speakRequestAt || null,
       pendingSpeakRequests: [...meeting.participants.values()]
@@ -851,6 +875,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
           fileType: 1,
         },
       },
+      // Empty layout skips the default template's screen-share focus switch.
+      // Explicit grid keeps camera tiles equal and promotes screen sharing.
+      { layout: 'grid' },
     );
 
     const recording = {
@@ -924,12 +951,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const recording = meeting.recording;
 
     if (!recording?.egressId || recording.status !== 'active') {
-      return res.status(409).json({
-        error: 'Tidak ada recording yang sedang berjalan.',
+      return res.json({
+        success: true,
+        alreadyStopped: true,
+        recording: recording || { status: 'stopped' },
       });
     }
 
-    await egressClient.stopEgress(recording.egressId);
+    try {
+      await egressClient.stopEgress(recording.egressId);
+    } catch (egressErr) {
+      console.warn('[RECORDING] stopEgress note:', egressErr.message);
+      return res.status(502).json({
+        error: 'Belum dapat menghentikan rekaman. Coba lagi; rekaman mungkin masih berjalan.',
+        recording,
+      });
+    }
 
     const stoppedAt = new Date().toISOString();
 
@@ -951,6 +988,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
     const model = req.get('X-Speech-Model') || config.sttModel;
+    const diarize = req.get('X-Speech-Diarize') === 'true' || config.sttDiarization;
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
@@ -961,7 +999,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;
     if (!inFlightAudio.has(key)) {
       const work = (async () => {
-        const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model }, fetchImpl);
+        const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model, sttDiarization: diarize }, fetchImpl);
         const meeting = store.get(req.meetingId);
         if (meeting.status !== 'active' || meeting.participants.get(req.speakerId).leftAt) throw new ServiceError('Meeting ended before audio could be saved', 409);
         if (!text) store.saveEmptyAudioRequest(req.meetingId, req.speakerId, requestId);
@@ -1490,11 +1528,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore }
     app.get('*', (_req, res) => res.sendFile(join(config.clientDist, 'index.html')));
   }
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
     const status = error.status || (error.type === 'entity.too.large' ? 413 : 500);
-    if (status >= 500) console.error('API request failed:', error.message);
-    res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message });
+    if (status >= 500) console.error('API request failed:', {requestId:req.requestId,method:req.method,path:req.route?.path||req.path,status,message:error.message});
+    res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });
   });
 
-  return { app, store, close: attendanceFinalizer.close };
+  return { app, store, notificationTick:()=>notifications?.tick(), close(){attendanceFinalizer.close();notifications?.close();} };
 }

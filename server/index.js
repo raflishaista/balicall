@@ -3,22 +3,28 @@ import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { initDb } from './db.js';
+import { initAuthDb } from './authStore.js';
 
 dotenv.config({ path: fileURLToPath(new URL('./.env', import.meta.url)) });
 const config = loadConfig();
+// Finish additive schema migrations before accepting authenticated requests.
+if (config.databaseUrl) {
+  const ready = await initDb();
+  if (config.authEnabled) {
+    if (!ready) throw new Error('Database belum siap untuk layanan akun BaliCall.');
+    await initAuthDb();
+  }
+}
 const { app, close } = createApp(config);
 
-const server = app.listen(config.port, async () => {
+const server = app.listen(config.port, () => {
   console.log(`====================================================`);
   console.log(`🚀 BaliCall API: http://localhost:${config.port}`);
   console.log(`📡 LiveKit configured: ${config.livekitUrl} (checked by /api/health)`);
   console.log(`🧠 LLM Provider: ${config.llmProvider} (${config.llmModel})`);
   console.log(`🎙️ Speech-to-text: ${config.sttProvider}`);
   console.log(`💾 Meeting storage: ${config.dataFile}`);
-  if (config.databaseUrl) {
-    console.log(`🗄️ Initializing PostgreSQL database connection...`);
-    await initDb();
-  } else {
+  if (!config.databaseUrl) {
     console.log(`ℹ️ PostgreSQL DATABASE_URL not set in server/.env.`);
   }
   console.log(`====================================================`);

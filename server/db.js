@@ -282,17 +282,34 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
     `;
 
     for (const t of transcripts) {
-      const id = t.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const timestamp = t.timestamp ? new Date(t.timestamp).toISOString() : new Date().toISOString();
-      await client.query(insertQuery, [
-        id,
-        meetingId,
-        roomName,
-        t.speakerId || 'unknown',
-        t.speakerName || 'Anonymous',
-        t.text,
-        timestamp,
-      ]);
+      if (t.segments && t.segments.length > 0) {
+        for (let idx = 0; idx < t.segments.length; idx++) {
+          const seg = t.segments[idx];
+          const segId = `${t.id || 'tx'}-seg-${idx}`;
+          const speakerLabel = `${t.speakerName || 'Anonymous'} (${seg.speaker})`;
+          await client.query(insertQuery, [
+            segId,
+            meetingId,
+            roomName,
+            t.speakerId || 'unknown',
+            speakerLabel,
+            seg.text,
+            timestamp,
+          ]);
+        }
+      } else {
+        const id = t.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        await client.query(insertQuery, [
+          id,
+          meetingId,
+          roomName,
+          t.speakerId || 'unknown',
+          t.speakerName || 'Anonymous',
+          t.text,
+          timestamp,
+        ]);
+      }
     }
     await client.query('COMMIT');
     return true;

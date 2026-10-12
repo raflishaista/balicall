@@ -4,8 +4,9 @@ export type InputKind = 'audioinput' | 'videoinput';
 export interface JoinMediaChoices {
   microphoneEnabled: boolean; cameraEnabled: boolean;
   microphoneId: string; cameraId: string;
+  sharedRoomMic?: boolean;
 }
-const defaults: JoinMediaChoices = { microphoneEnabled: true, cameraEnabled: true, microphoneId: 'default', cameraId: 'default' };
+const defaults: JoinMediaChoices = { microphoneEnabled: true, cameraEnabled: true, microphoneId: 'default', cameraId: 'default', sharedRoomMic: false };
 const enabledKey = { audioinput: 'microphoneEnabled', videoinput: 'cameraEnabled' } as const;
 const idKey = { audioinput: 'microphoneId', videoinput: 'cameraId' } as const;
 const names = { audioinput: 'Mikrofon', videoinput: 'Kamera' };
@@ -132,6 +133,7 @@ export function usePreJoinMedia(inLobby: boolean, initialChoices: JoinMediaChoic
   }, [capture, patchChoices, release]);
 
   return { choices, devices, streams, pending, errors, deviceError, refresh, capture, select, toggle,
+    setSharedRoomMic: (enabled: boolean) => patchChoices({ sharedRoomMic: enabled }),
     stopMicrophone: () => release('audioinput'), stopCamera: () => release('videoinput'), stopAll,
     resetLobby() { stopAll(); setErrors({ audioinput: null, videoinput: null }); setDeviceError(null); },
     applyChoices(next: JoinMediaChoices) { stopAll(); patchChoices(next); setErrors({ audioinput: null, videoinput: null }); },

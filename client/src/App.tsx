@@ -1,12 +1,15 @@
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
-import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
-import { apiRequest, meetingPath, API_BASE } from './api';
+import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
+import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
+import { UserAvatar } from './ProfileEditor';
+import { NotificationCenter } from './NotificationCenter';
+import { EmployeeInvites } from './EmployeeInvites';
 import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
-import { mediaChoices, resolveTranscriptionPreferences } from './preferences';
+import { mediaChoices, resolveTranscriptionPreferences, getRecommendedProvider } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
@@ -32,6 +35,7 @@ import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
 import { usePreJoinMedia } from './usePreJoinMedia';
+import { usePageFocus } from './usePageFocus';
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { PreJoinPreview } from './PreJoinPreview';
 import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
@@ -71,7 +75,7 @@ const PRESET_PERSONAS = [
   { id: 'BT-10550', name: 'Agus Pratama', dept: 'Fiber Infrastructure' },
 ];
 
-export default function App({ authUser = null, onLogout, logoutPending = false }: { authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
+export default function App({ authUser = null, onLogout, logoutPending = false, onProfileUpdated }: { onProfileUpdated?: (user:AuthUser)=>void; authUser?: AuthUser | null; onLogout?: () => Promise<void>; logoutPending?: boolean }) {
   const isGuest = Boolean(authUser?.isGuest);
   const [guestInviteCode, setGuestInviteCode] = useState('');
   const [summaryStorage] = useState(() => scopedSummaryStorage(authUser?.employeeId || null));
@@ -103,6 +107,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     return 'home';
   });
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(isGuest ? 'join' : 'create');
+  const contentRef = useRef<HTMLElement>(null);
+  usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
   const scheduleFeed = useScheduleFeed(!isGuest);
   const schedules = scheduleFeed.schedules;
@@ -173,6 +179,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const [syncError, setSyncError] = useState<string | null>(null);
   const [recordingPending, setRecordingPending] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [transcriptDelivery] = useState(() => createTranscriptDelivery(entry => setTranscripts(previous => mergeTranscripts(previous, [entry]))));
   const receiveTranscripts = useCallback((entries: TranscriptEntry[]) => setTranscripts(previous => mergeTranscripts(previous, entries)), []);
   const [saveQueue] = useState(() => createSaveQueue<{ entry: TranscriptEntry | null; meetingId: string }>({
@@ -582,11 +589,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
       endingMeeting.current = false;
       summaryGeneration.current++;
       setIsSummarizing(false);
-      setCallPreferences({ ...userPreferences.preferences });
+      setCallPreferences({ ...userPreferences.preferences, sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false });
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
-      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', data.sttProvider).provider);
-      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null);
+      const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
+      const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : data.sttProvider;
+      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
+      setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       setView('in-call');
@@ -676,6 +685,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     setCallDuration('00:00');
     setRecordingPending(false);
     setRecordingError(null);
+    setIsRecording(false);
 
     if (!generate) {
       setMeetingId(null);
@@ -894,9 +904,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
+    const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
-        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}) }, body: audio,
+        'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
+        ...(isSharedMic ? { 'X-Speech-Diarize': 'true' } : {}) }, body: audio,
     }, 125000).then(result => ({ ...result, meetingId })));
   };
 
@@ -913,17 +925,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false }
     setRecordingPending(true); setRecordingError(null);
     try {
       const action = enabled ? 'start' : 'stop';
-      await apiRequest<{ success: boolean; recording: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
+      const data = await apiRequest<{ success: boolean; recording?: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: '{}',
       }, 15000);
+      if (generation === joinGeneration.current) {
+        setIsRecording(data?.recording?.status === 'active');
+      }
     } catch (error) {
-      if (generation === joinGeneration.current) setRecordingError(error instanceof Error ? error.message : `Gagal ${enabled ? 'memulai' : 'menghentikan'} rekaman.`);
+      if (generation === joinGeneration.current) setRecordingError(featureError(enabled?'Memulai rekaman':'Menghentikan rekaman',error));
     } finally {
       if (generation === joinGeneration.current) setRecordingPending(false);
     }
   };
+
+  const handleToggleSharedMic = useCallback((enabled: boolean) => {
+    setCallPreferences(prev => ({ ...prev, sharedRoomMic: enabled }));
+    setJoinMedia(prev => ({ ...prev, sharedRoomMic: enabled }));
+  }, []);
 
   const copyMarkdownSummary = () => {
     if (!summary) return;
@@ -972,9 +992,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
+      <a className="skip-link" href="#main-content">Lewati navigasi ke konten</a>
       {view !== 'in-call' && (
         <WorkspaceSidebar
-          isGuest={isGuest}
+          isGuest={isGuest} authUser={authUser}
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
@@ -1015,9 +1036,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         )}
 
         <div className="header-meta">
+          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();setSummaryMeetingId(null);setView('summary');}}/>}
+          {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
-              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(error instanceof Error ? error.message : 'Tidak dapat membuat undangan tamu.'));
+              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(featureError('Membuat undangan tamu',error)));
           }}>Undang tamu</button>}
           {isGuest && <span className="service-status">Akses tamu</span>}
           {view === 'in-call' ? <div className="call-clock"><Clock size={15} />{callDuration}</div> : (
@@ -1034,7 +1057,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               )}
             </div>
           )}
-          <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{initials(employeeName)}</span>
+          <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span>
         </div>
       </header>
       {view === 'in-call' && guestInviteCode && <div className="guest-invite-strip" role="status"><label>Kode undangan tamu <input readOnly value={guestInviteCode} onFocus={event=>event.currentTarget.select()} /></label><button className="button-secondary" type="button" onClick={()=>void navigator.clipboard.writeText(guestInviteCode).catch(()=>setCallError('Salin kode undangan dari kolom di atas.'))}>Salin kode</button><button className="text-button" type="button" onClick={()=>setGuestInviteCode('')}>Tutup</button></div>}
@@ -1046,10 +1069,13 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
 
       {(callError || syncError || transcriptSaveError || pendingSaves > 0) && <div className="app-alert" role="status" aria-live="polite" aria-busy={pendingSaves > 0}>
         {pendingSaves > 0 && <Loader2 className="ui-spinner" size={15} aria-hidden="true" />}
-        {callError || syncError || transcriptSaveError} {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
+        {callError && <span>{callError}</span>}
+        {syncError && <span>Sinkronisasi rapat: {syncError}</span>}
+        {transcriptSaveError && <span>Penyimpanan transkrip: {transcriptSaveError}</span>}
+        {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main className="app-main">
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1072,7 +1098,7 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && <SettingsPage transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -1090,14 +1116,26 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             isJoining={isJoining}
             joinError={joinError}
             onJoin={handleJoin}
-            mediaPreview={<PreJoinPreview media={preJoinMedia} employeeName={employeeName} blocked={isJoining} mirror={userPreferences.preferences.mirrorLocalVideo} />}
+            mediaPreview={<PreJoinPreview
+              media={preJoinMedia}
+              employeeName={employeeName}
+              blocked={isJoining}
+              mirror={userPreferences.preferences.mirrorLocalVideo}
+              onToggleSharedMic={enabled => userPreferences.save({ ...userPreferences.preferences, sharedRoomMic: enabled })}
+              transcriptionProvider={userPreferences.preferences.transcriptionProvider}
+              onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
+              transcriptionModel={userPreferences.preferences.transcriptionModel}
+              onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
+              sttConfigured={backendHealth?.sttConfigured ?? false}
+              sttModels={backendHealth?.sttModels ?? []}
+            />}
             identityLocked={Boolean(authUser)}
             personas={authUser ? [] : personas}
           />
         )}
 
         {view === 'in-call' && token && (
-          <InCallView
+          <InCallView callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
             meetingHostId={meetingHostId}
@@ -1106,8 +1144,14 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
+            isRecording={isRecording}
             onToggleRecording={handleToggleRecording}
+            onRecordingSync={(rec: { status: string } | null) => {
+              if (rec?.status === 'active') setIsRecording(true);
+              else if (rec?.status === 'stopped') setIsRecording(false);
+            }}
             callPreferences={callPreferences}
+            onToggleSharedMic={handleToggleSharedMic}
             token={token}
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
@@ -1199,11 +1243,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
   );
 }
 
-function InCallView({
+function InCallView({ callDuration,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
-  recordingPending, recordingError, onToggleRecording,
+  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
   onRequestToSpeak,
@@ -1222,6 +1266,7 @@ function InCallView({
   meetingHostId,
   meetingCoHostIds,
   onManageParticipant,
+  onToggleSharedMic,
 }: any) {
   const [mediaOptions] = useState(() => ({
     audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
@@ -1248,14 +1293,16 @@ function InCallView({
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
-      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} register={registerTranscriptPublisher} />
-      <RoomContent
+      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
+      <RoomContent callDuration={callDuration}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
         recordingError={recordingError}
+        isRecording={isRecording}
         onToggleRecording={onToggleRecording}
         callPreferences={callPreferences}
+        onToggleSharedMic={onToggleSharedMic}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
@@ -1283,13 +1330,16 @@ function InCallView({
 }
 
 function RoomContent({
+  callDuration,
   sttModels,
   defaultSttModel,
   onCreateLiveSession,
   startWithCamera,
   callPreferences,
+  onToggleSharedMic,
   recordingPending,
   recordingError,
+  isRecording,
   onToggleRecording,
   sttProvider,
   setSttProvider,
@@ -1403,41 +1453,124 @@ function RoomContent({
     finishRequest.current = true;
     setFinishing(true); setFinishError(null);
     try { await finishTranscription(); await onEndMeeting(generate); }
-    catch (error) { setFinishError(error instanceof Error ? error.message : 'Gagal menyelesaikan transkripsi'); }
+    catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
     finally { finishRequest.current = false; setFinishing(false); }
   };
 
-  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom
-    meetingRole={meetingRole}
-    meetingHostId={meetingHostId}
-    meetingCoHostIds={meetingCoHostIds}
-    onManageParticipant={onManageParticipant}
-    microphoneRestricted={microphoneRestricted}
-    speakRequestPending={speakRequestPending}
-    speakRequestAt={speakRequestAt}
-    onRequestToSpeak={onRequestToSpeak}
-    pendingSpeakRequests={pendingSpeakRequests}
-    participants={participants} roomName={roomName} employeeId={employeeId}
-    cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
-    cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
-    microphonePending={microphone.pending} connectionState={connectionState}
-    screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
-    screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
-    devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error || preferredOutputError} onOpenDevices={() => setDevicesOpen(true)}
-    spotlightIdentity={spotlightIdentity} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
-    connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
-    finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
-    speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
-    setSttProvider={provider => void changeSpeechSettings(() => setSttProvider(provider))} speechLanguage={speechLanguage}
-    setSpeechLanguage={language => void changeSpeechSettings(() => setSpeechLanguage(language))}
-    sttModel={sttModel} sttModels={sttModels} onChangeSttModel={changeSttModel} modelPending={modelPending} modelError={modelError}
-    activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
-    recordingPending={recordingPending} recordingError={recordingError} onToggleRecording={onToggleRecording}
-    onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
-    backgroundControl={blur}
-    isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
-    cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} onClose={closeDevices} />}</>;
+  return (
+    <>
+      {transcriptionNotice && (
+        <div className="settings-notice" role="status">
+          {transcriptionNotice}
+        </div>
+      )}
+
+      <MeetingRoom
+        callDuration={callDuration}
+        meetingRole={meetingRole}
+        meetingHostId={meetingHostId}
+        meetingCoHostIds={meetingCoHostIds}
+        onManageParticipant={onManageParticipant}
+        microphoneRestricted={microphoneRestricted}
+        speakRequestPending={speakRequestPending}
+        speakRequestAt={speakRequestAt}
+        onRequestToSpeak={onRequestToSpeak}
+        pendingSpeakRequests={pendingSpeakRequests}
+        participants={participants}
+        roomName={roomName}
+        employeeId={employeeId}
+        cameraTracks={cameraTracks}
+        isCameraEnabled={isCameraEnabled}
+        cameraPending={camera.pending || blur.blurPending}
+        cameraError={cameraError}
+        microphoneError={microphoneError}
+        onToggleCamera={camera.toggleCamera}
+        microphonePending={microphone.pending}
+        connectionState={connectionState}
+        screenTracks={screenTracks}
+        isScreenShareEnabled={isScreenShareEnabled}
+        screenSharePending={screenShare.pending}
+        screenShareError={screenShare.error}
+        screenShareSupported={screenShareSupported}
+        onToggleScreenShare={screenShare.toggleScreenShare}
+        devicePending={deviceSettings.pendingKind !== null}
+        deviceError={
+          devicesOpen
+            ? null
+            : deviceSettings.error || preferredOutputError
+        }
+        onOpenDevices={() => setDevicesOpen(true)}
+        spotlightIdentity={spotlightIdentity}
+        mirrorLocalVideo={callPreferences.mirrorLocalVideo}
+        connected={connected}
+        isMuted={isMuted}
+        micVolume={micVolume}
+        finishing={finishing}
+        isSummarizing={isSummarizing}
+        finishError={finishError}
+        speechError={speechError}
+        interimText={interimText}
+        isListening={isListeningSpeechApi}
+        speechEnabled={speechEnabled}
+        saveBlocked={saveBlocked}
+        sttProvider={sttProvider}
+        sttConfigured={sttConfigured}
+        setSttProvider={provider =>
+          void changeSpeechSettings(() => setSttProvider(provider))
+        }
+        speechLanguage={speechLanguage}
+        setSpeechLanguage={language =>
+          void changeSpeechSettings(() => setSpeechLanguage(language))
+        }
+        sttModel={sttModel}
+        sttModels={sttModels}
+        onChangeSttModel={changeSttModel}
+        modelPending={modelPending}
+        modelError={modelError}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        transcripts={transcripts}
+        recordingPending={recordingPending}
+        recordingError={recordingError}
+        isRecording={isRecording}
+        onToggleRecording={onToggleRecording}
+        onToggleMute={microphone.toggleMicrophone}
+        onToggleTranscription={toggleSpeechRecognition}
+        onFinish={finishMeeting}
+        onAddSpeechLine={onAddSpeechLine}
+        backgroundControl={blur}
+        isCameraBlur={blur.isBlurEnabled}
+        cameraBlurPending={blur.blurPending}
+        cameraBlurSupported={blur.blurSupported}
+        cameraBlurError={blur.blurError}
+        onToggleCameraBlur={blur.toggleBlur}
+        onClearCameraBlurError={blur.clearBlurError}
+      />
+
+      {devicesOpen && (
+        <DeviceSettingsDialog
+          settings={deviceSettings}
+          connected={connected}
+          blocked={
+            finishing ||
+            isSummarizing ||
+            camera.pending ||
+            microphone.pending ||
+            blur.blurPending
+          }
+          micVolume={micVolume}
+          sttProvider={sttProvider}
+          mirror={shouldMirrorCamera(
+            callPreferences.mirrorLocalVideo,
+            blur.selection
+          )}
+          sharedRoomMic={callPreferences.sharedRoomMic}
+          onToggleSharedMic={onToggleSharedMic}
+          onClose={closeDevices}
+        />
+      )}
+    </>
+  );
 }
 
 function SummaryView({
@@ -1470,6 +1603,7 @@ function SummaryView({
   onBackToHistory?: () => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
+  const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -1532,9 +1666,13 @@ function SummaryView({
       setExporting(null);
     }
   };
-  const filteredTranscripts = transcripts.filter(entry =>
-    `${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID'))
-  );
+  const filteredTranscripts = transcripts.filter(entry => {
+    const q = query.trim().toLocaleLowerCase('id-ID');
+    if (!q) return true;
+    if (`${entry.speakerName} ${entry.text}`.toLocaleLowerCase('id-ID').includes(q)) return true;
+    if (entry.segments?.some(s => `${s.speaker} ${s.text}`.toLocaleLowerCase('id-ID').includes(q))) return true;
+    return false;
+  });
 
   if (isSummarizing && !summary) {
     return (
@@ -1587,14 +1725,30 @@ function SummaryView({
             </div>
             {transcripts.length > 0 ? (
               <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                {transcripts.map(entry => (
-                  <article className="recap-transcript-entry" key={entry.id}>
-                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-                    <div>
-                      <strong>{entry.speakerName}</strong>
-                      <p>{entry.text}</p>
-                    </div>
-                  </article>
+                {transcripts.flatMap(entry => (
+                  entry.segments && entry.segments.length > 0 ? (
+                    entry.segments.map((segment, sIdx) => (
+                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                        <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                        <div>
+                          <strong className="transcript-username">{entry.speakerName}</strong>
+                          <div className="transcript-diarized-row">
+                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </div>
+                          <p>{segment.text}</p>
+                        </div>
+                      </article>
+                    ))
+                  ) : [
+                    <article className="recap-transcript-entry" key={entry.id}>
+                      <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                      <div>
+                        <strong>{entry.speakerName}</strong>
+                        <p>{entry.text}</p>
+                      </div>
+                    </article>
+                  ]
                 ))}
               </div>
             ) : (
@@ -1656,14 +1810,30 @@ function SummaryView({
             </div>
             {transcripts.length > 0 ? (
               <div className="recap-transcript-list" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                {transcripts.map(entry => (
-                  <article className="recap-transcript-entry" key={entry.id}>
-                    <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-                    <div>
-                      <strong>{entry.speakerName}</strong>
-                      <p>{entry.text}</p>
-                    </div>
-                  </article>
+                {transcripts.flatMap(entry => (
+                  entry.segments && entry.segments.length > 0 ? (
+                    entry.segments.map((segment, sIdx) => (
+                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                        <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                        <div>
+                          <strong className="transcript-username">{entry.speakerName}</strong>
+                          <div className="transcript-diarized-row">
+                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                          </div>
+                          <p>{segment.text}</p>
+                        </div>
+                      </article>
+                    ))
+                  ) : [
+                    <article className="recap-transcript-entry" key={entry.id}>
+                      <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                      <div>
+                        <strong>{entry.speakerName}</strong>
+                        <p>{entry.text}</p>
+                      </div>
+                    </article>
+                  ]
                 ))}
               </div>
             ) : (
@@ -1753,10 +1923,21 @@ function SummaryView({
             {exportError}
           </div>
         )}
-        <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist">
-          {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={`summary-tab ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}
+        <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist" onKeyDown={event => {
+          if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+          const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+          const current = buttons.indexOf(event.target as HTMLButtonElement);
+          if (current < 0) return;
+          event.preventDefault();
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+          setTab(tabs[next].id);
+          buttons[next].focus();
+          buttons[next].scrollIntoView({block:'nearest',inline:'nearest'});
+        }}>
+          {tabs.map(item => <button key={item.id} type="button" role="tab" id={`${tabsId}-${item.id}`} aria-controls={`${tabsId}-panel`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} className={`summary-tab ${tab === item.id ? 'active' : ''}`} onClick={() => setTab(item.id)}>{item.label}</button>)}
         </nav>
 
+        <div id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-${tab}`} tabIndex={0}>
         {tab === 'summary' && <div className="summary-panel">
           <section className="summary-section"><h2>Ringkasan rapat</h2><p>{summary.executiveSummary || 'Belum ada ringkasan yang tersedia.'}</p></section>
           <div className="summary-preview-grid">
@@ -1773,8 +1954,33 @@ function SummaryView({
 
         {tab === 'transcript' && <div className="summary-panel"><section className="summary-section">
           <div className="transcript-heading"><div><h2>Transkrip lengkap</h2><p>{filteredTranscripts.length} dari {transcripts.length} ucapan</p></div><label className="transcript-search"><Search size={15} /><input aria-label="Cari transkrip" value={query} onChange={event => setQuery(event.target.value)} placeholder="Cari nama atau isi ucapan" /></label></div>
-          {filteredTranscripts.length ? <div className="recap-transcript-list">{filteredTranscripts.map(entry => <article className="recap-transcript-entry" key={entry.id}><time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time><div><strong>{entry.speakerName}</strong><p>{entry.text}</p></div></article>)}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
+          {filteredTranscripts.length ? <div className="recap-transcript-list">{filteredTranscripts.flatMap(entry => (
+            entry.segments && entry.segments.length > 0 ? (
+              entry.segments.map((segment, sIdx) => (
+                <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                  <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                  <div>
+                    <strong className="transcript-username">{entry.speakerName}</strong>
+                    <div className="transcript-diarized-row">
+                      <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                      <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
+                    </div>
+                    <p>{segment.text}</p>
+                  </div>
+                </article>
+              ))
+            ) : [
+              <article className="recap-transcript-entry" key={entry.id}>
+                <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
+                <div>
+                  <strong>{entry.speakerName}</strong>
+                  <p>{entry.text}</p>
+                </div>
+              </article>
+            ]
+          ))}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
         </section></div>}
+        </div>
       </section>
     </div>
   );

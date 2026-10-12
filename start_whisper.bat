@@ -13,6 +13,7 @@ set MODEL=small
 if not "%~1"=="" set MODEL=%~1
 
 echo [*] Model: %MODEL%
+echo [*] Diarization: NVIDIA Nemotron-3 (models\nemotron3-diarization)
 echo [*] Endpoint: http://127.0.0.1:8000/v1/audio/transcriptions
 echo.
 echo [*] Press Ctrl+C to stop the server.

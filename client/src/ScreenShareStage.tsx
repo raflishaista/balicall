@@ -1,14 +1,19 @@
 import { VideoTrack } from '@livekit/components-react';
 import type { TrackReference } from '@livekit/components-react';
 import { useState } from 'react';
-import { MonitorUp } from 'lucide-react';
+import { MonitorUp, Maximize, Minimize, PanelTop, Users } from 'lucide-react';
 import { useTrackUnavailable } from './useTrackUnavailable';
 
 function screenShareKey(track: TrackReference) {
   return `${track.participant.identity}:${track.publication.trackSid}`;
 }
 
-export function ScreenShareStage({ tracks }: { tracks: TrackReference[] }) {
+export function ScreenShareStage({ tracks, focused, showThumbnails, fullscreen, fullscreenPending, fullscreenSupported, onFocus, onThumbnails, onFullscreen }: {
+  tracks: TrackReference[];
+  focused: boolean; showThumbnails: boolean; fullscreen: boolean;
+  fullscreenPending: boolean; fullscreenSupported: boolean;
+  onFocus: () => void; onThumbnails: () => void; onFullscreen: () => void;
+}) {
   const [selected, setSelected] = useState<string | null>(() => tracks[0] ? screenShareKey(tracks[0]) : null);
   const active = tracks.find(track => screenShareKey(track) === selected) || tracks[0];
   if (!active) return null;
@@ -20,6 +25,14 @@ export function ScreenShareStage({ tracks }: { tracks: TrackReference[] }) {
       {tracks.length > 1 && <label>Presenter<select aria-label="Pilih presenter layar" value={screenShareKey(active)} onChange={event => setSelected(event.target.value)}>
         {tracks.map(track => <option key={screenShareKey(track)} value={screenShareKey(track)}>{track.participant.name || track.participant.identity}{track.participant.isLocal ? ' (Kamu)' : ''}</option>)}
       </select></label>}
+      <div className="presentation-actions" role="group" aria-label="Tampilan presentasi">
+        <span className="presentation-fit" title="Seluruh isi layar ditampilkan tanpa dipotong">Fit</span>
+        <button type="button" aria-pressed={focused} onClick={onFocus}><PanelTop size={16}/>{focused ? 'Keluar Fokus' : 'Fokus Presentasi'}</button>
+        <button type="button" aria-pressed={showThumbnails} onClick={onThumbnails}><Users size={16}/>{showThumbnails ? 'Sembunyikan kamera' : 'Tampilkan kamera'}</button>
+        <button type="button" aria-pressed={fullscreen} aria-busy={fullscreenPending} disabled={fullscreenPending || !fullscreenSupported} onClick={onFullscreen} title={fullscreenSupported ? 'Esc untuk keluar Full Screen' : 'Gunakan Fokus Presentasi pada browser ini'}>
+          {fullscreen ? <Minimize size={16}/> : <Maximize size={16}/>}<span>{fullscreen ? 'Keluar Full Screen' : 'Full Screen'}</span>
+        </button>
+      </div>
     </header>
     <ScreenShareVideo key={screenShareKey(active)} track={active} presenter={presenter} />
   </section>;

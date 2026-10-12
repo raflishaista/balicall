@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Activity, ArrowRight, AudioLines, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
 import { initials } from './presentation';
+import { UserAvatar } from './ProfileEditor';
+import type { AuthUser } from './AuthGate';
 
 export interface WorkspaceHealth {
   livekitStatus?: string;
@@ -19,8 +21,8 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending, isGuest = false }: {
-  onLogout?: () => Promise<void>; logoutPending?: boolean; isGuest?: boolean;
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending, isGuest = false, authUser }: {
+  authUser?: AuthUser|null; onLogout?: () => Promise<void>; logoutPending?: boolean; isGuest?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
   onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void;
 }) {
@@ -29,8 +31,8 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
     <p className="sidebar-label">WORKSPACE</p>
     <nav className="sidebar-navigation" aria-label="Navigasi utama">
       {!isGuest && <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>}
-      {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
-      <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
+      {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'create' ? 'page' : undefined} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
+      <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'join' ? 'page' : undefined} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
       {!isGuest && <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>}
       {!isGuest && <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'summary' ? 'page' : undefined} title="Lihat notulen & riwayat rapat" onClick={onSummary}>
         <FileText size={19} />
@@ -42,7 +44,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
     <div className="sidebar-bottom">
       {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
-      <div className="sidebar-profile"><span className="user-avatar">{initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
+      <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
     </div>
   </aside>;
 }
