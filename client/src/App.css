@@ -397,7 +397,10 @@ input::placeholder { color: #a1b1c6; }
 .summary-heading h1 { margin: 0 0 10px; color: #284a71; font-size: 24px; font-weight: 650; letter-spacing: -.4px; }
 .summary-meta { margin: 0; color: #8a9eb6; font-size: 10px; line-height: 1.7; }
 .summary-meta strong { font-weight: 500; color: #6182a9; }
-.summary-actions { display: flex; align-items: center; gap: 8px; }
+.summary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.summary-actions > button { min-height: 44px; }
+.summary-heading > div { min-width: 0; max-width: 100%; }
+.summary-heading h1,.summary-meta { overflow-wrap: anywhere; }
 .summary-note { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 15px; padding: 12px; border: 1px solid #eedeb9; border-radius: 6px; background: #fffaf0; color: #9c8551; font-size: 10px; line-height: 1.6; }
 .summary-note svg { flex-shrink: 0; }
 .summary-tabs { display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid #e3ebf6; }

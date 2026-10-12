@@ -50,7 +50,9 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       </button>
       <button type="button" className="call-control" aria-label="Peserta" onClick={onParticipants}><Users size={22} /><span>Peserta</span></button>
       <button id="toggle-meeting-transcript" type="button" className={`call-control ${transcriptOpen ? 'control-active' : ''}`} aria-label="Transkrip" aria-pressed={transcriptOpen} onClick={onTranscript}><FileText size={22} /><span>Transkrip</span></button>
-      <div className="meeting-more" ref={more} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setMoreOpen(false); moreButton.current?.focus(); } }}>
+      <div className="meeting-more" ref={more}
+        onBlur={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false); }}
+        onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setMoreOpen(false); moreButton.current?.focus(); } }}>
         <button ref={moreButton} type="button" className="call-control" aria-label="Lainnya" aria-expanded={moreOpen} aria-controls="meeting-more-options" onClick={() => setMoreOpen(!moreOpen)}><MoreHorizontal size={22} /><span>Lainnya</span></button>
         <div className="meeting-more-menu" id="meeting-more-options" role="group" aria-label="Pilihan lainnya" hidden={!moreOpen}>
           <button type="button" aria-label={speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkripsi' : 'Mulai transkripsi'} aria-pressed={speechEnabled && !speechError} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={18} /><span>{speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span>{isListening && <i className="status-dot online" />}</button>

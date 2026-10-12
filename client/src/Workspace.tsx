@@ -31,8 +31,8 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
     <p className="sidebar-label">WORKSPACE</p>
     <nav className="sidebar-navigation" aria-label="Navigasi utama">
       {!isGuest && <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>}
-      {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
-      <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
+      {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'create' ? 'page' : undefined} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
+      <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'join' ? 'page' : undefined} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
       {!isGuest && <button className={view === 'schedule' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'schedule' ? 'page' : undefined} onClick={onSchedule}><Calendar size={19} /><span>Jadwalkan rapat</span></button>}
       {!isGuest && <button className={view === 'summary' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'summary' ? 'page' : undefined} title="Lihat notulen & riwayat rapat" onClick={onSummary}>
         <FileText size={19} />
