@@ -63,6 +63,7 @@ import {
   Home,
 } from 'lucide-react';
 
+type MeetingRole = 'host' | 'co-host' | 'participant';
 function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[]) {
   const byId = new Map([...current, ...incoming].map(entry => [entry.id, entry]));
   return [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -150,6 +151,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   // Connection state
   const [token, setToken] = useState<string | null>(null);
   const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [meetingRole, setMeetingRole] = useState<MeetingRole>('participant');
+  const [meetingHostId, setMeetingHostId] = useState<string | null>(null);
+  const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
+  const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
+  const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
+  const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
+  const [speakRequestPending, setSpeakRequestPending] = useState(false);
+
   const [sttProvider, setSttProvider] = useState<'browser' | 'server'>('browser');
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
@@ -178,6 +187,58 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     onSaved: transcriptDelivery.saved,
     onChange: (count, error) => { setPendingSaves(count); setTranscriptSaveError(error); },
   }));
+
+  useEffect(() => {
+    if (view !== 'in-call' || !meetingId || !token) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+
+    const syncMeetingRole = async () => {
+      try {
+        const data = await apiRequest<{
+          currentRole?: MeetingRole;
+          hostId?: string;
+          coHostIds?: string[];
+          microphoneRestricted?: boolean;
+          speakRequestAt?: string | null;
+          pendingSpeakRequests?: Array<{
+            identity: string;
+            name: string;
+            speakRequestAt: string;
+          }>;
+        }>(meetingPath(meetingId, 'transcript'), {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
+        if (cancelled) return;
+
+        setMeetingRole(data.currentRole || 'participant');
+        setMeetingHostId(data.hostId || null);
+        setMeetingCoHostIds(data.coHostIds || []);
+        setMicrophoneRestricted(Boolean(data.microphoneRestricted));
+        setSpeakRequestAt(data.speakRequestAt || null);
+        setPendingSpeakRequests(data.pendingSpeakRequests || []);
+     
+      } catch {
+        // Abaikan kegagalan polling sementara; coba lagi pada interval berikutnya.
+      }
+
+      if (!cancelled) {
+        timer = setTimeout(syncMeetingRole, 2000);
+      }
+    };
+
+    void syncMeetingRole();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [view, meetingId, token]);
 
   useEffect(() => {
     if (view !== 'in-call' && view !== 'lobby') {
@@ -727,6 +788,78 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }).then(result => ({ ...result, meetingId })));
   };
 
+  const manageParticipant = async (
+    participantId: string,
+    action: 'promote' | 'demote' | 'mute' | 'remove' | 'approve-speak'
+  ) => {
+    if (!meetingId || !token) return;
+
+    const participantPath = meetingPath(
+      meetingId,
+      `participants/${encodeURIComponent(participantId)}`
+    );
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+    };
+
+    if (action === 'promote' || action === 'demote') {
+      headers['Content-Type'] = 'application/json';
+
+      await apiRequest(`${participantPath}/role`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          role: action === 'promote' ? 'co-host' : 'participant',
+        }),
+      });
+    } else if (action === 'mute') {
+      headers['Content-Type'] = 'application/json';
+
+      await apiRequest(`${participantPath}/mute`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({}),
+      });
+    } else if (action === 'approve-speak') {
+      await apiRequest(
+        `${participantPath}/approve-speak`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }); 
+    } else {
+      await apiRequest(participantPath, {
+        method: 'DELETE',
+        headers,
+      });
+    }
+  };
+
+  const requestToSpeak = async () => {
+    if (!meetingId || !token || speakRequestPending) return;
+
+    setSpeakRequestPending(true);
+
+    try {
+      await apiRequest(
+        meetingPath(meetingId, 'request-to-speak'),
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch (error) {
+      setCallError(
+        error instanceof Error
+          ? error.message
+          : 'Permintaan izin bicara gagal dikirim.'
+      );
+    } finally {
+      setSpeakRequestPending(false);
+    }
+  };
+
   const handleCreateLiveSession = (language: string) => {
     if (!meetingId || !token) return Promise.reject(new Error('Akses rapat tidak tersedia.'));
     return apiRequest<{ url: string }>(meetingPath(meetingId, 'live-session'), {
@@ -971,6 +1104,10 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
         {view === 'in-call' && token && (
           <InCallView callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
+            meetingRole={meetingRole}
+            meetingHostId={meetingHostId}
+            meetingCoHostIds={meetingCoHostIds}
+            onManageParticipant={manageParticipant}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
@@ -1001,6 +1138,11 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
             onAddSpeechLine={handleAddSpeechLine}
             onEndMeeting={handleEndMeeting}
             isSummarizing={isSummarizing}
+            microphoneRestricted={microphoneRestricted}
+            speakRequestPending={speakRequestPending}
+            speakRequestAt={speakRequestAt}
+            pendingSpeakRequests={pendingSpeakRequests}
+            onRequestToSpeak={requestToSpeak}
           />
         )}
 
@@ -1074,6 +1216,8 @@ function InCallView({ callDuration,
   joinMedia, callPreferences,
   recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+  microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
+  onRequestToSpeak,
   token,
   serverUrl,
   roomName,
@@ -1085,6 +1229,10 @@ function InCallView({ callDuration,
   onAddSpeechLine,
   onEndMeeting,
   isSummarizing,
+  meetingRole,
+  meetingHostId,
+  meetingCoHostIds,
+  onManageParticipant,
   onToggleSharedMic,
 }: any) {
   const [mediaOptions] = useState(() => ({
@@ -1133,17 +1281,44 @@ function InCallView({ callDuration,
         onAddSpeechLine={onAddSpeechLine}
         onEndMeeting={onEndMeeting}
         isSummarizing={isSummarizing}
+        meetingRole={meetingRole}
+        meetingHostId={meetingHostId}
+        meetingCoHostIds={meetingCoHostIds}
+        onManageParticipant={onManageParticipant}
+        microphoneRestricted={microphoneRestricted}
+        speakRequestPending={speakRequestPending}
+        speakRequestAt={speakRequestAt}
+        pendingSpeakRequests={pendingSpeakRequests}
+        onRequestToSpeak={onRequestToSpeak}
       />
     </LiveKitRoom>
     </div>
   );
 }
 
-function RoomContent({ callDuration,
-  sttModels, defaultSttModel, onCreateLiveSession,
-  startWithCamera, callPreferences, onToggleSharedMic, recordingPending, recordingError, isRecording, onToggleRecording,
-  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+function RoomContent({
+  callDuration,
+  sttModels,
+  defaultSttModel,
+  onCreateLiveSession,
+  startWithCamera,
+  callPreferences,
+  onToggleSharedMic,
+  recordingPending,
+  recordingError,
+  isRecording,
+  onToggleRecording,
+  sttProvider,
+  setSttProvider,
+  sttConfigured,
+  saveBlocked,
+  onAddAudio,
+  onPresence,
   roomName,
+  meetingRole,
+  meetingHostId,
+  meetingCoHostIds,
+  onManageParticipant,
   employeeId,
   transcripts,
   activeTab,
@@ -1151,6 +1326,11 @@ function RoomContent({ callDuration,
   onAddSpeechLine,
   onEndMeeting,
   isSummarizing,
+  microphoneRestricted,
+  speakRequestPending,
+  speakRequestAt,
+  pendingSpeakRequests,
+  onRequestToSpeak,
 }: any) {
   const participants = useParticipants();
   const room = useRoomContext();
@@ -1244,28 +1424,120 @@ function RoomContent({ callDuration,
     finally { finishRequest.current = false; setFinishing(false); }
   };
 
-  return <>{transcriptionNotice && <div className="settings-notice" role="status">{transcriptionNotice}</div>}<MeetingRoom callDuration={callDuration}
-    participants={participants} roomName={roomName} employeeId={employeeId}
-    cameraTracks={cameraTracks} isCameraEnabled={isCameraEnabled} cameraPending={camera.pending || blur.blurPending}
-    cameraError={cameraError} microphoneError={microphoneError} onToggleCamera={camera.toggleCamera}
-    microphonePending={microphone.pending} connectionState={connectionState}
-    screenTracks={screenTracks} isScreenShareEnabled={isScreenShareEnabled} screenSharePending={screenShare.pending}
-    screenShareError={screenShare.error} screenShareSupported={screenShareSupported} onToggleScreenShare={screenShare.toggleScreenShare}
-    devicePending={deviceSettings.pendingKind !== null} deviceError={devicesOpen ? null : deviceSettings.error || preferredOutputError} onOpenDevices={() => setDevicesOpen(true)}
-    spotlightIdentity={spotlightIdentity} mirrorLocalVideo={callPreferences.mirrorLocalVideo}
-    connected={connected} isMuted={isMuted} micVolume={micVolume} finishing={finishing} isSummarizing={isSummarizing}
-    finishError={finishError} speechError={speechError} interimText={interimText} isListening={isListeningSpeechApi}
-    speechEnabled={speechEnabled} saveBlocked={saveBlocked} sttProvider={sttProvider} sttConfigured={sttConfigured}
-    setSttProvider={provider => void changeSpeechSettings(() => setSttProvider(provider))} speechLanguage={speechLanguage}
-    setSpeechLanguage={language => void changeSpeechSettings(() => setSpeechLanguage(language))}
-    sttModel={sttModel} sttModels={sttModels} onChangeSttModel={changeSttModel} modelPending={modelPending} modelError={modelError}
-    activeTab={activeTab} setActiveTab={setActiveTab} transcripts={transcripts}
-    recordingPending={recordingPending} recordingError={recordingError} isRecording={isRecording} onToggleRecording={onToggleRecording}
-    onToggleMute={microphone.toggleMicrophone} onToggleTranscription={toggleSpeechRecognition} onFinish={finishMeeting} onAddSpeechLine={onAddSpeechLine}
-    backgroundControl={blur}
-    isCameraBlur={blur.isBlurEnabled} cameraBlurPending={blur.blurPending} cameraBlurSupported={blur.blurSupported}
-    cameraBlurError={blur.blurError} onToggleCameraBlur={blur.toggleBlur} onClearCameraBlurError={blur.clearBlurError}
-  />{devicesOpen && <DeviceSettingsDialog settings={deviceSettings} connected={connected} blocked={finishing || isSummarizing || camera.pending || microphone.pending || blur.blurPending} micVolume={micVolume} sttProvider={sttProvider} mirror={shouldMirrorCamera(callPreferences.mirrorLocalVideo, blur.selection)} sharedRoomMic={callPreferences.sharedRoomMic} onToggleSharedMic={onToggleSharedMic} onClose={closeDevices} />}</>;
+  return (
+    <>
+      {transcriptionNotice && (
+        <div className="settings-notice" role="status">
+          {transcriptionNotice}
+        </div>
+      )}
+
+      <MeetingRoom
+        callDuration={callDuration}
+        meetingRole={meetingRole}
+        meetingHostId={meetingHostId}
+        meetingCoHostIds={meetingCoHostIds}
+        onManageParticipant={onManageParticipant}
+        microphoneRestricted={microphoneRestricted}
+        speakRequestPending={speakRequestPending}
+        speakRequestAt={speakRequestAt}
+        onRequestToSpeak={onRequestToSpeak}
+        pendingSpeakRequests={pendingSpeakRequests}
+        participants={participants}
+        roomName={roomName}
+        employeeId={employeeId}
+        cameraTracks={cameraTracks}
+        isCameraEnabled={isCameraEnabled}
+        cameraPending={camera.pending || blur.blurPending}
+        cameraError={cameraError}
+        microphoneError={microphoneError}
+        onToggleCamera={camera.toggleCamera}
+        microphonePending={microphone.pending}
+        connectionState={connectionState}
+        screenTracks={screenTracks}
+        isScreenShareEnabled={isScreenShareEnabled}
+        screenSharePending={screenShare.pending}
+        screenShareError={screenShare.error}
+        screenShareSupported={screenShareSupported}
+        onToggleScreenShare={screenShare.toggleScreenShare}
+        devicePending={deviceSettings.pendingKind !== null}
+        deviceError={
+          devicesOpen
+            ? null
+            : deviceSettings.error || preferredOutputError
+        }
+        onOpenDevices={() => setDevicesOpen(true)}
+        spotlightIdentity={spotlightIdentity}
+        mirrorLocalVideo={callPreferences.mirrorLocalVideo}
+        connected={connected}
+        isMuted={isMuted}
+        micVolume={micVolume}
+        finishing={finishing}
+        isSummarizing={isSummarizing}
+        finishError={finishError}
+        speechError={speechError}
+        interimText={interimText}
+        isListening={isListeningSpeechApi}
+        speechEnabled={speechEnabled}
+        saveBlocked={saveBlocked}
+        sttProvider={sttProvider}
+        sttConfigured={sttConfigured}
+        setSttProvider={provider =>
+          void changeSpeechSettings(() => setSttProvider(provider))
+        }
+        speechLanguage={speechLanguage}
+        setSpeechLanguage={language =>
+          void changeSpeechSettings(() => setSpeechLanguage(language))
+        }
+        sttModel={sttModel}
+        sttModels={sttModels}
+        onChangeSttModel={changeSttModel}
+        modelPending={modelPending}
+        modelError={modelError}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        transcripts={transcripts}
+        recordingPending={recordingPending}
+        recordingError={recordingError}
+        isRecording={isRecording}
+        onToggleRecording={onToggleRecording}
+        onToggleMute={microphone.toggleMicrophone}
+        onToggleTranscription={toggleSpeechRecognition}
+        onFinish={finishMeeting}
+        onAddSpeechLine={onAddSpeechLine}
+        backgroundControl={blur}
+        isCameraBlur={blur.isBlurEnabled}
+        cameraBlurPending={blur.blurPending}
+        cameraBlurSupported={blur.blurSupported}
+        cameraBlurError={blur.blurError}
+        onToggleCameraBlur={blur.toggleBlur}
+        onClearCameraBlurError={blur.clearBlurError}
+      />
+
+      {devicesOpen && (
+        <DeviceSettingsDialog
+          settings={deviceSettings}
+          connected={connected}
+          blocked={
+            finishing ||
+            isSummarizing ||
+            camera.pending ||
+            microphone.pending ||
+            blur.blurPending
+          }
+          micVolume={micVolume}
+          sttProvider={sttProvider}
+          mirror={shouldMirrorCamera(
+            callPreferences.mirrorLocalVideo,
+            blur.selection
+          )}
+          sharedRoomMic={callPreferences.sharedRoomMic}
+          onToggleSharedMic={onToggleSharedMic}
+          onClose={closeDevices}
+        />
+      )}
+    </>
+  );
 }
 
 function SummaryView({
