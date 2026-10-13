@@ -5,8 +5,8 @@ rtc:
   port_range_start: 7882
   port_range_end: 7882
   use_external_ip: false
-  node_ip: "172.16.6.153"
-
+  # node_ip: "192.168.0.100"
+  node_ip: "172.16.7.99"
 redis:
   address: redis:6379
 

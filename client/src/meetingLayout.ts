@@ -22,3 +22,4 @@ export function participantPage<T>(items: T[], requested: number, size = GRID_PA
 export function orderParticipants<T extends { identity: string; joinedAt?: Date }>(items: T[]): T[] {
   return items.toSorted((a, b) => (a.joinedAt?.getTime() || 0) - (b.joinedAt?.getTime() || 0) || a.identity.localeCompare(b.identity));
 }
+

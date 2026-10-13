@@ -45,6 +45,7 @@ export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, 
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
       {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedRoomMic} disabled={disabled} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
+      {onToggleSharedMic && <p className="device-help">Memerlukan upload audio Server dan model diarization aktif. Browser dan WhisperLiveKit belum mendukungnya. Label berlaku per potongan audio, bukan identitas karyawan.</p>}
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />
       {!settings.outputSupported ? <p className="device-help">Browser ini belum mendukung pemilihan speaker. Atur output melalui pengaturan suara sistem.</p> : settings.outputPickerSupported && <button type="button" className="text-button" disabled={disabled} onClick={() => void settings.requestOutput()}>Izinkan / pilih speaker melalui browser</button>}

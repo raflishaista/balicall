@@ -114,3 +114,12 @@ button.settings-category:hover { border-color: #9fbfed; box-shadow: 0 5px 18px #
 .push-settings p { overflow-wrap: anywhere; }
 .notification-item:disabled { cursor: wait; opacity: .65; }
 .notification-item span { overflow-wrap: anywhere; }
+
+.ai-services-panel { padding: 16px; margin-bottom: 20px; border: 1px solid #cadcf2; border-radius: 12px; background: #f2f7ff; overflow-wrap: anywhere; }
+.ai-services-panel h3 { margin: 0 0 12px; }
+.ai-services-list { display: grid; gap: 10px; }
+.ai-services-list > div { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.ai-services-list dt { font-weight: 600; }
+.ai-services-list dd { margin: 0; }
+.ai-services-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.ai-services-actions button { min-height: 44px; max-width: 100%; white-space: normal; }

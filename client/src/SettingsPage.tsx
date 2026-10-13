@@ -7,6 +7,8 @@ import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
 import { ProfileEditor, UserAvatar } from './ProfileEditor';
 import { PushSettings } from './NotificationCenter';
+import { AIServicesPanel } from './AIServicesPanel';
+import type { useBackendHealth } from './useBackendHealth';
 
 const categories = [
   { id: 'devices', title: 'Audio & Video', description: 'Perangkat dan kondisi awal saat bergabung.', Icon: Video, available: true },
@@ -18,10 +20,11 @@ const categories = [
 ] as const;
 type Section = 'overview' | 'profile' | 'devices' | 'display' | 'notifications' | 'ai';
 
-export function SettingsPage({ preferences, notice, employeeId, employeeName, department, authUser, transcription, onSave, onCheckDevices, onProfileUpdated }: {
+export function SettingsPage({ preferences, notice, employeeId, employeeName, department, authUser, transcription, aiStatus, onSave, onCheckDevices, onProfileUpdated }: {
   preferences: MeetingPreferences; notice: string | null; employeeId: string; employeeName: string; department: string;
   authUser?: AuthUser | null; onProfileUpdated?: (user:AuthUser)=>void;
   transcription: { configured: boolean; models: string[]; defaultModel: string } | null;
+  aiStatus?: ReturnType<typeof useBackendHealth>;
   onSave: (value: MeetingPreferences) => boolean;
   onCheckDevices: (value: MeetingPreferences) => void;
 }) {
@@ -100,7 +103,7 @@ export function SettingsPage({ preferences, notice, employeeId, employeeName, de
             </fieldset>
             <fieldset className="settings-fields"><legend>Saat bergabung</legend><PreferenceToggle label="Aktifkan mikrofon saat bergabung" description="Kamu dapat mengubahnya lagi di preview sebelum masuk." checked={draft.microphoneEnabled} onChange={microphoneEnabled => update({ microphoneEnabled })} /><PreferenceToggle label="Aktifkan kamera saat bergabung" description="Kamera mulai setelah kamu memilih bergabung dan memberi izin." checked={draft.cameraEnabled} onChange={cameraEnabled => update({ cameraEnabled })} /></fieldset>
             <div className="settings-check-devices"><div><strong>Pastikan suara dan gambar siap.</strong><p>Simpan pilihan, lalu gunakan preview kamera dan tes mikrofon sebelum rapat.</p></div><button type="button" className="button-secondary" onClick={() => { if (save()) onCheckDevices(draft); }}>Simpan & periksa perangkat <ArrowRight size={16} /></button></div>
-          </> : section === 'ai' ? <AISettings draft={draft} update={update} transcription={transcription} /> : section === 'notifications' ? <fieldset className="settings-fields"><legend>Pengingat dalam aplikasi</legend><PreferenceToggle label="Pengingat jadwal rapat" description="Tampilkan pengingat 10 menit sebelum jadwal yang tersedia di aplikasi." checked={draft.scheduleReminders} onChange={scheduleReminders => update({ scheduleReminders })} /><p className="settings-field-help">Berlaku selama aplikasi terbuka. Jadwal diperiksa setiap 30 detik dan saat tab dibuka kembali. Pengingat tidak ditampilkan saat berada dalam panggilan. Inbox undangan dan notulen tersedia untuk akun login. Aktifkan Web Push pada setiap perangkat untuk menerima notifikasi sistem.</p></fieldset> : <fieldset className="settings-fields"><legend>Pengalaman rapat</legend><p className="settings-field-help">Rapat dimulai dengan Grid agar semua peserta setara. Pilih Speaker di ruang rapat untuk mengikuti pembicara aktif. Berbagi layar selalu mendapat area utama.</p><PreferenceToggle label="Cerminkan video kamera sendiri" description="Berlaku pada preview dan video lokal. Video peserta lain tetap sesuai aslinya." checked={draft.mirrorLocalVideo} onChange={mirrorLocalVideo => update({ mirrorLocalVideo })} /><PreferenceToggle label="Kurangi animasi" description="Kurangi gerakan antarmuka. Preferensi pengurangan gerakan dari sistem tetap dihormati." checked={draft.reduceMotion} onChange={reduceMotion => update({ reduceMotion })} /></fieldset>}
+          </> : section === 'ai' ? <AISettings draft={draft} update={update} transcription={transcription} aiStatus={aiStatus} /> : section === 'notifications' ? <fieldset className="settings-fields"><legend>Pengingat dalam aplikasi</legend><PreferenceToggle label="Pengingat jadwal rapat" description="Tampilkan pengingat 10 menit sebelum jadwal yang tersedia di aplikasi." checked={draft.scheduleReminders} onChange={scheduleReminders => update({ scheduleReminders })} /><p className="settings-field-help">Berlaku selama aplikasi terbuka. Jadwal diperiksa setiap 30 detik dan saat tab dibuka kembali. Pengingat tidak ditampilkan saat berada dalam panggilan. Inbox undangan dan notulen tersedia untuk akun login. Aktifkan Web Push pada setiap perangkat untuk menerima notifikasi sistem.</p></fieldset> : <fieldset className="settings-fields"><legend>Pengalaman rapat</legend><p className="settings-field-help">Rapat dimulai dengan Grid agar semua peserta setara. Pilih Speaker di ruang rapat untuk mengikuti pembicara aktif. Berbagi layar selalu mendapat area utama.</p><PreferenceToggle label="Cerminkan video kamera sendiri" description="Berlaku pada preview dan video lokal. Video peserta lain tetap sesuai aslinya." checked={draft.mirrorLocalVideo} onChange={mirrorLocalVideo => update({ mirrorLocalVideo })} /><PreferenceToggle label="Kurangi animasi" description="Kurangi gerakan antarmuka. Preferensi pengurangan gerakan dari sistem tetap dihormati." checked={draft.reduceMotion} onChange={reduceMotion => update({ reduceMotion })} /></fieldset>}
           <footer className="settings-save-bar"><p role="status">{dirty ? 'Perubahan belum disimpan' : saved ? <><Check size={16} />Preferensi tersimpan</> : section === 'notifications' ? 'Pengingat mengikuti preferensi tersimpan' : 'Preferensi berlaku untuk rapat berikutnya'}</p><div><button type="button" className="settings-reset" onClick={() => { setDraft({ ...DEFAULT_PREFERENCES }); setSaved(false); }}>Default</button><button type="button" className="button-secondary" disabled={!dirty} onClick={() => { setDraft({ ...preferences }); setSaved(false); }}>Batal</button><button type="submit" className="button-primary" disabled={!dirty}><Settings2 size={16} />Simpan perubahan</button></div></footer>
         </form>}
       </div>
@@ -118,23 +121,26 @@ function PreferenceDevice({ label, Icon, kind, value, devices, disabled, onChang
   return <label className="settings-device-field"><span><Icon size={17} />{label}</span><select aria-label={label} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="default">Default — perangkat sistem</option>{missing && <option value={value}>Pilihan tersimpan — belum tersedia</option>}{choices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Perangkat ${index + 1} (izin belum diberikan)`}</option>)}</select>{missing && <small>Perangkat tersimpan tidak terlihat. Sambungkan perangkat atau pilih default.</small>}</label>;
 }
 
-function AISettings({ draft, update, transcription }: {
+function AISettings({ draft, update, transcription, aiStatus }: {
   draft: MeetingPreferences; update: (patch: Partial<MeetingPreferences>) => void;
   transcription: { configured: boolean; models: string[]; defaultModel: string } | null;
+  aiStatus?: ReturnType<typeof useBackendHealth>;
 }) {
   const models = transcription?.models || [];
   const missingModel = Boolean(draft.transcriptionModel && !models.includes(draft.transcriptionModel));
   return <>
+    {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
     <fieldset className="settings-fields"><legend>Transkripsi default</legend>
       <label className="settings-device-field"><span>Bahasa transkripsi</span><select aria-label="Bahasa transkripsi" value={draft.speechLanguage} onChange={event => update({ speechLanguage: event.target.value as MeetingPreferences['speechLanguage'] })}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select></label>
       <label className="settings-device-field"><span>Layanan transkripsi</span><select aria-label="Layanan transkripsi" value={draft.transcriptionProvider} onChange={event => update({ transcriptionProvider: event.target.value as MeetingPreferences['transcriptionProvider'] })}><option value="auto">Otomatis — ikuti default server</option><option value="browser">Browser</option><option value="server" disabled={!transcription?.configured}>Server{!transcription?.configured ? ' · belum tersedia' : ''}</option></select></label>
       <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update({ transcriptionModel: event.target.value })}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}{models.map(model => <option key={model} value={model}>{transcriptionModelLabel(model)}</option>)}</select></label>
       <PreferenceToggle
         label="Mode Mikrofon Ruang Rapat (Diarization)"
-        description="Opsi untuk mengidentifikasi danmemisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan."
+        description="Preferensi pemisahan pembicara untuk mikrofon bersama. Memerlukan upload audio Server dan model diarization yang aktif."
         checked={draft.sharedRoomMic ?? false}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
+      <p className="settings-field-help">Browser dan WhisperLiveKit belum mendukung diarization pada alur ini. Pilihan Otomatis mengikuti layanan yang dipakai saat bergabung. Label pembicara berlaku per potongan audio, bukan identitas atau NIK karyawan; label yang sama pada potongan berbeda belum tentu orang yang sama.</p>
       <p className="settings-field-help" role="status">{!transcription ? 'Konfigurasi layanan belum dapat diperiksa. Pilihan Otomatis dan Browser tetap tersedia.' : !transcription.configured ? 'Layanan Server belum dikonfigurasi. Jika dipilih sebelumnya, rapat memakai Browser.' : 'Pilihan model mengikuti konfigurasi server. Kesiapan pemrosesan suara diperiksa saat digunakan dalam rapat.'}</p>
       {missingModel && <p className="settings-notice" role="status">Model tersimpan belum tersedia. Rapat berikutnya memakai model default yang tersedia.</p>}
       <p className="settings-field-help">Model berlaku saat layanan Server digunakan. Kamu tetap dapat mengganti bahasa, layanan, dan model di ruang rapat. Perubahan di ruang rapat tidak mengubah default ini.</p>
