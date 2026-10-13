@@ -96,7 +96,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
       />
       <div>
         <strong>Mode Mikrofon Ruang Rapat (Diarization)</strong>
-        <small>Opsi untuk mengidentifikasi danmemisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
+        <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}

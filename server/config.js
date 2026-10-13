@@ -35,9 +35,14 @@ export function loadConfig(env = process.env) {
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
     attendanceGraceMs: Number(env.ATTENDANCE_FINALIZE_GRACE_MS ?? 10000),
+    // DISABLED EMPLOYEE ID CHECK (saved for future re-enabling):
+    // To re-enable strict verification, set VERIFY_EMPLOYEE_ID=true in .env
+    /*
     verifyEmployeeId: env.VERIFY_EMPLOYEE_ID !== undefined
       ? env.VERIFY_EMPLOYEE_ID !== 'false'
       : Boolean(env.DATABASE_URL),
+    */
+    verifyEmployeeId: env.VERIFY_EMPLOYEE_ID === 'true',
   };
   if (env.NODE_ENV === 'production' && config.authEnabled && !config.authCookieSecure) throw new Error('Production login requires secure cookies over HTTPS.');
   if([config.vapidPublicKey,config.vapidPrivateKey,config.vapidSubject].some(Boolean)&&

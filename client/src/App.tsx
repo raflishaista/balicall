@@ -502,15 +502,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   const handleJoin = async () => {
     if (joinPending.current) return;
-    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim() || !department.trim()) {
-      setJoinError('Lengkapi identitas, departemen, dan nama ruang.'); return;
+    const userDept = department.trim() || 'General';
+    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim()) {
+      setJoinError('Lengkapi identitas dan nama ruang.'); return;
     }
-    // Format validation check (e.g. reject non-ID text such as "ns-12nsunauu")
     const cleanId = employeeId.trim();
+
+    // DISABLED ID FORMAT CHECK (saved for future re-enabling):
+    /*
     if (!isGuest && !/^BT-\d{4,6}$/i.test(cleanId)) {
       setJoinError('Format ID Salah.');
       return;
     }
+    */
 
     const mediaChoices = preJoinMedia.prepareJoin();
     if ((mediaChoices.microphoneEnabled || mediaChoices.cameraEnabled) && (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)) {
@@ -522,7 +526,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     try {
       const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server' }>('/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department }),
+        body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department: userDept }),
       });
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
@@ -996,7 +1000,9 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               sttConfigured={backendHealth?.sttConfigured ?? false}
               sttModels={backendHealth?.sttModels ?? []}
             />}
-            identityLocked={Boolean(authUser)}
+            // DISABLED IDENTITY LOCK (saved for future re-enabling):
+            // identityLocked={Boolean(authUser)}
+            identityLocked={false}
             personas={authUser ? [] : personas}
           />
         )}

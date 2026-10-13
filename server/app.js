@@ -151,8 +151,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/token', asyncRoute(async (req, res) => {
     if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
     let { roomName, employeeId, employeeName, department = 'General' } = req.body || {};
-    if (![roomName, employeeId, employeeName, department].every(value => nonEmpty(value))) {
-      return res.status(400).json({ error: 'Room, employee ID, name and department must be non-empty strings (max 160 characters)' });
+    if (!nonEmpty(department)) department = 'General';
+
+    if (![roomName, employeeId, employeeName].every(value => nonEmpty(value))) {
+      return res.status(400).json({ error: 'Room, employee ID, and name must be non-empty strings (max 160 characters)' });
     }
 
     const cleanId = employeeId.trim();
