@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PREFERENCES, PREFERENCES_KEY, normalizePreferences, readPreferences, writePreferences, mediaChoices, resolveTranscriptionPreferences } from '../src/preferences.ts';
+import { DEFAULT_PREFERENCES, PREFERENCES_KEY, normalizePreferences, readPreferences, writePreferences, mediaChoices, resolveTranscriptionPreferences, transcriptionModelLabel } from '../src/preferences.ts';
 
 test('preferences round-trip restores media and display choices without identity data', () => {
   let raw;
@@ -61,4 +61,12 @@ test('unavailable services and models fall back with a notice instead of request
   assert.equal(offline.provider, 'browser'); assert.ok(offline.notice);
   const removed = resolveTranscriptionPreferences(preferences, true, ['small'], 'missing-default', 'server');
   assert.equal(removed.model, 'small'); assert.ok(removed.notice);
+});
+
+test('Qwen has an experimental label and suspends shared mic without erasing the saved preference', () => {
+  assert.equal(transcriptionModelLabel('qwen3-asr-0.6b'), 'Qwen3-ASR-0.6B · Eksperimental');
+  const preferences = { ...DEFAULT_PREFERENCES, sharedRoomMic: true, transcriptionModel: 'qwen3-asr-0.6b' };
+  assert.equal(mediaChoices(preferences).sharedRoomMic, false);
+  assert.equal(preferences.sharedRoomMic, true);
+  assert.equal(mediaChoices({ ...preferences, transcriptionModel: 'small' }).sharedRoomMic, true);
 });

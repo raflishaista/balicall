@@ -103,6 +103,63 @@ async function fixture(t, overrides = {}, dependencies = {}) {
   } };
 }
 
+test('configured Qwen appears alongside Whisper and persists the selected model exactly once', async t => {
+  let calls = 0;
+  const f = await fixture(t, { sttModel: 'small', sttModels: ['small'], sttBaseUrl: 'http://whisper/v1',
+    qwenSttBaseUrl: 'http://qwen/v1', qwenSttKey: 'qwen-only', qwenSttTimeoutMs: 60000 }, {
+    fetchImpl: async (url, options) => {
+      calls++; assert.equal(url, 'http://qwen/v1/audio/transcriptions');
+      assert.equal(options.headers.Authorization, 'Bearer qwen-only');
+      return new Response('{"text":"Laporan jaringan diterima."}');
+    },
+  });
+  assert.deepEqual((await f.request('/health', undefined, null, 'GET')).data.sttModels, ['small', 'qwen3-asr-0.6b']);
+  const a = await f.joinRoom('qwen-tester');
+  const upload = () => f.request(a.route('audio'), undefined, null, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/wav',
+      'X-Request-Id': 'qwen-clip', 'X-Speech-Model': 'qwen3-asr-0.6b' }, body: 'fixture',
+  });
+  const first = await upload();
+  assert.equal(first.status, 200, JSON.stringify(first.data));
+  assert.equal(first.data.entry.sttModel, 'qwen3-asr-0.6b');
+  assert.equal((await upload()).data.entry.id, first.data.entry.id);
+  assert.equal(calls, 1);
+  assert.equal((await a.get('transcript')).data.transcripts.length, 1);
+});
+
+test('Qwen cannot be advertised or selected without its endpoint', async t => {
+  const f = await fixture(t, { sttModel: 'small', sttModels: ['small', 'qwen3-asr-0.6b'] });
+  assert.deepEqual((await f.request('/health', undefined, null, 'GET')).data.sttModels, ['small']);
+  const a = await f.joinRoom();
+  const response = await f.request(a.route('audio'), undefined, null, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/wav',
+      'X-Request-Id': 'not-configured', 'X-Speech-Model': 'qwen3-asr-0.6b' }, body: 'fixture',
+  });
+  assert.equal(response.status, 400);
+});
+
+test('global Whisper diarization default does not prevent Qwen while explicit Qwen diarization is rejected', async t => {
+  const f = await fixture(t, { sttModel: 'small', sttBaseUrl: 'http://whisper/v1',
+    qwenSttBaseUrl: 'http://qwen/v1', sttDiarization: true }, {
+    fetchImpl: async (url, options) => {
+      if (url.includes('qwen')) {
+        assert.equal(options.body.get('diarize'), null);
+        return new Response('{"text":"Qwen text"}');
+      }
+      assert.equal(options.body.get('diarize'), 'true');
+      return new Response(JSON.stringify({ text: 'Whisper text', segments: [{ speaker: 'Speaker 1', start: 0, end: 1, text: 'Whisper text' }] }));
+    },
+  });
+  const a = await f.joinRoom();
+  const upload = (model, id, explicit = false) => f.request(a.route('audio'), undefined, null, 'POST', {
+    headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'audio/wav', 'X-Request-Id': id,
+      'X-Speech-Model': model, ...(explicit ? { 'X-Speech-Diarize': 'true' } : {}) }, body: 'fixture',
+  });
+  assert.equal((await upload('qwen3-asr-0.6b', 'global-default')).status, 200);
+  assert.equal((await upload('qwen3-asr-0.6b', 'explicit-qwen', true)).status, 400);
+  assert.equal((await upload('small', 'whisper-default')).status, 200);
+});
+
 test('tokens share one session; presence reflects actual connection and forged speaker is ignored', async t => {
   const f = await fixture(t); const a = await f.joinRoom('a'); const b = await f.joinRoom('b');
   assert.equal(a.meetingId, b.meetingId);
