@@ -938,9 +938,9 @@ ${summary.decisions?.map(d => `- ${d}`).join('\n')}
 
 ---
 ### Tindak lanjut
-| Tugas | Penanggung jawab | Prioritas | Tenggat |
-| --- | --- | --- | --- |
-${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | ${a.deadline} |`).join('\n')}
+| No | Tugas | PIC / Penanggung jawab | Prioritas | Tenggat / Syarat |
+| --- | --- | --- | --- | --- |
+${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee || 'Belum ditentukan'} | ${a.priority} | ${a.deadline || '-'} |`).join('\n')}
 
 ---
 *Dibuat oleh BaliTower Sentra Meeting*
@@ -1923,7 +1923,7 @@ function SummaryView({
 
         {tab === 'decisions' && <div className="summary-panel"><section className="summary-section"><h2>Keputusan rapat</h2>{summary.decisions?.length ? <ol className="summary-list ordered">{summary.decisions.map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section></div>}
 
-        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th>Tugas</th><th>Penanggung jawab</th><th>Prioritas</th><th>Tenggat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
+        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th style={{ width: '40px' }}>No</th><th>Tugas</th><th>PIC / Penanggung jawab</th><th>Prioritas</th><th>Tenggat / Syarat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{index + 1}</td><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
 
         {tab === 'transcript' && <div className="summary-panel"><section className="summary-section">
           <div className="transcript-heading"><div><h2>Transkrip lengkap</h2><p>{filteredTranscripts.length} dari {transcripts.length} ucapan</p></div><label className="transcript-search"><Search size={15} /><input aria-label="Cari transkrip" value={query} onChange={event => setQuery(event.target.value)} placeholder="Cari nama atau isi ucapan" /></label></div>

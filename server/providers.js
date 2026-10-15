@@ -80,13 +80,23 @@ export function effectiveLlm(config) {
 
 export async function summarize(meeting, config, fetchImpl = fetch) {
   const dialogue = meeting.transcripts.map(entry => {
+    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+    const prefix = time ? `--- [${time}]` : '---';
     if (entry.segments && entry.segments.length > 0) {
-      return entry.segments.map(seg => `[${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
+      return entry.segments.map(seg => `${prefix} [${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
     }
-    return `[${entry.speakerName}]: ${entry.text}`;
+    return `${prefix} [${entry.speakerName}]: ${entry.text}`;
   }).join('\n');
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
-  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines or assignments. Use empty arrays if none were stated. Return only JSON with this exact shape:
+  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines, conditions or assignments. Use empty arrays if none were stated.
+Guidelines for actionItems:
+- Extract all actionable tasks agreed upon in the meeting.
+- 'task': Clear, specific description of the task.
+- 'assignee': PIC / Penanggung Jawab. Attribute to the speaker who agreed to do it. If multiple diarized speakers appear under one participant (e.g. person_0 vs person_1), distinguish them as "\${Speaker} (person_0)" unless their specific name was spoken in dialogue.
+- 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
+- 'priority': "High", "Medium", or "Low".
+
+Return only JSON with this exact shape:
 {"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":["string"]}
 Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDialogue:\n${dialogue}`;
   const provider = effectiveLlm(config);
@@ -112,6 +122,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
         messages: [{ role: 'user', content: prompt }],
         chat_template_kwargs: { enable_thinking: false },
         temperature: 0.2,
+        max_tokens: 4096,
       }),
     }, config, fetchImpl);
     content = data.choices?.[0]?.message?.content;

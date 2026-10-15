@@ -1386,9 +1386,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         doc
           .font('Helvetica')
           .fontSize(9)
-          .text(`   Penanggung jawab: ${pdfText(assignee || 'Belum ditentukan')}`)
+          .text(`   PIC / Penanggung jawab: ${pdfText(assignee || 'Belum ditentukan')}`)
           .text(`   Prioritas: ${pdfText(priority || 'Belum ditentukan')}`)
-          .text(`   Tenggat: ${pdfText(deadline || 'Belum ditentukan')}`)
+          .text(`   Tenggat / Syarat: ${pdfText(deadline || 'Belum ditentukan')}`)
           .moveDown(0.25);
       });
     }
