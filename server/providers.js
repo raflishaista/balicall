@@ -92,7 +92,7 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
 Guidelines for actionItems:
 - Extract all actionable tasks agreed upon in the meeting.
 - 'task': Clear, specific description of the task.
-- 'assignee': PIC / Penanggung Jawab. Attribute to the speaker who agreed to do it. If multiple diarized speakers appear under one participant (e.g. person_0 vs person_1), distinguish them as "\${Speaker} (person_0)" unless their specific name was spoken in dialogue.
+- 'assignee': PIC / Penanggung Jawab. Attribute to the person assigned, commanded, or committed to do the task. If a speaker commands or delegates to a specific person (e.g. "Siti, tolong periksa log" or "Rian kamu handle vendor"), the assignee must be that named person (e.g. "Siti" or "Rian"), NOT the speaker who gave the command. If multiple diarized speakers appear under one participant without names, distinguish them as "\${Speaker} (person_0)".
 - 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
 - 'priority': "High", "Medium", or "Low".
 
