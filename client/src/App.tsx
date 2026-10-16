@@ -33,6 +33,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { supportsSharedMicrophone } from './preferences';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -531,15 +532,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   const handleJoin = async () => {
     if (joinPending.current) return;
-    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim() || !department.trim()) {
-      setJoinError('Lengkapi identitas, departemen, dan nama ruang.'); return;
+    const userDept = department.trim() || 'General';
+    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim()) {
+      setJoinError('Lengkapi identitas dan nama ruang.'); return;
     }
-    // Format validation check (e.g. reject non-ID text such as "ns-12nsunauu")
     const cleanId = employeeId.trim();
+
+    // DISABLED ID FORMAT CHECK (saved for future re-enabling):
+    /*
     if (!isGuest && !/^BT-\d{4,6}$/i.test(cleanId)) {
       setJoinError('Format ID Salah.');
       return;
     }
+    */
 
     const mediaChoices = preJoinMedia.prepareJoin();
     if ((mediaChoices.microphoneEnabled || mediaChoices.cameraEnabled) && (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)) {
@@ -551,7 +556,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     try {
       const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server' }>('/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department }),
+        body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department: userDept }),
       });
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
@@ -872,7 +877,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
         'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
@@ -935,9 +940,9 @@ ${summary.decisions?.map(d => `- ${d}`).join('\n')}
 
 ---
 ### Tindak lanjut
-| Tugas | Penanggung jawab | Prioritas | Tenggat |
-| --- | --- | --- | --- |
-${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | ${a.deadline} |`).join('\n')}
+| No | Tugas | PIC / Penanggung jawab | Prioritas | Tenggat / Syarat |
+| --- | --- | --- | --- | --- |
+${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee || 'Belum ditentukan'} | ${a.priority} | ${a.deadline || '-'} |`).join('\n')}
 
 ---
 *Dibuat oleh BaliTower Sentra Meeting*
@@ -1092,12 +1097,14 @@ ${summary.actionItems?.map(a => `| ${a.task} | ${a.assignee} | ${a.priority} | $
               onToggleSharedMic={enabled => userPreferences.save({ ...userPreferences.preferences, sharedRoomMic: enabled })}
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
-              transcriptionModel={userPreferences.preferences.transcriptionModel}
+              transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
               sttModels={backendHealth?.sttModels ?? []}
             />}
-            identityLocked={Boolean(authUser)}
+            // DISABLED IDENTITY LOCK (saved for future re-enabling):
+            // identityLocked={Boolean(authUser)}
+            identityLocked={false}
             personas={authUser ? [] : personas}
           />
         )}
@@ -1538,6 +1545,7 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
+          sharedMicSupported={supportsSharedMicrophone(sttModel)}
           onToggleSharedMic={onToggleSharedMic}
           onClose={closeDevices}
         />
@@ -1923,7 +1931,7 @@ function SummaryView({
 
         {tab === 'decisions' && <div className="summary-panel"><section className="summary-section"><h2>Keputusan rapat</h2>{summary.decisions?.length ? <ol className="summary-list ordered">{summary.decisions.map((decision, index) => <li key={index}>{decision}</li>)}</ol> : <p>Belum ada keputusan yang tercatat.</p>}</section></div>}
 
-        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th>Tugas</th><th>Penanggung jawab</th><th>Prioritas</th><th>Tenggat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
+        {tab === 'actions' && <div className="summary-panel"><section className="summary-section"><h2>Tindak lanjut</h2>{summary.actionItems?.length ? <div className="action-table-wrap"><table className="action-table"><thead><tr><th style={{ width: '40px' }}>No</th><th>Tugas</th><th>PIC / Penanggung jawab</th><th>Prioritas</th><th>Tenggat / Syarat</th></tr></thead><tbody>{summary.actionItems.map((item, index) => <tr key={index}><td>{index + 1}</td><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td><td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.deadline || 'Belum ditentukan'}</td></tr>)}</tbody></table></div> : <p>Belum ada tindak lanjut yang tercatat.</p>}</section></div>}
 
         {tab === 'transcript' && <div className="summary-panel"><section className="summary-section">
           <div className="transcript-heading"><div><h2>Transkrip lengkap</h2><p>{filteredTranscripts.length} dari {transcripts.length} ucapan</p></div><label className="transcript-search"><Search size={15} /><input aria-label="Cari transkrip" value={query} onChange={event => setQuery(event.target.value)} placeholder="Cari nama atau isi ucapan" /></label></div>

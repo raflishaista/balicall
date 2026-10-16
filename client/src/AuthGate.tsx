@@ -41,10 +41,18 @@ export function AuthGate() {
     catch(err) {setError(err instanceof Error?err.message:'Gagal keluar. Coba lagi.');}
     finally {setLogoutPending(false);}
   };
+  // DISABLED MANDATORY LOGIN BARRIER (saved for future re-enabling):
+  /*
   if (!checking && session && (!session.enabled || session.user)) return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user} onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)} onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
   return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking} onRetry={async () => { setChecking(true); await check(); }} onAuthenticated={accept} />;
+  */
+
+  if (!checking) {
+    return <><App key={session?.user?.employeeId || 'legacy'} authUser={session?.user || null} onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)} onLogout={session?.enabled && session?.user ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
+  }
+  return <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', background: '#0a1d37', color: '#90cdf4' }}><Loader2 className="ui-spinner" size={24} /></div>;
 }
-function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
+export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
   checking:boolean;serviceError:string|null;unavailable:boolean;onRetry:()=>Promise<void>;onAuthenticated:(session:Session)=>void;
 }) {
   const [mode,setMode]=useState<'login'|'activate'|'guest'>('login');

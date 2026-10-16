@@ -80,13 +80,23 @@ export function effectiveLlm(config) {
 
 export async function summarize(meeting, config, fetchImpl = fetch) {
   const dialogue = meeting.transcripts.map(entry => {
+    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+    const prefix = time ? `--- [${time}]` : '---';
     if (entry.segments && entry.segments.length > 0) {
-      return entry.segments.map(seg => `[${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
+      return entry.segments.map(seg => `${prefix} [${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
     }
-    return `[${entry.speakerName}]: ${entry.text}`;
+    return `${prefix} [${entry.speakerName}]: ${entry.text}`;
   }).join('\n');
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
-  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines or assignments. Use empty arrays if none were stated. Return only JSON with this exact shape:
+  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines, conditions or assignments. Use empty arrays if none were stated.
+Guidelines for actionItems:
+- Extract all actionable tasks agreed upon in the meeting.
+- 'task': Clear, specific description of the task.
+- 'assignee': PIC / Penanggung Jawab. Attribute to the person assigned, commanded, or committed to do the task. If a speaker commands or delegates to a specific person (e.g. "Siti, tolong periksa log" or "Rian kamu handle vendor"), the assignee must be that named person (e.g. "Siti" or "Rian"), NOT the speaker who gave the command. If multiple diarized speakers appear under one participant without names, distinguish them as "\${Speaker} (person_0)".
+- 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
+- 'priority': "High", "Medium", or "Low".
+
+Return only JSON with this exact shape:
 {"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":["string"]}
 Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDialogue:\n${dialogue}`;
   const provider = effectiveLlm(config);
@@ -112,6 +122,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
         messages: [{ role: 'user', content: prompt }],
         chat_template_kwargs: { enable_thinking: false },
         temperature: 0.2,
+        max_tokens: 4096,
       }),
     }, config, fetchImpl);
     content = data.choices?.[0]?.message?.content;
@@ -128,7 +139,11 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
 }
 
 export async function transcribeAudio(audio, mimeType, language, config, fetchImpl = fetch) {
-  if (!config.sttBaseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  const qwen = config.sttModel === 'qwen3-asr-0.6b';
+  const baseUrl = qwen ? config.qwenSttBaseUrl : config.sttBaseUrl;
+  const key = qwen ? config.qwenSttKey : config.sttKey;
+  if (!baseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  if (qwen && config.sttDiarization) throw new ServiceError('Qwen belum mendukung diarization. Nonaktifkan mode mikrofon ruang rapat atau pilih model lain.', 400);
   const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' };
   const extension = extensions[mimeType.split(';')[0]];
   if (!extension) throw new ServiceError('Unsupported audio format', 415);
@@ -138,9 +153,9 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   form.append('language', language);
   form.append('response_format', 'json');
   if (config.sttDiarization) form.append('diarize', 'true');
-  const data = await fetchJson(`${config.sttBaseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
-    method: 'POST', headers: config.sttKey ? { Authorization: `Bearer ${config.sttKey}` } : {}, body: form,
-  }, config.sttTimeoutMs, fetchImpl);
+  const data = await fetchJson(`${baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
+    method: 'POST', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: form,
+  }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
   const text = data.text.trim();
   if (!config.sttDiarization || !data.segments) return { text };
