@@ -13,6 +13,7 @@ import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
+import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import {
   isDbConnected,
   saveMeeting,
@@ -122,10 +123,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       llmEffectiveProvider,
       hasLlmKey: llmEffectiveProvider !== 'demo',
       sttProvider: config.sttProvider,
-      sttConfigured: Boolean(config.sttBaseUrl && config.sttModel),
+      sttConfigured: Boolean(config.sttModel && (config.sttModel === QWEN_STT_MODEL ? config.qwenSttBaseUrl : config.sttBaseUrl)),
       sttDiarization: Boolean(config.sttDiarization),
       sttModel: config.sttModel,
-      sttModels: [...(config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : [])),
+      sttModels: [...availableSttModels(config),
         ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : [])],
       database: {
         connected: isDbConnected(),
@@ -990,12 +991,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
     const model = req.get('X-Speech-Model') || config.sttModel;
-    const diarize = req.get('X-Speech-Diarize') === 'true' || config.sttDiarization;
+    const diarize = req.get('X-Speech-Diarize') === 'true' || (model !== QWEN_STT_MODEL && config.sttDiarization);
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
     if (store.hasEmptyAudioRequest(req.meetingId, req.speakerId, requestId)) return res.json({ success: true, text: '', entry: null });
-    const allowedModels = config.sttModels?.length ? config.sttModels : [config.sttModel];
+    const allowedModels = availableSttModels(config);
     if (model && !allowedModels.includes(model)) return res.status(400).json({ error: 'Model transkripsi tidak tersedia di server' });
     if (!writable(req, res)) return;
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;

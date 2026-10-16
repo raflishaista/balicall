@@ -32,6 +32,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { supportsSharedMicrophone } from './preferences';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -875,7 +876,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
         'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
@@ -1095,7 +1096,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               onToggleSharedMic={enabled => userPreferences.save({ ...userPreferences.preferences, sharedRoomMic: enabled })}
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
-              transcriptionModel={userPreferences.preferences.transcriptionModel}
+              transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
               sttModels={backendHealth?.sttModels ?? []}
@@ -1538,6 +1539,7 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
+          sharedMicSupported={supportsSharedMicrophone(sttModel)}
           onToggleSharedMic={onToggleSharedMic}
           onClose={closeDevices}
         />

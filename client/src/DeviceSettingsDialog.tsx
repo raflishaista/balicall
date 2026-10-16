@@ -3,12 +3,13 @@ import { VideoTrack, useLocalParticipant } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { Headphones, Loader2, Mic, RefreshCw, Settings2, Video, VideoOff, X } from 'lucide-react';
 import type { useDeviceSettings } from './useDeviceSettings';
+import { QWEN_TRANSCRIPTION_NOTICE } from './preferences';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
-export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, sharedRoomMic = false, onToggleSharedMic, onClose }: {
+export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, sharedRoomMic = false, sharedMicSupported = true, onToggleSharedMic, onClose }: {
   settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
-  sharedRoomMic?: boolean; onToggleSharedMic?: (enabled: boolean) => void; onClose: () => void;
+  sharedRoomMic?: boolean; sharedMicSupported?: boolean; onToggleSharedMic?: (enabled: boolean) => void; onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -44,7 +45,8 @@ export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, 
     <div className="device-settings-grid"><div className="device-selectors">
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
-      {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedRoomMic} disabled={disabled} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
+      {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedMicSupported && sharedRoomMic} disabled={disabled || !sharedMicSupported} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
+      {!sharedMicSupported && <p className="device-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
       {onToggleSharedMic && <p className="device-help">Memerlukan upload audio Server dan model diarization aktif. Browser dan WhisperLiveKit belum mendukungnya. Label berlaku per potongan audio, bukan identitas karyawan.</p>}
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />

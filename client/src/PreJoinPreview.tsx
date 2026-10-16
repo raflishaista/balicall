@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
-import { isChromiumBrowser, transcriptionModelLabel } from './preferences';
+import { isChromiumBrowser, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
@@ -20,6 +20,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
   sttModels?: string[];
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  const sharedMicSupported = supportsSharedMicrophone(transcriptionModel);
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -62,7 +63,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           </option>
           <option value="browser">Browser (Web Speech API)</option>
           <option value="server" disabled={!sttConfigured}>
-            Server (faster-whisper){!sttConfigured ? ' · belum tersedia' : ''}
+            Server{!sttConfigured ? ' · belum tersedia' : ''}
           </option>
         </select>
       </label>
@@ -87,8 +88,8 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
     <label className="prejoin-shared-mic-toggle">
       <input
         type="checkbox"
-        checked={media.choices.sharedRoomMic ?? false}
-        disabled={blocked}
+        checked={sharedMicSupported && (media.choices.sharedRoomMic ?? false)}
+        disabled={blocked || !sharedMicSupported}
         onChange={event => {
           media.setSharedRoomMic?.(event.target.checked);
           onToggleSharedMic?.(event.target.checked);
@@ -99,6 +100,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
+    {!sharedMicSupported && <p className="prejoin-error" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}
     <button type="button" className="prejoin-refresh" disabled={blocked} onClick={() => void media.refresh()}>Perbarui daftar perangkat</button>
     <MicrophoneDiagnostic key={media.streams.audioinput?.id || 'no-input'} stream={media.streams.audioinput} pending={media.pending.audioinput} error={media.errors.audioinput} blocked={blocked} onStart={() => void media.capture('audioinput')} onStop={media.stopMicrophone} />

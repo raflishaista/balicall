@@ -62,8 +62,14 @@ export function writePreferences(storage: Pick<Storage, 'setItem'>, value: Meeti
 export function mediaChoices(preferences: MeetingPreferences): JoinMediaChoices {
   return { microphoneEnabled: preferences.microphoneEnabled, cameraEnabled: preferences.cameraEnabled,
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
-    sharedRoomMic: preferences.sharedRoomMic ?? false };
+    sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel) && (preferences.sharedRoomMic ?? false) };
 }
+
+export function supportsSharedMicrophone(model?: string) {
+  return model !== 'qwen3-asr-0.6b';
+}
+
+export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental dan belum mendukung diarization. Transkrip memakai nama akun peserta, bukan identitas setiap orang di depan satu mikrofon.';
 
 export function resolveTranscriptionPreferences(preferences: MeetingPreferences, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
   const requested = preferences.transcriptionProvider === 'auto' ? defaultProvider : preferences.transcriptionProvider;
@@ -78,7 +84,8 @@ export function resolveTranscriptionPreferences(preferences: MeetingPreferences,
 }
 
 export function transcriptionModelLabel(model: string) {
-  return model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
+  return model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
+    : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
     : model === 'small-id' ? 'faster-whisper · Small Indonesian'
       : model === 'small' ? 'faster-whisper · Small' : model;
 }
