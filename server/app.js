@@ -13,6 +13,7 @@ import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
+import { attachRecordingUploads } from './recordingUploads.js';
 import {
   isDbConnected,
   saveMeeting,
@@ -93,6 +94,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   attachAuth(app, config, authStore, createGuestAccess(store));
   attachWorkspaceApi(app,config,workspace);
+  attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   async function dispatchOutboundWebhook(url, payload) {

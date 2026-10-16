@@ -5,6 +5,7 @@ import {
   Clock,
   Check,
   Copy,
+  Upload,
   ChevronRight,
   ChevronLeft,
   Loader2,
@@ -35,6 +36,7 @@ export interface SummaryHistoryViewProps {
   onSelectInProgress: (record: InProgressRecord) => void;
   onBackToHome: () => void;
   onRefreshData?: () => void;
+  onOpenRecordings?: () => void;
   isLoadingDb?: boolean;
   notice?: string | null;
 }
@@ -49,6 +51,7 @@ export function SummaryHistoryView({
   onSelectInProgress,
   onBackToHome,
   onRefreshData,
+  onOpenRecordings,
   isLoadingDb = false,
   notice,
 }: SummaryHistoryViewProps) {
@@ -148,16 +151,24 @@ export function SummaryHistoryView({
 
           {onRefreshData && (
             <div className="history-header-actions">
-              <button
-                type="button"
-                className="button-secondary compact-btn"
-                onClick={onRefreshData}
-                disabled={isLoadingDb}
-                title="Perbarui daftar notulen dari database"
-              >
-                <RefreshCw size={13} className={isLoadingDb ? 'ui-spinner' : ''} />
-                <span>{isLoadingDb ? 'Memperbarui...' : 'Sinkronkan'}</span>
-              </button>
+              {onOpenRecordings && (
+                <button type="button" className="button-primary compact-btn" onClick={onOpenRecordings}>
+                  <Upload size={13} />
+                  <span>Unggah Rekaman</span>
+                </button>
+              )}
+              {onRefreshData && (
+                <button
+                  type="button"
+                  className="button-secondary compact-btn"
+                  onClick={onRefreshData}
+                  disabled={isLoadingDb}
+                  title="Perbarui daftar notulen dari database"
+                >
+                  <RefreshCw size={13} className={isLoadingDb ? 'ui-spinner' : ''} />
+                  <span>{isLoadingDb ? 'Memperbarui...' : 'Sinkronkan'}</span>
+                </button>
+              )}
             </div>
           )}
         </div>

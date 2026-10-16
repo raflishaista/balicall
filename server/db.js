@@ -176,6 +176,34 @@ export async function initDb(customUrl) {
         CREATE INDEX IF NOT EXISTS idx_balicall_schedules_room ON balicall_schedules(room_name);
       `);
 
+            // 8. Create balicall_recording_uploads table (uploaded recordings, separate from live meetings)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS balicall_recording_uploads (
+          id VARCHAR(64) PRIMARY KEY,
+          owner_id VARCHAR(64),
+          owner_name VARCHAR(128),
+          title VARCHAR(255) NOT NULL,
+          original_filename VARCHAR(255),
+          file_path TEXT,
+          file_size BIGINT,
+          language VARCHAR(8) NOT NULL DEFAULT 'id',
+          status VARCHAR(32) NOT NULL DEFAULT 'queued',
+          stage VARCHAR(32),
+          error TEXT,
+          worker_job_id VARCHAR(64),
+          duration_seconds REAL,
+          transcript JSONB,
+          summary JSONB,
+          provider VARCHAR(64),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          completed_at TIMESTAMP WITH TIME ZONE
+        );
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_balicall_recording_uploads_owner ON balicall_recording_uploads(owner_id, created_at DESC);
+      `);
+      
       isConnected = true;
       console.log('[DB] ✅ Balicall database schema (employees, meetings, summaries, transcripts, attendees, schedules) verified successfully.');
       return true;

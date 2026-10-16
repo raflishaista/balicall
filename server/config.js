@@ -32,6 +32,17 @@ export function loadConfig(env = process.env) {
     liveSttUrl: env.LIVE_STT_URL || '',
     sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
+
+    // fitur upload file meeting recording
+    recordingUploadDir: env.RECORDING_UPLOAD_DIR || fileURLToPath(new URL('./data/recording-uploads', import.meta.url)),
+    recordingUploadMaxMb: Number(env.RECORDING_UPLOAD_MAX_MB || 500),
+    recordingSttUrl: env.RECORDING_STT_URL || '',
+    recordingSttModel: env.RECORDING_STT_MODEL || env.STT_MODEL || '',
+    recordingSttKey: env.RECORDING_STT_API_KEY || env.STT_API_KEY || '',
+    recordingDiarization: env.RECORDING_DIARIZATION == 'true',
+    recordingPollMs: Number(env.RECORDING_POLL_MS || 5000),
+    recordingMaxProcessMin: Number(env.RECORDING_MAX_PROCESS_MIN || 240),
+
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
     attendanceGraceMs: Number(env.ATTENDANCE_FINALIZE_GRACE_MS ?? 10000),
@@ -60,5 +71,9 @@ export function loadConfig(env = process.env) {
   if (env.NODE_ENV === 'production' && (config.livekitKey === 'devkey' || config.livekitSecret === 'secret')) {
     throw new Error('Production requires non-development LiveKit credentials');
   }
+  if (!Number.isInteger(config.recordingUploadMaxMb) || config.recordingUploadMaxMb < 1 || config.recordingUploadMaxMb > 5000) throw new Error('RECORDING_UPLOAD_MAX_MB must be an integer from 1 to 5000');
+  if (!Number.isInteger(config.recordingPollMs) || config.recordingPollMs < 1000 || config.recordingPollMs > 60000) throw new Error('RECORDING_POLL_MS must be 1000–60000 milliseconds');
+  if (!Number.isInteger(config.recordingMaxProcessMin) || config.recordingMaxProcessMin < 1 || config.recordingMaxProcessMin > 1440) throw new Error('RECORDING_MAX_PROCESS_MIN must be an integer from 1 to 1440');
+  if (config.recordingSttUrl && !['http:', 'https:'].includes(new URL(config.recordingSttUrl).protocol)) throw new Error('Invalid recordingSttUrl protocol');
   return config;
 }
