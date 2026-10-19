@@ -33,7 +33,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
-import { supportsSharedMicrophone } from './preferences';
+import { resolveDiarization } from './diarization';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -565,9 +565,6 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       summaryGeneration.current++;
       setCallPreferences({
         ...userPreferences.preferences,
-        sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
-        liveDiarization: mediaChoices.liveDiarization ?? userPreferences.preferences.liveDiarization ?? true,
-        batchDiarization: mediaChoices.batchDiarization ?? userPreferences.preferences.batchDiarization ?? true,
       });
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
@@ -654,7 +651,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleEndMeeting = async (generate = true) => {
+  const handleEndMeeting = async (generate = true, batchAllowed = false) => {
     if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
@@ -780,8 +777,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       });
 
       // 4. Request summary in the background with complete transcripts
-      const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
-      const useBatchDiarize = isSharedMic && (callPreferences.batchDiarization ?? joinMedia.batchDiarization ?? true);
+      const isSharedMic = Boolean(callPreferences.sharedRoomMic ?? joinMedia.sharedRoomMic);
+      const useBatchDiarize = batchAllowed && isSharedMic && (callPreferences.batchDiarization ?? joinMedia.batchDiarization ?? true);
       try {
         await triggerSummarize(currentMeetingId, currentToken, currentRoomName, finalTranscripts, leavePromise, useBatchDiarize);
       } finally {
@@ -976,8 +973,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
-    const useLiveDiarize = isSharedMic && (callPreferences.liveDiarization ?? joinMedia.liveDiarization ?? true);
+    const useLiveDiarize = resolveDiarization({ ...callPreferences, provider: 'server', model: model || backendHealth?.sttModel, configured: backendHealth?.sttConfigured ?? null }).live;
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
         'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
@@ -1201,6 +1197,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onJoin={handleJoin}
             mediaPreview={<PreJoinPreview
               media={preJoinMedia}
+              diarizationPreferences={userPreferences.preferences}
               employeeName={employeeName}
               blocked={isJoining}
               mirror={userPreferences.preferences.mirrorLocalVideo}
@@ -1506,10 +1503,11 @@ function RoomContent({
   const [modelError, setModelError] = useState<string | null>(null);
   const sttModel = selectedSttModel || defaultSttModel;
   const isLiveModel = sttModel === 'whisperlivekit-small';
+  const diarization = resolveDiarization({ ...callPreferences, provider: sttProvider, model: sttModel, configured: sttConfigured });
   const paused = isMuted || !connected || isSummarizing || saveBlocked;
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
   const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: Boolean(callPreferences.sharedRoomMic), onAudio: onAddAudio });
+    track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: diarization.shared, onAudio: onAddAudio });
   const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
     muted: paused || sttProvider !== 'server' || !isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine });
@@ -1555,7 +1553,7 @@ function RoomContent({
     if (finishRequest.current) return;
     finishRequest.current = true;
     setFinishing(true); setFinishError(null);
-    try { await finishTranscription(); await onEndMeeting(generate); }
+    try { await finishTranscription(); await onEndMeeting(generate, diarization.batch); }
     catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
     finally { finishRequest.current = false; setFinishing(false); }
   };
@@ -1657,6 +1655,7 @@ function RoomContent({
           blocked={
             finishing ||
             isSummarizing ||
+            modelPending ||
             camera.pending ||
             microphone.pending ||
             blur.blurPending
@@ -1668,12 +1667,13 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
-          sharedMicSupported={supportsSharedMicrophone(sttModel)}
-          onToggleSharedMic={onToggleSharedMic}
+          sttModel={sttModel}
+          sttConfigured={sttConfigured}
+          onToggleSharedMic={enabled => void changeSpeechSettings(() => onToggleSharedMic(enabled))}
           liveDiarization={callPreferences.liveDiarization ?? true}
-          onToggleLiveDiarization={onToggleLiveDiarization}
+          onToggleLiveDiarization={enabled => void changeSpeechSettings(() => onToggleLiveDiarization(enabled))}
           batchDiarization={callPreferences.batchDiarization ?? true}
-          onToggleBatchDiarization={onToggleBatchDiarization}
+          onToggleBatchDiarization={enabled => void changeSpeechSettings(() => onToggleBatchDiarization(enabled))}
           onClose={closeDevices}
         />
       )}

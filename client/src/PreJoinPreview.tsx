@@ -2,14 +2,16 @@ import { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
-import { isChromiumBrowser, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
+import { isChromiumBrowser, transcriptionModelLabel, resolveTranscriptionPreferences, getRecommendedProvider } from './preferences';
+import type { MeetingPreferences } from './preferences';
+import { DiarizationControls } from './DiarizationControls';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
   onToggleLiveDiarization, onToggleBatchDiarization,
   transcriptionProvider, onChangeTranscriptionProvider,
   transcriptionModel, onChangeTranscriptionModel,
-  sttConfigured, sttModels = []
+  sttConfigured, sttModels = [], diarizationPreferences
 }: {
   media: ReturnType<typeof usePreJoinMedia>; employeeName: string; blocked: boolean;
   mirror?: boolean;
@@ -22,9 +24,11 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
   onChangeTranscriptionModel?: (model: string) => void;
   sttConfigured?: boolean;
   sttModels?: string[];
+  diarizationPreferences?: Pick<MeetingPreferences, 'sharedRoomMic' | 'liveDiarization' | 'batchDiarization'>;
 }) {
   const video = useRef<HTMLVideoElement>(null);
-  const sharedMicSupported = supportsSharedMicrophone(transcriptionModel);
+  const provider = resolveTranscriptionPreferences({ transcriptionProvider: transcriptionProvider || 'auto', transcriptionModel: transcriptionModel || '' }, Boolean(sttConfigured), sttModels, transcriptionModel || '', getRecommendedProvider(Boolean(sttConfigured))).provider;
+  const diarization = diarizationPreferences || media.choices;
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -71,7 +75,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           </option>
         </select>
       </label>
-      {Boolean(transcriptionProvider === 'server' || (transcriptionProvider === 'auto' && !isChromiumBrowser() && sttConfigured)) && sttModels.length > 0 && (
+      {provider === 'server' && sttModels.length > 0 && (
         <label className="prejoin-device-field">
           Model transkripsi
           <select
@@ -89,56 +93,11 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         </label>
       )}
     </div>
-    <label className="prejoin-shared-mic-toggle">
-      <input
-        type="checkbox"
-        checked={sharedMicSupported && (media.choices.sharedRoomMic ?? false)}
-        disabled={blocked || !sharedMicSupported}
-        onChange={event => {
-          media.setSharedRoomMic?.(event.target.checked);
-          onToggleSharedMic?.(event.target.checked);
-        }}
-      />
-      <div>
-        <strong>Mode Mikrofon Ruang Rapat (Diarization)</strong>
-        <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
-      </div>
-    </label>
-    {!sharedMicSupported && <p className="prejoin-error" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
-    {Boolean(sharedMicSupported && media.choices.sharedRoomMic) && (
-      <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
-          <input
-            type="checkbox"
-            checked={media.choices.liveDiarization ?? true}
-            disabled={blocked}
-            onChange={event => {
-              media.setLiveDiarization?.(event.target.checked);
-              onToggleLiveDiarization?.(event.target.checked);
-            }}
-          />
-          <div>
-            <strong>Diarisasi Langsung (Live / Normal)</strong>
-            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Deteksi pembicara secara instan pada teks berjalan saat panggilan berlangsung.</p>
-          </div>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
-          <input
-            type="checkbox"
-            checked={media.choices.batchDiarization ?? true}
-            disabled={blocked}
-            onChange={event => {
-              media.setBatchDiarization?.(event.target.checked);
-              onToggleBatchDiarization?.(event.target.checked);
-            }}
-          />
-          <div>
-            <strong>Diarisasi Batch Pasca-Rapat (Post-Meeting)</strong>
-            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Analisis rekaman lengkap di akhir rapat untuk notulen dengan identifikasi pembicara yang konsisten secara global.</p>
-          </div>
-        </label>
-      </div>
-    )}
+    <DiarizationControls provider={provider} model={transcriptionModel} configured={sttConfigured ?? null}
+      sharedRoomMic={diarization.sharedRoomMic} liveDiarization={diarization.liveDiarization} batchDiarization={diarization.batchDiarization} disabled={blocked}
+      onSharedChange={enabled => { media.setSharedRoomMic(enabled); onToggleSharedMic?.(enabled); }}
+      onLiveChange={enabled => { media.setLiveDiarization(enabled); onToggleLiveDiarization?.(enabled); }}
+      onBatchChange={enabled => { media.setBatchDiarization(enabled); onToggleBatchDiarization?.(enabled); }} />
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}
     <button type="button" className="prejoin-refresh" disabled={blocked} onClick={() => void media.refresh()}>Perbarui daftar perangkat</button>
     <MicrophoneDiagnostic key={media.streams.audioinput?.id || 'no-input'} stream={media.streams.audioinput} pending={media.pending.audioinput} error={media.errors.audioinput} blocked={blocked} onStart={() => void media.capture('audioinput')} onStop={media.stopMicrophone} />
