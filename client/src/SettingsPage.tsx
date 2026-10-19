@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Info, LockKeyhole, Mic, Monitor, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, UserRound, Video, Volume2 } from 'lucide-react';
 import { initials } from './presentation';
-import { DEFAULT_PREFERENCES, transcriptionModelLabel } from './preferences';
+import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
@@ -111,8 +111,8 @@ export function SettingsPage({ preferences, notice, employeeId, employeeName, de
   </div>;
 }
 
-function PreferenceToggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <label className="settings-toggle"><span><strong>{label}</strong><small>{description}</small></span><input type="checkbox" role="switch" checked={checked} onChange={event => onChange(event.target.checked)} /><span className="settings-toggle-track" aria-hidden="true" /></label>;
+function PreferenceToggle({ label, description, checked, disabled = false, onChange }: { label: string; description: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
+  return <label className="settings-toggle"><span><strong>{label}</strong><small>{description}</small></span><input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} /><span className="settings-toggle-track" aria-hidden="true" /></label>;
 }
 
 function PreferenceDevice({ label, Icon, kind, value, devices, disabled, onChange }: { label: string; Icon: typeof Mic; kind: MediaDeviceKind; value: string; devices: MediaDeviceInfo[]; disabled: boolean; onChange: (value: string) => void }) {
@@ -127,6 +127,7 @@ function AISettings({ draft, update, transcription, aiStatus }: {
   aiStatus?: ReturnType<typeof useBackendHealth>;
 }) {
   const models = transcription?.models || [];
+  const sharedMicSupported = supportsSharedMicrophone(draft.transcriptionModel || transcription?.defaultModel);
   const missingModel = Boolean(draft.transcriptionModel && !models.includes(draft.transcriptionModel));
   return <>
     {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
@@ -137,10 +138,12 @@ function AISettings({ draft, update, transcription, aiStatus }: {
       <PreferenceToggle
         label="Mode Mikrofon Ruang Rapat (Diarization)"
         description="Preferensi pemisahan pembicara untuk mikrofon bersama. Memerlukan upload audio Server dan model diarization yang aktif."
-        checked={draft.sharedRoomMic ?? false}
+        checked={sharedMicSupported && (draft.sharedRoomMic ?? false)}
+        disabled={!sharedMicSupported}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
-      {draft.sharedRoomMic && (
+      {!sharedMicSupported && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {sharedMicSupported && draft.sharedRoomMic && (
         <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
           <PreferenceToggle
             label="Diarisasi Langsung (Live / Normal)"

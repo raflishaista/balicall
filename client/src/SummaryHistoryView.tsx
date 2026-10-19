@@ -5,6 +5,7 @@ import {
   Clock,
   Check,
   Copy,
+  Upload,
   ChevronRight,
   ChevronLeft,
   Loader2,
@@ -36,6 +37,7 @@ export interface SummaryHistoryViewProps {
   onSelectInProgress: (record: InProgressRecord) => void;
   onBackToHome: () => void;
   onRefreshData?: () => void;
+  onOpenRecordings?: () => void;
   isLoadingDb?: boolean;
   notice?: string | null;
   onUploadAudio?: (file: File) => void;
@@ -51,6 +53,7 @@ export function SummaryHistoryView({
   onSelectInProgress,
   onBackToHome,
   onRefreshData,
+  onOpenRecordings,
   isLoadingDb = false,
   notice,
   onUploadAudio,
@@ -150,6 +153,12 @@ export function SummaryHistoryView({
           </div>
 
           <div className="history-header-actions" style={{ display: 'flex', gap: '8px' }}>
+            {onOpenRecordings && (
+              <button type="button" className="button-primary compact-btn" onClick={onOpenRecordings}>
+                <Upload size={13} />
+                <span>Unggah Rekaman</span>
+              </button>
+            )}
             {onUploadAudio && (
               <label
                 className="button-secondary compact-btn"

@@ -13,6 +13,8 @@ import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
+import { attachRecordingUploads } from './recordingUploads.js';
+import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import {
   isDbConnected,
   saveMeeting,
@@ -94,6 +96,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   attachAuth(app, config, authStore, createGuestAccess(store));
   attachWorkspaceApi(app,config,workspace);
+  attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   async function dispatchOutboundWebhook(url, payload) {
@@ -123,10 +126,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       llmEffectiveProvider,
       hasLlmKey: llmEffectiveProvider !== 'demo',
       sttProvider: config.sttProvider,
-      sttConfigured: Boolean(config.sttBaseUrl && config.sttModel),
+      sttConfigured: Boolean(config.sttModel && (config.sttModel === QWEN_STT_MODEL ? config.qwenSttBaseUrl : config.sttBaseUrl)),
       sttDiarization: Boolean(config.sttDiarization),
       sttModel: config.sttModel,
-      sttModels: [...(config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : [])),
+      sttModels: [...availableSttModels(config),
         ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : [])],
       database: {
         connected: isDbConnected(),
@@ -265,9 +268,6 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       meetingId: meeting.id,
       sttProvider: config.sttProvider,
     });
-
-    at.addGrant(grant);
-    res.json({ token: await at.toJwt(), url: config.livekitUrl, roomName: meeting.roomName, meetingId: meeting.id, sttProvider: config.sttProvider });
   }));
 
   // 4. Meeting scheduling & calendar endpoints
@@ -992,12 +992,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const language = req.get('X-Speech-Language') || 'id';
     const model = req.get('X-Speech-Model') || config.sttModel;
     const diarizeHeader = req.get('X-Speech-Diarize');
-    const diarize = diarizeHeader !== undefined ? diarizeHeader === 'true' : config.sttDiarization;
+    const diarize = diarizeHeader !== undefined ? diarizeHeader === 'true' : (model !== QWEN_STT_MODEL && config.sttDiarization);
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
     if (store.hasEmptyAudioRequest(req.meetingId, req.speakerId, requestId)) return res.json({ success: true, text: '', entry: null });
-    const allowedModels = config.sttModels?.length ? config.sttModels : [config.sttModel];
+    const allowedModels = availableSttModels(config);
     if (model && !allowedModels.includes(model)) return res.status(400).json({ error: 'Model transkripsi tidak tersedia di server' });
     if (!writable(req, res)) return;
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;
@@ -1674,6 +1674,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }
 
   app.use((error, req, res, _next) => {
+    if (res.headersSent) return _next(error);
     const status = error.status || (error.type === 'entity.too.large' ? 413 : 500);
     if (status >= 500) console.error('API request failed:', {requestId:req.requestId,method:req.method,path:req.route?.path||req.path,status,message:error.message});
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });

@@ -1,4 +1,5 @@
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
 import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
@@ -771,6 +772,7 @@ export function MeetingRoom({
 
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-model-select">Model</label>
+                  {!supportsSharedMicrophone(sttModel) && <p role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}
@@ -787,13 +789,7 @@ export function MeetingRoom({
                     {!sttModels.length && <option value="">Belum tersedia</option>}
                     {sttModels.map(model => (
                       <option key={model} value={model}>
-                        {model === 'whisperlivekit-small'
-                          ? 'WhisperLiveKit · Small (Live)'
-                          : model === 'small-id'
-                            ? 'faster-whisper · Small Indonesian'
-                            : model === 'small'
-                              ? 'faster-whisper · Small'
-                              : model}
+                        {transcriptionModelLabel(model)}
                       </option>
                     ))}
                   </select>

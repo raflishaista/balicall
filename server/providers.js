@@ -139,7 +139,11 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
 }
 
 export async function transcribeAudio(audio, mimeType, language, config, fetchImpl = fetch) {
-  if (!config.sttBaseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  const qwen = config.sttModel === 'qwen3-asr-0.6b';
+  const baseUrl = qwen ? config.qwenSttBaseUrl : config.sttBaseUrl;
+  const key = qwen ? config.qwenSttKey : config.sttKey;
+  if (!baseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  if (qwen && config.sttDiarization) throw new ServiceError('Qwen belum mendukung diarization. Nonaktifkan mode mikrofon ruang rapat atau pilih model lain.', 400);
   const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' };
   const extension = extensions[mimeType.split(';')[0]];
   if (!extension) throw new ServiceError('Unsupported audio format', 415);
@@ -149,9 +153,9 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   form.append('language', language);
   form.append('response_format', 'json');
   if (config.sttDiarization) form.append('diarize', 'true');
-  const data = await fetchJson(`${config.sttBaseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
-    method: 'POST', headers: config.sttKey ? { Authorization: `Bearer ${config.sttKey}` } : {}, body: form,
-  }, config.sttTimeoutMs, fetchImpl);
+  const data = await fetchJson(`${baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
+    method: 'POST', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: form,
+  }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
   const text = data.text.trim();
   if (!config.sttDiarization || !data.segments) return { text };

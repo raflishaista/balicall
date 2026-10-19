@@ -23,6 +23,7 @@ import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage }
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { SummaryHistoryView } from './SummaryHistoryView';
+import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
@@ -32,6 +33,7 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
+import { supportsSharedMicrophone } from './preferences';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -102,7 +104,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(() => {
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -974,7 +976,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     const useLiveDiarize = isSharedMic && (callPreferences.liveDiarization ?? joinMedia.liveDiarization ?? true);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
@@ -1111,7 +1113,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -1156,7 +1158,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',recordings:'Rekaman terunggah'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1207,7 +1209,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               onToggleBatchDiarization={enabled => userPreferences.save({ ...userPreferences.preferences, batchDiarization: enabled })}
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
-              transcriptionModel={userPreferences.preferences.transcriptionModel}
+              transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
               sttModels={backendHealth?.sttModels ?? []}
@@ -1265,6 +1267,10 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onRequestToSpeak={requestToSpeak}
           />
         )}
+        
+        {view === 'recordings' && !isGuest && (
+          <RecordingUploadView onBack={() => { saveActiveView('summary'); setView('summary'); }} />
+        )}
 
         {view === 'summary' && !summaryMeetingId && !isSummarizing && (
           <SummaryHistoryView
@@ -1283,6 +1289,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             isLoadingDb={isLoadingDb}
             notice={historyNotice}
             onUploadAudio={handleUploadAudioBatch}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
           />
         )}
 
@@ -1661,6 +1668,7 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
+          sharedMicSupported={supportsSharedMicrophone(sttModel)}
           onToggleSharedMic={onToggleSharedMic}
           liveDiarization={callPreferences.liveDiarization ?? true}
           onToggleLiveDiarization={onToggleLiveDiarization}
