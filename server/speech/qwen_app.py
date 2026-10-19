@@ -11,6 +11,10 @@ import logging
 from contextlib import asynccontextmanager
 from threading import Lock, BoundedSemaphore
 from time import perf_counter
+import tempfile
+import threading
+import time
+import uuid
 
 import numpy as np
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
@@ -150,3 +154,142 @@ async def transcribe(file: UploadFile = File(...), model: str = Form(...),
     if not payload or len(payload) > 5 * 1024 * 1024:
         raise HTTPException(413, 'Audio must contain 1 byte to 5 MB')
     return await run_in_threadpool(infer, payload, language)
+
+# ---------------------------------------------------------------------------
+# Long recordings: asynchronous job API (upload -> job_id -> poll).
+# VAD splits audio into chunks of at most CHUNK_SECONDS; each chunk takes the
+# inference lock separately, so live requests can interleave between chunks.
+# ---------------------------------------------------------------------------
+LONG_MAX_BYTES = int(os.getenv('LONG_AUDIO_MAX_MB', '500')) * 1024 * 1024
+LONG_MAX_SECONDS = int(os.getenv('LONG_AUDIO_MAX_MINUTES', '120')) * 60
+LONG_TMP_DIR = os.getenv('LONG_AUDIO_TMP_DIR') or None
+JOB_TTL_SECONDS = int(os.getenv('LONG_JOB_TTL_MINUTES', '120')) * 60
+CHUNK_SECONDS = 30
+CHUNK_PAD = int(0.3 * 16000)
+jobs = {}
+
+
+def check_auth(authorization):
+    if app.state.api_key and not secrets.compare_digest(authorization, 'Bearer ' + app.state.api_key):
+        raise HTTPException(401, 'Invalid speech service credentials')
+
+
+def purge_jobs():
+    now = time.time()
+    for job_id in [k for k, j in jobs.items()
+                   if j.get('finished_at') and now - j['finished_at'] > JOB_TTL_SECONDS]:
+        jobs.pop(job_id, None)
+
+
+def plan_chunks(regions):
+    """Group VAD regions (sample indices) into chunks no longer than CHUNK_SECONDS."""
+    limit = CHUNK_SECONDS * 16000
+    chunks, current = [], None
+    for region in regions:
+        start, end = region['start'], region['end']
+        while end - start > limit:  # one long region: cut it hard
+            if current:
+                chunks.append(current)
+                current = None
+            chunks.append((start, start + limit))
+            start += limit
+        if current and end - current[0] <= limit:
+            current = (current[0], end)
+        else:
+            if current:
+                chunks.append(current)
+            current = (start, end)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def infer_long(job, path, language):
+    job['status'] = 'running'
+    try:
+        audio = decode_audio(path, sampling_rate=16000)
+    except Exception as error:
+        raise ValueError('Audio cannot be decoded') from error
+    duration = len(audio) / 16000
+    if duration > LONG_MAX_SECONDS:
+        raise ValueError(f'Maximum audio duration is {LONG_MAX_SECONDS // 60} minutes')
+    if not len(audio):
+        return {'text': '', 'segments': [], 'duration': 0.0}
+    if not np.isfinite(audio).all():
+        raise ValueError('Audio contains invalid samples')
+    started = perf_counter()
+    parts = []
+    chunks = plan_chunks(speech_regions(audio))
+    for start, end in chunks:
+        clip = audio[max(0, start - CHUNK_PAD):min(len(audio), end + CHUNK_PAD)]
+        with inference_lock:
+            text = app.state.recognize(clip, LANGUAGES[language])
+        if not isinstance(text, str):
+            raise ValueError('Qwen returned invalid transcription')
+        if text.strip():
+            parts.append(text.strip())
+    logger.info('Qwen LONG audio_s=%.1f chunks=%d inference_s=%.1f',
+                duration, len(chunks), perf_counter() - started)
+    return {'text': ' '.join(parts), 'segments': [], 'duration': duration}
+
+
+def run_job(job, path, language):
+    try:
+        job['result'] = infer_long(job, path, language)
+        job['status'] = 'done'
+    except Exception as error:
+        logger.exception('Qwen long transcription job failed')
+        job['status'] = 'failed'
+        job['error'] = str(error) if isinstance(error, ValueError) else 'Transcription failed'
+    finally:
+        job['finished_at'] = time.time()
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+@app.post('/v1/audio/transcriptions/jobs', status_code=202)
+async def submit_long(file: UploadFile = File(...), model: str = Form(...),
+                      language: str = Form('id'), diarize: bool = Form(False),
+                      authorization: str = Header('')):
+    check_auth(authorization)
+    if model != MODEL_ALIAS or language not in LANGUAGES:
+        raise HTTPException(400, 'Unsupported model or language')
+    if diarize:
+        raise HTTPException(400, 'Qwen does not support diarization in this integration')
+    if app.state.recognize is None:
+        raise HTTPException(503, 'Qwen is not ready')
+    purge_jobs()
+    fd, path = tempfile.mkstemp(suffix='.upload', dir=LONG_TMP_DIR)
+    size = 0
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > LONG_MAX_BYTES:
+                    raise HTTPException(413, f'Maximum file size is {LONG_MAX_BYTES // (1024 * 1024)} MB')
+                await run_in_threadpool(out.write, chunk)
+        if size == 0:
+            raise HTTPException(400, 'Audio file is empty')
+    except Exception:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    job_id = uuid.uuid4().hex
+    job = {'status': 'queued', 'error': None, 'result': None, 'finished_at': None}
+    jobs[job_id] = job
+    threading.Thread(target=run_job, args=(job, path, language), daemon=True).start()
+    return {'job_id': job_id, 'status': 'queued'}
+
+
+@app.get('/v1/audio/transcriptions/jobs/{job_id}')
+def job_status(job_id: str, authorization: str = Header('')):
+    check_auth(authorization)
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, 'Job not found')
+    return {'status': job['status'], 'error': job['error'],
+            'result': job['result'] if job['status'] == 'done' else None}

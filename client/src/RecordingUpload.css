@@ -1,0 +1,13 @@
+.rec-form { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.rec-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.rec-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.rec-field > span { font-weight: 600; }
+.rec-field input[type='text'], .rec-field select { padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+.rec-file-info, .rec-hint { margin: 0; font-size: 13px; color: #475569; display: flex; align-items: center; gap: 6px; }
+.rec-date { font-size: 12px; color: #64748b; }
+.rec-status { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.rec-status-queued { background: #f1f5f9; color: #475569; }
+.rec-status-processing { background: #dbeafe; color: #1d4ed8; }
+.rec-status-done { background: #dcfce7; color: #15803d; }
+.rec-status-failed { background: #fee2e2; color: #b91c1c; }
+@media (max-width: 720px) { .rec-form-grid { grid-template-columns: 1fr; } }

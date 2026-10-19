@@ -14,6 +14,8 @@ export interface MeetingPreferences {
   transcriptionProvider: 'auto' | 'browser' | 'server';
   transcriptionModel: string;
   sharedRoomMic: boolean;
+  liveDiarization: boolean;
+  batchDiarization: boolean;
 }
 
 export const PREFERENCES_KEY = 'sentra.meeting-preferences.v1';
@@ -23,6 +25,8 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   mirrorLocalVideo: true, autoSpotlight: true, reduceMotion: false, scheduleReminders: true,
   speechLanguage: 'id-ID', transcriptionProvider: 'auto', transcriptionModel: '',
   sharedRoomMic: false,
+  liveDiarization: true,
+  batchDiarization: true,
 };
 
 export function normalizePreferences(value: unknown): MeetingPreferences {
@@ -32,7 +36,7 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   if (input.speechLanguage === 'id-ID' || input.speechLanguage === 'en-US') result.speechLanguage = input.speechLanguage;
   if (input.transcriptionProvider === 'auto' || input.transcriptionProvider === 'browser' || input.transcriptionProvider === 'server') result.transcriptionProvider = input.transcriptionProvider;
   if (typeof input.transcriptionModel === 'string' && /^[a-zA-Z0-9._-]{0,64}$/.test(input.transcriptionModel)) result.transcriptionModel = input.transcriptionModel;
-  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders', 'sharedRoomMic'] as const) {
+  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders', 'sharedRoomMic', 'liveDiarization', 'batchDiarization'] as const) {
     if (typeof input[key] === 'boolean') result[key] = input[key];
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {
@@ -62,7 +66,9 @@ export function writePreferences(storage: Pick<Storage, 'setItem'>, value: Meeti
 export function mediaChoices(preferences: MeetingPreferences): JoinMediaChoices {
   return { microphoneEnabled: preferences.microphoneEnabled, cameraEnabled: preferences.cameraEnabled,
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
-    sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel) && (preferences.sharedRoomMic ?? false) };
+    sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel) && (preferences.sharedRoomMic ?? false),
+    liveDiarization: preferences.liveDiarization ?? true,
+    batchDiarization: preferences.batchDiarization ?? true };
 }
 
 export function supportsSharedMicrophone(model?: string) {

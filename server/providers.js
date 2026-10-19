@@ -171,3 +171,48 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   if (text && !segments.length) throw new ServiceError('The speech service returned no diarization for its text');
   return { text, segments };
 }
+
+export async function batchDiarizeAudio(audioBuffers, mimeType, language, config, fetchImpl = fetch) {
+  if (!config.sttBaseUrl) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav', 'audio/mpeg': 'mp3' };
+  const extension = extensions[(mimeType || '').split(';')[0]] || 'webm';
+  const form = new FormData();
+
+  if (Array.isArray(audioBuffers)) {
+    for (let i = 0; i < audioBuffers.length; i++) {
+      form.append('files', new Blob([audioBuffers[i]], { type: mimeType || 'audio/webm' }), `chunk_${i}.${extension}`);
+    }
+  } else if (audioBuffers) {
+    form.append('file', new Blob([audioBuffers], { type: mimeType || 'audio/wav' }), `recording.${extension}`);
+  }
+  form.append('model', config.sttModel || 'base');
+  form.append('language', language || 'id');
+
+  const timeoutMs = Math.max(config.sttTimeoutMs || 60000, 180000);
+  const data = await fetchJson(`${config.sttBaseUrl.replace(/\/+$/, '')}/audio/batch-diarize`, {
+    method: 'POST',
+    headers: config.sttKey ? { Authorization: `Bearer ${config.sttKey}` } : {},
+    body: form,
+  }, timeoutMs, fetchImpl);
+
+  if (!data || !Array.isArray(data.segments)) {
+    throw new ServiceError('The batch diarization service returned invalid segments');
+  }
+
+  const segments = data.segments.map(segment => {
+    if (!segment || typeof segment.text !== 'string' || typeof segment.speaker !== 'string' ||
+        !segment.speaker || segment.speaker.length > 100 || !Number.isFinite(segment.start) ||
+        !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
+      throw new ServiceError('The batch diarization service returned invalid diarization segments');
+    }
+    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+  }).filter(segment => segment.text);
+
+  return {
+    text: (data.text || '').trim(),
+    segments,
+    speakerCount: Number(data.speaker_count || new Set(segments.map(s => s.speaker)).size),
+    speakers: Array.isArray(data.speakers) ? data.speakers : [...new Set(segments.map(s => s.speaker))],
+    duration: Number(data.duration || 0),
+  };
+}

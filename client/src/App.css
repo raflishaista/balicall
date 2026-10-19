@@ -369,7 +369,24 @@ input::placeholder { color: #a1b1c6; }
 .live-transcript-entry time { padding-top: 4px; color: #829abc; font-size: 10px; font-variant-numeric: tabular-nums; }
 .transcript-avatar { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #e6ecf8; color: #637fa6; font-size: 8px; font-weight: 600; flex-shrink: 0; }
 .transcript-avatar.local { background: #e2eeff; color: #2c75d9; }
-.transcript-avatar.diarized { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; font-weight: 700; }
+.transcript-avatar.diarized { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; font-weight: 700; font-size: 9px; }
+.transcript-avatar.diarized[data-speaker="Pembicara 1"] { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
+.transcript-avatar.diarized[data-speaker="Pembicara 2"] { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.transcript-avatar.diarized[data-speaker="Pembicara 3"] { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+.transcript-avatar.diarized[data-speaker="Pembicara 4"] { background: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
+.transcript-avatar.diarized[data-speaker="Pembicara 5"] { background: #ffe4e6; color: #9f1239; border-color: #fda4af; }
+.live-transcript-entry.diarized { border-left: 3px solid #cbd5e1; padding-left: 8px; margin-left: -4px; border-radius: 2px; }
+.live-transcript-entry.diarized[data-speaker="Pembicara 1"] { border-left-color: #6366f1; }
+.live-transcript-entry.diarized[data-speaker="Pembicara 2"] { border-left-color: #f59e0b; }
+.live-transcript-entry.diarized[data-speaker="Pembicara 3"] { border-left-color: #10b981; }
+.live-transcript-entry.diarized[data-speaker="Pembicara 4"] { border-left-color: #a855f7; }
+.live-transcript-entry.diarized[data-speaker="Pembicara 5"] { border-left-color: #f43f5e; }
+.recap-transcript-entry.diarized { border-left: 3px solid #cbd5e1; padding-left: 10px; }
+.recap-transcript-entry.diarized[data-speaker="Pembicara 1"] { border-left-color: #6366f1; }
+.recap-transcript-entry.diarized[data-speaker="Pembicara 2"] { border-left-color: #f59e0b; }
+.recap-transcript-entry.diarized[data-speaker="Pembicara 3"] { border-left-color: #10b981; }
+.recap-transcript-entry.diarized[data-speaker="Pembicara 4"] { border-left-color: #a855f7; }
+.recap-transcript-entry.diarized[data-speaker="Pembicara 5"] { border-left-color: #f43f5e; }
 .transcript-speaker-heading { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .transcript-origin-user { color: #829abc; font-size: 10px; font-weight: normal; }
 .segment-time-pill { font-size: 9px; color: #64748b; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
@@ -380,7 +397,12 @@ input::placeholder { color: #a1b1c6; }
 .transcript-username { display: block; font-weight: 600; color: #466485; font-size: 11px; }
 .recap-transcript-entry .transcript-username { color: #5377a3; }
 .transcript-diarized-row { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
-.transcript-diarized-speaker { display: inline-block; padding: 1px 6px; background: #e0f2fe; color: #0284c7; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .2px; }
+.transcript-diarized-speaker { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .2px; }
+.transcript-diarized-speaker[data-speaker="Pembicara 1"] { background: #e0e7ff; color: #3730a3; border-color: #c7d2fe; }
+.transcript-diarized-speaker[data-speaker="Pembicara 2"] { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.transcript-diarized-speaker[data-speaker="Pembicara 3"] { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+.transcript-diarized-speaker[data-speaker="Pembicara 4"] { background: #f3e8ff; color: #6b21a8; border-color: #e9d5ff; }
+.transcript-diarized-speaker[data-speaker="Pembicara 5"] { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
 .segment-speaker-tag { display: inline-block; padding: 1px 7px; margin-bottom: 3px; background: #e0f2fe; color: #0284c7; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: .2px; }
 .transcript-empty { display: flex; align-items: center; flex-direction: column; justify-content: center; min-height: 270px; padding: 20px; text-align: center; }
 .transcript-empty > span { display: grid; place-items: center; width: 61px; height: 61px; border-radius: 18px; background: #f1f6ff; color: #7aace5; }

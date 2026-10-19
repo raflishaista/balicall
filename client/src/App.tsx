@@ -23,6 +23,7 @@ import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage }
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { SummaryHistoryView } from './SummaryHistoryView';
+import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
@@ -62,6 +63,7 @@ import {
   Search,
   ChevronLeft,
   Home,
+  Sparkles,
 } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
@@ -102,7 +104,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(() => {
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -169,6 +171,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [callDuration, setCallDuration] = useState('00:00');
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected));
+  const [batchDiarizing, setBatchDiarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialSummaryState.session?.meetingId || null);
@@ -560,8 +563,12 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
       summaryGeneration.current++;
-      setIsSummarizing(false);
-      setCallPreferences({ ...userPreferences.preferences, sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false });
+      setCallPreferences({
+        ...userPreferences.preferences,
+        sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
+        liveDiarization: mediaChoices.liveDiarization ?? userPreferences.preferences.liveDiarization ?? true,
+        batchDiarization: mediaChoices.batchDiarization ?? userPreferences.preferences.batchDiarization ?? true,
+      });
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
       const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
@@ -580,28 +587,33 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     targetToken: string,
     targetRoomName: string,
     fallbackTranscripts: TranscriptEntry[],
-    leavePromise?: Promise<{ status: string } | void>
+    leavePromise?: Promise<{ status: string } | void>,
+    batchDiarize: boolean = false
   ) => {
     const generation = ++summaryGeneration.current;
     setIsSummarizing(true);
     setSummaryError(null);
     try {
       const left = leavePromise ? await leavePromise : null;
-      const data = await apiRequest<{ summary: MeetingSummary; meetingStatus?: string }>(
-        meetingPath(targetMeetingId, 'summarize'),
+      const data = await apiRequest<{ summary: MeetingSummary; meetingStatus?: string; transcripts?: TranscriptEntry[] }>(
+        meetingPath(targetMeetingId, `summarize${batchDiarize ? '?batchDiarize=true' : ''}`),
         {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
-          body: '{}',
+          body: JSON.stringify({ batchDiarize }),
         },
-        125000
+        180000
       );
       if (generation !== summaryGeneration.current) return;
+      const resultTranscripts = data.transcripts?.length ? data.transcripts : fallbackTranscripts;
+      if (data.transcripts?.length) {
+        setTranscripts(data.transcripts);
+      }
       setLastMeeting({
         title: data.summary.title,
         roomName: targetRoomName,
         endedAt: data.summary.generatedAt || new Date().toISOString(),
-        transcriptCount: data.summary.transcriptCount || fallbackTranscripts.length,
+        transcriptCount: data.summary.transcriptCount || resultTranscripts.length,
       });
       const isOtherActive = left && typeof left === 'object' && 'status' in left && left.status === 'active';
       const completedSummary =
@@ -624,7 +636,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         roomName: targetRoomName,
         savedAt: data.summary.generatedAt || new Date().toISOString(),
         summary: completedSummary,
-        transcripts: fallbackTranscripts,
+        transcripts: resultTranscripts,
         hostId: employeeId,
         hostName: employeeName,
         department,
@@ -768,8 +780,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       });
 
       // 4. Request summary in the background with complete transcripts
+      const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+      const useBatchDiarize = isSharedMic && (callPreferences.batchDiarization ?? joinMedia.batchDiarization ?? true);
       try {
-        await triggerSummarize(currentMeetingId, currentToken, currentRoomName, finalTranscripts, leavePromise);
+        await triggerSummarize(currentMeetingId, currentToken, currentRoomName, finalTranscripts, leavePromise, useBatchDiarize);
       } finally {
         endingMeeting.current = false;
       }
@@ -781,6 +795,92 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       void triggerSummarize(summaryMeetingId, summaryToken, summaryRoomName || roomName, transcripts);
     } else {
       setSummaryError('Sesi akses rapat sudah tidak tersedia. Hasil yang tersimpan masih dapat dibaca dan disalin dari riwayat.');
+    }
+  };
+
+  const handleBatchDiarize = async () => {
+    const targetMeetingId = summaryMeetingId || meetingId;
+    const targetToken = summaryToken || token;
+    if (!targetMeetingId || !targetToken || batchDiarizing) return;
+    setBatchDiarizing(true);
+    setSummaryError(null);
+    try {
+      const data = await apiRequest<{
+        success: boolean;
+        transcripts: TranscriptEntry[];
+        speakerCount?: number;
+        speakers?: string[];
+      }>(
+        meetingPath(targetMeetingId, 'batch-diarize'),
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        180000
+      );
+      if (data?.transcripts?.length) {
+        setTranscripts(data.transcripts);
+        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, data.transcripts);
+      }
+    } catch (err) {
+      setSummaryError(err instanceof Error ? err.message : 'Gagal melakukan batch diarization.');
+    } finally {
+      setBatchDiarizing(false);
+    }
+  };
+
+  const handleUploadAudioBatch = async (file: File) => {
+    if (batchDiarizing || isSummarizing) return;
+    setBatchDiarizing(true);
+    setIsSummarizing(true);
+    setSummary(null);
+    setSummaryError(null);
+    saveActiveView('summary');
+    setView('summary');
+    const formData = new FormData();
+    formData.append('audio', file);
+    try {
+      const res = await fetch(`${API_BASE}/audio/batch-diarize`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || `Upload gagal (${res.status})`);
+      }
+      const data = await res.json();
+      if (data.transcripts?.length) {
+        setTranscripts(data.transcripts);
+      }
+      if (data.meetingId) {
+        setSummaryMeetingId(data.meetingId);
+      }
+      if (data.token) {
+        setSummaryToken(data.token);
+      }
+      setSummaryRoomName(data.roomName || file.name);
+      if (data.summary) {
+        setSummary(data.summary);
+        const record: SummaryRecord = {
+          meetingId: data.meetingId || `batch-${Date.now()}`,
+          roomName: data.roomName || file.name,
+          savedAt: data.summary.generatedAt || new Date().toISOString(),
+          summary: data.summary,
+          transcripts: data.transcripts || [],
+          hostId: employeeId,
+          hostName: employeeName,
+          department,
+        };
+        const next = upsertSummary(readSummaryHistory(), record);
+        setSummaryHistory(next);
+        saveSummaryHistory(next);
+      }
+    } catch (err) {
+      setSummaryError(err instanceof Error ? err.message : 'Gagal memproses file audio batch.');
+    } finally {
+      setBatchDiarizing(false);
+      setIsSummarizing(false);
     }
   };
 
@@ -877,10 +977,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
     const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const useLiveDiarize = isSharedMic && (callPreferences.liveDiarization ?? joinMedia.liveDiarization ?? true);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
         'X-Request-Id': requestId, 'X-Speech-Language': language.split('-')[0], ...(model ? { 'X-Speech-Model': model } : {}),
-        ...(isSharedMic ? { 'X-Speech-Diarize': 'true' } : {}) }, body: audio,
+        'X-Speech-Diarize': useLiveDiarize ? 'true' : 'false' }, body: audio,
     }, 125000).then(result => ({ ...result, meetingId })));
   };
 
@@ -915,6 +1016,16 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleToggleSharedMic = useCallback((enabled: boolean) => {
     setCallPreferences(prev => ({ ...prev, sharedRoomMic: enabled }));
     setJoinMedia(prev => ({ ...prev, sharedRoomMic: enabled }));
+  }, []);
+
+  const handleToggleLiveDiarization = useCallback((enabled: boolean) => {
+    setCallPreferences(prev => ({ ...prev, liveDiarization: enabled }));
+    setJoinMedia(prev => ({ ...prev, liveDiarization: enabled }));
+  }, []);
+
+  const handleToggleBatchDiarization = useCallback((enabled: boolean) => {
+    setCallPreferences(prev => ({ ...prev, batchDiarization: enabled }));
+    setJoinMedia(prev => ({ ...prev, batchDiarization: enabled }));
   }, []);
 
   const copyMarkdownSummary = () => {
@@ -1002,7 +1113,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -1047,7 +1158,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',recordings:'Rekaman terunggah'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1094,6 +1205,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               blocked={isJoining}
               mirror={userPreferences.preferences.mirrorLocalVideo}
               onToggleSharedMic={enabled => userPreferences.save({ ...userPreferences.preferences, sharedRoomMic: enabled })}
+              onToggleLiveDiarization={enabled => userPreferences.save({ ...userPreferences.preferences, liveDiarization: enabled })}
+              onToggleBatchDiarization={enabled => userPreferences.save({ ...userPreferences.preferences, batchDiarization: enabled })}
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
               transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
@@ -1126,6 +1239,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             }}
             callPreferences={callPreferences}
             onToggleSharedMic={handleToggleSharedMic}
+            onToggleLiveDiarization={handleToggleLiveDiarization}
+            onToggleBatchDiarization={handleToggleBatchDiarization}
             token={token}
             sttProvider={sttProvider}
             setSttProvider={setSttProvider}
@@ -1152,6 +1267,10 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onRequestToSpeak={requestToSpeak}
           />
         )}
+        
+        {view === 'recordings' && !isGuest && (
+          <RecordingUploadView onBack={() => { saveActiveView('summary'); setView('summary'); }} />
+        )}
 
         {view === 'summary' && !summaryMeetingId && !isSummarizing && (
           <SummaryHistoryView
@@ -1169,6 +1288,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onRefreshData={fetchDbSummaries}
             isLoadingDb={isLoadingDb}
             notice={historyNotice}
+            onUploadAudio={handleUploadAudioBatch}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
           />
         )}
 
@@ -1183,6 +1304,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             copied={copied}
             onCopy={copyMarkdownSummary}
             isSummarizing={isSummarizing}
+            batchDiarizing={batchDiarizing}
+            onBatchDiarize={handleBatchDiarize}
             pendingSaves={pendingSaves}
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
@@ -1241,6 +1364,8 @@ function InCallView({ callDuration,
   meetingCoHostIds,
   onManageParticipant,
   onToggleSharedMic,
+  onToggleLiveDiarization,
+  onToggleBatchDiarization,
 }: any) {
   const [mediaOptions] = useState(() => ({
     audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
@@ -1277,6 +1402,8 @@ function InCallView({ callDuration,
         onToggleRecording={onToggleRecording}
         callPreferences={callPreferences}
         onToggleSharedMic={onToggleSharedMic}
+        onToggleLiveDiarization={onToggleLiveDiarization}
+        onToggleBatchDiarization={onToggleBatchDiarization}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
@@ -1311,6 +1438,8 @@ function RoomContent({
   startWithCamera,
   callPreferences,
   onToggleSharedMic,
+  onToggleLiveDiarization,
+  onToggleBatchDiarization,
   recordingPending,
   recordingError,
   isRecording,
@@ -1380,7 +1509,7 @@ function RoomContent({
   const paused = isMuted || !connected || isSummarizing || saveBlocked;
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
   const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, volume, onAudio: onAddAudio });
+    track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: Boolean(callPreferences.sharedRoomMic), onAudio: onAddAudio });
   const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
     muted: paused || sttProvider !== 'server' || !isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine });
@@ -1541,6 +1670,10 @@ function RoomContent({
           sharedRoomMic={callPreferences.sharedRoomMic}
           sharedMicSupported={supportsSharedMicrophone(sttModel)}
           onToggleSharedMic={onToggleSharedMic}
+          liveDiarization={callPreferences.liveDiarization ?? true}
+          onToggleLiveDiarization={onToggleLiveDiarization}
+          batchDiarization={callPreferences.batchDiarization ?? true}
+          onToggleBatchDiarization={onToggleBatchDiarization}
           onClose={closeDevices}
         />
       )}
@@ -1558,10 +1691,12 @@ function SummaryView({
   onCopy,
   onNewCall,
   isSummarizing = false,
+  batchDiarizing = false,
   pendingSaves = 0,
   summaryError = null,
   onRetry,
   onBackToHistory,
+  onBatchDiarize,
 }: {
   summary: MeetingSummary | null;
   roomName: string;
@@ -1572,10 +1707,12 @@ function SummaryView({
   onCopy: () => void;
   onNewCall: () => void;
   isSummarizing?: boolean;
+  batchDiarizing?: boolean;
   pendingSaves?: number;
   summaryError?: string | null;
   onRetry?: () => void;
   onBackToHistory?: () => void;
+  onBatchDiarize?: () => void;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const tabsId = useId();
@@ -1667,7 +1804,11 @@ function SummaryView({
             <div>
               <AIProcessingIndicator />
               <h1 style={{ marginTop: '12px' }}>
-                {pendingSaves > 0 ? 'Menyelesaikan transkripsi sisa ucapan…' : 'AI sedang menyusun notulen'}
+                {batchDiarizing
+                  ? 'Sedang menjalankan batch diarization & transkripsi…'
+                  : pendingSaves > 0
+                  ? 'Menyelesaikan transkripsi sisa ucapan…'
+                  : 'AI sedang menyusun notulen'}
               </h1>
               <p className="summary-meta">
                 Panggilan telah diakhiri · Ruang <strong>#{roomName}</strong> · <strong>{transcripts.length} ucapan</strong> direkam
@@ -1684,7 +1825,9 @@ function SummaryView({
             <div>
               <strong>Kamera dan mikrofon Anda telah dinonaktifkan.</strong>
               <p>
-                {pendingSaves > 0
+                {batchDiarizing
+                  ? 'Sistem sedang menganalisis seluruh aliran audio rekaman secara menyeluruh dengan model diarization untuk membedakan setiap pembicara (Pembicara 1, Pembicara 2, dst) secara konsisten dari awal hingga akhir rapat.'
+                  : pendingSaves > 0
                   ? `Sistem sedang menyelesaikan pengenalan suara untuk ${pendingSaves} potongan audio terakhir. Setelah selesai, AI akan langsung membuat notulen rapat secara otomatis.`
                   : 'Panggilan telah selesai. AI sedang menganalisis seluruh percakapan yang terekam untuk menyusun ringkasan eksekutif, pokok pembahasan, keputusan, dan daftar tindak lanjut (action items).'}
               </p>
@@ -1703,12 +1846,12 @@ function SummaryView({
                 {transcripts.flatMap(entry => (
                   entry.segments && entry.segments.length > 0 ? (
                     entry.segments.map((segment, sIdx) => (
-                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                      <article className="recap-transcript-entry diarized" data-speaker={segment.speaker} key={`${entry.id}-${sIdx}`}>
                         <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -1788,12 +1931,12 @@ function SummaryView({
                 {transcripts.flatMap(entry => (
                   entry.segments && entry.segments.length > 0 ? (
                     entry.segments.map((segment, sIdx) => (
-                      <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                      <article className="recap-transcript-entry diarized" data-speaker={segment.speaker} key={`${entry.id}-${sIdx}`}>
                         <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -1870,6 +2013,17 @@ function SummaryView({
             </p>
           </div>
           <div className="summary-actions">
+            {onBatchDiarize && token && (
+              <button
+                className="button-secondary"
+                onClick={onBatchDiarize}
+                disabled={batchDiarizing || isSummarizing}
+                title="Jalankan ulang batch diarization untuk seluruh rekaman audio rapat ini"
+              >
+                {batchDiarizing ? <Loader2 className="ui-spinner" size={15} /> : <Sparkles size={15} />}
+                <span>{batchDiarizing ? 'Memproses Diarisasi...' : 'Diarisasi Ulang (Batch)'}</span>
+              </button>
+            )}
             <button className="button-secondary" onClick={onCopy}>
               {copied ? <Check size={15} /> : <Copy size={15} />}
               {copied ? 'Tersalin' : 'Salin notulen'}
@@ -1932,12 +2086,12 @@ function SummaryView({
           {filteredTranscripts.length ? <div className="recap-transcript-list">{filteredTranscripts.flatMap(entry => (
             entry.segments && entry.segments.length > 0 ? (
               entry.segments.map((segment, sIdx) => (
-                <article className="recap-transcript-entry diarized" key={`${entry.id}-${sIdx}`}>
+                <article className="recap-transcript-entry diarized" data-speaker={segment.speaker} key={`${entry.id}-${sIdx}`}>
                   <time>{new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
                   <div>
                     <strong className="transcript-username">{entry.speakerName}</strong>
                     <div className="transcript-diarized-row">
-                      <span className="transcript-diarized-speaker">{segment.speaker}</span>
+                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
                       <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                     </div>
                     <p>{segment.text}</p>

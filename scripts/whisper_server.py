@@ -14,7 +14,7 @@ import asyncio
 import io
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 
 try:
     import av
@@ -47,6 +47,7 @@ DEFAULT_DIAR_DIR = os.getenv(
     "DIARIZATION_MODEL_DIR",
     os.path.join(ROOT_DIR, "models", "nemotron3-diarization")
 )
+DEFAULT_DIAR_THRESHOLD = float(os.getenv("DIARIZATION_THRESHOLD", "0.18"))
 
 app = FastAPI(title="BaliCall Local Whisper STT Server (faster-whisper)")
 
@@ -66,6 +67,7 @@ device_name = "cpu"
 diar_processor = None
 diar_model = None
 loaded_diar_model_id = None
+diar_threshold = DEFAULT_DIAR_THRESHOLD
 
 
 def normalize_model_name(name: str) -> str:
@@ -184,10 +186,12 @@ def load_diarization_model(model_dir: str):
         loaded_diar_model_id = None
 
 
-def run_diarization(waveform: np.ndarray, sr: int = 16000) -> list:
+def run_diarization(waveform: np.ndarray, sr: int = 16000, threshold: Optional[float] = None) -> list:
     """Runs Nemotron-3 Diarization and returns turns [(start, end, speaker_label), ...]."""
     if diar_model is None or diar_processor is None:
         return []
+
+    thresh = threshold if threshold is not None else diar_threshold
 
     try:
         inputs = diar_processor(waveform, sampling_rate=sr, return_tensors="pt")
@@ -195,7 +199,7 @@ def run_diarization(waveform: np.ndarray, sr: int = 16000) -> list:
             outputs = diar_model(**inputs)
 
         speaker_dicts = diar_processor.extract_speaker_dict(
-            outputs.logits, inputs.attention_mask, threshold=0.25
+            outputs.logits, inputs.attention_mask, threshold=thresh
         )
         raw_turns = speaker_dicts[0] if speaker_dicts else []
         turns = [
@@ -245,6 +249,7 @@ async def transcribe(
     language: Optional[str] = Form(None),
     response_format: Optional[str] = Form("json"),
     diarize: Optional[str] = Form(None),
+    diarization_threshold: Optional[float] = Form(None),
 ):
     if whisper_model is None:
         raise HTTPException(status_code=503, detail="Whisper model is still loading or not initialized.")
@@ -299,7 +304,7 @@ async def transcribe(
                 return {"text": transcribed_text}
 
             # Diarization workflow
-            turns = run_diarization(waveform, sr=16000)
+            turns = run_diarization(waveform, sr=16000, threshold=diarization_threshold)
 
             words = []
             for seg in segments:
@@ -346,13 +351,125 @@ async def transcribe(
         raise HTTPException(status_code=500, detail=f"Inference error: {e}")
 
 
+@app.post("/audio/batch-diarize")
+@app.post("/v1/audio/batch-diarize")
+async def batch_diarize(
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
+    language: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    threshold: Optional[float] = Form(None),
+):
+    if whisper_model is None:
+        raise HTTPException(status_code=503, detail="Whisper model is still loading or not initialized.")
+
+    input_files = []
+    if file is not None:
+        input_files.append(file)
+    if files:
+        input_files.extend(files)
+
+    if not input_files:
+        raise HTTPException(status_code=400, detail="No audio file or chunks provided for batch diarization.")
+
+    waveforms = []
+    for f in input_files:
+        try:
+            raw = await f.read()
+            if raw and len(raw) > 100:
+                wf = decode_audio_to_numpy(raw, target_sr=16000)
+                if wf.size > 0:
+                    waveforms.append(wf)
+        except Exception as e:
+            print(f"[!] Warning: Failed decoding chunk in batch: {e}")
+
+    if not waveforms:
+        return {"text": "", "segments": [], "speaker_count": 0, "speakers": [], "duration": 0.0}
+
+    full_waveform = np.concatenate(waveforms) if len(waveforms) > 1 else waveforms[0]
+    duration_sec = round(len(full_waveform) / 16000.0, 2)
+    print(f"[*] Batch Diarization: Processing {len(waveforms)} chunk(s), total duration: {duration_sec}s ({duration_sec/60:.2f} mins)...")
+
+    # Language mapping
+    lang = None
+    if language:
+        clean_lang = language.lower().split("-")[0].split("_")[0]
+        if clean_lang in ("id", "indonesian"):
+            lang = "id"
+        elif clean_lang in ("en", "english"):
+            lang = "en"
+        else:
+            lang = clean_lang
+
+    loop = asyncio.get_running_loop()
+
+    def _infer_batch():
+        # 1. Transcribe complete continuous audio
+        segments, info = whisper_model.transcribe(
+            full_waveform,
+            language=lang,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=400),
+            beam_size=1,
+            word_timestamps=True,
+        )
+        segments = list(segments)
+        full_text = " ".join(seg.text.strip() for seg in segments).strip()
+
+        # 2. Run Nemotron-3 Diarization over the full continuous waveform
+        turns = run_diarization(full_waveform, sr=16000, threshold=threshold)
+
+        # 3. Align words to global speaker turns
+        words = []
+        for seg in segments:
+            if seg.words:
+                for w in seg.words:
+                    w_text = w.word.strip()
+                    if w_text:
+                        words.append((w.start, w.end, w_text))
+            elif seg.text.strip():
+                words.append((seg.start, seg.end, seg.text.strip()))
+
+        aligned = align_words(words, turns, default_speaker="Pembicara 1")
+
+        if not aligned and full_text:
+            aligned = [{
+                "speaker": "Pembicara 1",
+                "start": 0.0,
+                "end": duration_sec,
+                "text": full_text,
+            }]
+
+        speaker_set = sorted(list(set(s["speaker"] for s in aligned)))
+        print(f"[OK] Batch Diarization complete: {len(aligned)} dialogue turns, {len(speaker_set)} speaker(s) ({', '.join(speaker_set)}) across {duration_sec:.1f}s.")
+
+        return {
+            "text": full_text,
+            "segments": aligned,
+            "speaker_count": len(speaker_set),
+            "speakers": speaker_set,
+            "duration": duration_sec,
+        }
+
+    try:
+        result = await loop.run_in_executor(None, _infer_batch)
+        return result
+    except Exception as e:
+        print(f"[ERROR] Batch diarization failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch diarization error: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="BaliCall Local faster-whisper Server")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help=f"Model size/path (default: {DEFAULT_MODEL})")
     parser.add_argument("--diarization-model", type=str, default=DEFAULT_DIAR_DIR, help=f"Nemotron-3 Diarization model path (default: {DEFAULT_DIAR_DIR})")
+    parser.add_argument("--diarization-threshold", type=float, default=DEFAULT_DIAR_THRESHOLD, help=f"Nemotron-3 clustering threshold (default: {DEFAULT_DIAR_THRESHOLD})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to bind to (default: {DEFAULT_PORT})")
     parser.add_argument("--host", type=str, default=DEFAULT_HOST, help=f"Host to bind to (default: {DEFAULT_HOST})")
     args = parser.parse_args()
+
+    global diar_threshold
+    diar_threshold = args.diarization_threshold
 
     load_model(args.model)
     if args.diarization_model:
@@ -361,7 +478,7 @@ def main():
     print(f"[*] Starting faster-whisper API server on http://{args.host}:{args.port}")
     print(f"[*] OpenAI-compatible endpoint: http://127.0.0.1:{args.port}/v1/audio/transcriptions")
     if loaded_diar_model_id:
-        print(f"[*] Speaker Diarization active: {loaded_diar_model_id}")
+        print(f"[*] Speaker Diarization active: {loaded_diar_model_id} (threshold: {diar_threshold})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

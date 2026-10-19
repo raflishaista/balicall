@@ -12,7 +12,8 @@ import { createGuestAccess } from './guestAccess.js';
 import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
-import { effectiveLlm, ServiceError, summarize, transcribeAudio } from './providers.js';
+import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
+import { attachRecordingUploads } from './recordingUploads.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import {
   isDbConnected,
@@ -64,6 +65,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   const probe = livekitProbe || (() => roomService.listRooms());
   const inFlightAudio = new Map();
   const inFlightSummarize = new Map();
+  const meetingAudios = new Map();
   const webhookLogs = [];
 
   app.use('/api', (req,res,next)=>{
@@ -94,6 +96,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   attachAuth(app, config, authStore, createGuestAccess(store));
   attachWorkspaceApi(app,config,workspace);
+  attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   async function dispatchOutboundWebhook(url, payload) {
@@ -265,9 +268,6 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       meetingId: meeting.id,
       sttProvider: config.sttProvider,
     });
-
-    at.addGrant(grant);
-    res.json({ token: await at.toJwt(), url: config.livekitUrl, roomName: meeting.roomName, meetingId: meeting.id, sttProvider: config.sttProvider });
   }));
 
   // 4. Meeting scheduling & calendar endpoints
@@ -991,7 +991,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
     const model = req.get('X-Speech-Model') || config.sttModel;
-    const diarize = req.get('X-Speech-Diarize') === 'true' || (model !== QWEN_STT_MODEL && config.sttDiarization);
+    const diarizeHeader = req.get('X-Speech-Diarize');
+    const diarize = diarizeHeader !== undefined ? diarizeHeader === 'true' : (model !== QWEN_STT_MODEL && config.sttDiarization);
     if (!requestIdValid(requestId) || !['id', 'en'].includes(language) || !Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Audio, a request ID and language id/en are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous, text: previous.text });
@@ -1002,6 +1003,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const key = `${req.meetingId}:${req.speakerId}:${requestId}`;
     if (!inFlightAudio.has(key)) {
       const work = (async () => {
+        // Buffer meeting audio chunk immediately for post-meeting batch diarization
+        if (!meetingAudios.has(req.meetingId)) meetingAudios.set(req.meetingId, []);
+        const meetingChunks = meetingAudios.get(req.meetingId);
+        if (meetingChunks.length < 200) {
+          meetingChunks.push({ buffer: req.body, mimeType: req.get('Content-Type') || 'audio/webm', speakerId: req.speakerId });
+        }
+
         const { text, segments } = await transcribeAudio(req.body, req.get('Content-Type') || '', language, { ...config, sttModel: model, sttDiarization: diarize }, fetchImpl);
         const meeting = store.get(req.meetingId);
         if (meeting.status !== 'active' || meeting.participants.get(req.speakerId).leftAt) throw new ServiceError('Meeting ended before audio could be saved', 409);
@@ -1071,8 +1079,142 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     summarize: summarizeMeeting,
   });
 
+  app.post('/api/meetings/:id/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (!meeting) return res.status(404).json({ error: 'Rapat tidak ditemukan.' });
+
+    let audioBuffers = [];
+    let mimeType = 'audio/webm';
+
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      audioBuffers = req.body;
+      mimeType = req.get('Content-Type') || 'audio/wav';
+    } else {
+      const stored = meetingAudios.get(req.meetingId) || [];
+      if (!stored.length) {
+        return res.status(400).json({ error: 'Tidak ada rekaman audio pertemuan yang tersimpan untuk diarisasi.' });
+      }
+      audioBuffers = stored.map(s => s.buffer);
+      mimeType = stored[0]?.mimeType || 'audio/webm';
+    }
+
+    const language = req.get('X-Speech-Language') || 'id';
+
+    const result = await batchDiarizeAudio(audioBuffers, mimeType, language, config, fetchImpl);
+    if (!result.segments?.length) {
+      return res.status(422).json({ error: 'Diarisasi pasca-rapat tidak menghasilkan segmen ucapan.' });
+    }
+
+    const host = meeting.participants.get(meeting.hostId) || { employeeName: 'Ruang Rapat' };
+    const newTranscripts = result.segments.map(seg => ({
+      id: randomUUID(),
+      speakerId: req.speakerId || meeting.hostId,
+      speakerName: host.employeeName,
+      text: seg.text,
+      timestamp: new Date(Date.now() - Math.max(0, (result.duration - seg.start) * 1000)).toISOString(),
+      segments: [{ speaker: seg.speaker, text: seg.text, start: seg.start, end: seg.end }],
+      sttModel: 'nemotron-batch-diarization',
+    }));
+
+    store.transact(() => {
+      meeting.transcripts = newTranscripts;
+      meeting.summary = null;
+    });
+
+    try {
+      await saveTranscripts(meeting.id, meeting.roomName, newTranscripts);
+    } catch (dbErr) {
+      console.warn('[DB] Could not update transcripts after batch diarization:', dbErr.message);
+    }
+
+    res.json({
+      success: true,
+      transcripts: newTranscripts,
+      speakerCount: result.speakerCount,
+      speakers: result.speakers,
+      duration: result.duration,
+    });
+  }));
+
+  app.post('/api/audio/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) {
+      return res.status(400).json({ error: 'File audio diperlukan untuk batch diarization.' });
+    }
+    const mimeType = req.get('Content-Type') || 'audio/wav';
+    const language = req.get('X-Speech-Language') || 'id';
+    const roomName = req.get('X-Room-Name') || `batch-${Date.now().toString(36)}`;
+
+    const result = await batchDiarizeAudio(req.body, mimeType, language, config, fetchImpl);
+
+    const participant = {
+      employeeId: 'BT-BATCH',
+      employeeName: 'Audio Ingestion',
+      department: 'Engineering',
+      joinedAt: new Date().toISOString(),
+      connected: false,
+    };
+    const joinResult = store.join(roomName, participant);
+    const meeting = store.get(joinResult.meeting.id);
+
+    const transcripts = result.segments.map(seg => ({
+      id: randomUUID(),
+      speakerId: 'BT-BATCH',
+      speakerName: 'Audio Ingestion',
+      text: seg.text,
+      timestamp: new Date(Date.now() - Math.max(0, (result.duration - seg.start) * 1000)).toISOString(),
+      segments: [{ speaker: seg.speaker, text: seg.text, start: seg.start, end: seg.end }],
+      sttModel: 'nemotron-batch-diarization',
+    }));
+
+    store.transact(() => {
+      meeting.transcripts = transcripts;
+    });
+
+    const summary = await summarizeMeeting(meeting.id);
+
+    res.json({
+      success: true,
+      meetingId: meeting.id,
+      roomName: meeting.roomName,
+      transcripts,
+      summary,
+      speakerCount: result.speakerCount,
+      speakers: result.speakers,
+      duration: result.duration,
+    });
+  }));
+
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
+    const shouldBatch = req.query.batchDiarize === 'true' || req.body?.batchDiarize === true;
+
+    if (shouldBatch && meetingAudios.get(req.meetingId)?.length) {
+      try {
+        const stored = meetingAudios.get(req.meetingId);
+        const language = req.get('X-Speech-Language') || 'id';
+        const batchResult = await batchDiarizeAudio(stored.map(s => s.buffer), stored[0]?.mimeType || 'audio/webm', language, config, fetchImpl);
+        if (batchResult.segments?.length) {
+          const host = meeting.participants.get(meeting.hostId) || { employeeName: 'Ruang Rapat' };
+          const newTranscripts = batchResult.segments.map(seg => ({
+            id: randomUUID(),
+            speakerId: req.speakerId || meeting.hostId,
+            speakerName: host.employeeName,
+            text: seg.text,
+            timestamp: new Date(Date.now() - Math.max(0, (batchResult.duration - seg.start) * 1000)).toISOString(),
+            segments: [{ speaker: seg.speaker, text: seg.text, start: seg.start, end: seg.end }],
+            sttModel: 'nemotron-batch-diarization',
+          }));
+          store.transact(() => {
+            meeting.transcripts = newTranscripts;
+            meeting.summary = null;
+          });
+          try { await saveTranscripts(meeting.id, meeting.roomName, newTranscripts); } catch (e) {}
+        }
+      } catch (batchErr) {
+        console.warn('[Batch Diarize in Summarize Warning]', batchErr.message);
+      }
+    }
+
     if (!meeting.transcripts.length) return res.status(400).json({ error: 'No saved speech to summarize. Speak or add text first.' });
     const summary = await summarizeMeeting(req.meetingId);
     if (store.get(req.meetingId).attendanceFinalization?.status === 'failed') store.transact(() => {
@@ -1532,6 +1674,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }
 
   app.use((error, req, res, _next) => {
+    if (res.headersSent) return _next(error);
     const status = error.status || (error.type === 'entity.too.large' ? 413 : 500);
     if (status >= 500) console.error('API request failed:', {requestId:req.requestId,method:req.method,path:req.route?.path||req.path,status,message:error.message});
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });
