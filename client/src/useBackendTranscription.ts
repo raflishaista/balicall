@@ -7,6 +7,7 @@ export function useBackendTranscription(options: {
   language: string;
   model?: string;
   volume: number;
+  sharedRoomMic?: boolean;
   onAudio: (audio: Blob, language: string, model?: string) => void;
 }) {
   const [enabled, setEnabled] = useState(true);
@@ -26,15 +27,17 @@ export function useBackendTranscription(options: {
     if (!format) return;
     const stream = new MediaStream([options.track]);
     const language = options.language, model = options.model;
+    const isShared = Boolean(options.sharedRoomMic);
     const recorder = startAudioRecorder({
       createRecorder: () => new MediaRecorder(stream, { mimeType: format }),
       hasVoice, onAudio: audio => onAudio(audio, language, model), onError,
-      segmentMs: 3500,
-      pauseMs: 700,
+      segmentMs: isShared ? 10000 : 3500,
+      pauseMs: isShared ? 1400 : 700,
+      minSegmentMs: isShared ? 3000 : 1200,
     });
     controller.current = recorder;
     return () => { recorder.dispose(); controller.current = null; };
-  }, [options.muted, options.track, options.language, options.model, enabled, attempt, format, changingTrack]);
+  }, [options.muted, options.track, options.language, options.model, options.sharedRoomMic, enabled, attempt, format, changingTrack]);
   const flushRecorder = useCallback(() => {
     if (flushing.current) return flushing.current;
     const pending = (controller.current?.finish() || Promise.resolve()).finally(() => {

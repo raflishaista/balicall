@@ -21,6 +21,7 @@ import {
   Globe,
   X,
   AlertCircle,
+  FileAudio,
 } from 'lucide-react';
 import './SummaryHistory.css';
 import type { SummaryRecord, InProgressRecord } from './summaryHistory';
@@ -37,6 +38,7 @@ export interface SummaryHistoryViewProps {
   onRefreshData?: () => void;
   isLoadingDb?: boolean;
   notice?: string | null;
+  onUploadAudio?: (file: File) => void;
 }
 
 export function SummaryHistoryView({
@@ -51,6 +53,7 @@ export function SummaryHistoryView({
   onRefreshData,
   isLoadingDb = false,
   notice,
+  onUploadAudio,
 }: SummaryHistoryViewProps) {
   const [scope, setScope] = useState<'my' | 'all'>('my');
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,8 +149,30 @@ export function SummaryHistoryView({
             </p>
           </div>
 
-          {onRefreshData && (
-            <div className="history-header-actions">
+          <div className="history-header-actions" style={{ display: 'flex', gap: '8px' }}>
+            {onUploadAudio && (
+              <label
+                className="button-secondary compact-btn"
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                title="Unggah file audio rapat (.wav, .mp3, .m4a, .webm) untuk batch diarization dan notulen otomatis"
+              >
+                <FileAudio size={13} />
+                <span>Unggah Audio (Batch)</span>
+                <input
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.webm,.ogg,.m4a"
+                  style={{ display: 'none' }}
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      onUploadAudio(f);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </label>
+            )}
+            {onRefreshData && (
               <button
                 type="button"
                 className="button-secondary compact-btn"
@@ -158,8 +183,8 @@ export function SummaryHistoryView({
                 <RefreshCw size={13} className={isLoadingDb ? 'ui-spinner' : ''} />
                 <span>{isLoadingDb ? 'Memperbarui...' : 'Sinkronkan'}</span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

@@ -6,12 +6,16 @@ import { isChromiumBrowser, transcriptionModelLabel } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
+  onToggleLiveDiarization, onToggleBatchDiarization,
   transcriptionProvider, onChangeTranscriptionProvider,
   transcriptionModel, onChangeTranscriptionModel,
   sttConfigured, sttModels = []
 }: {
   media: ReturnType<typeof usePreJoinMedia>; employeeName: string; blocked: boolean;
-  mirror?: boolean; onToggleSharedMic?: (enabled: boolean) => void;
+  mirror?: boolean;
+  onToggleSharedMic?: (enabled: boolean) => void;
+  onToggleLiveDiarization?: (enabled: boolean) => void;
+  onToggleBatchDiarization?: (enabled: boolean) => void;
   transcriptionProvider?: 'auto' | 'browser' | 'server';
   onChangeTranscriptionProvider?: (provider: 'auto' | 'browser' | 'server') => void;
   transcriptionModel?: string;
@@ -99,6 +103,40 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
+    {Boolean(media.choices.sharedRoomMic) && (
+      <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+          <input
+            type="checkbox"
+            checked={media.choices.liveDiarization ?? true}
+            disabled={blocked}
+            onChange={event => {
+              media.setLiveDiarization?.(event.target.checked);
+              onToggleLiveDiarization?.(event.target.checked);
+            }}
+          />
+          <div>
+            <strong>Diarisasi Langsung (Live / Normal)</strong>
+            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Deteksi pembicara secara instan pada teks berjalan saat panggilan berlangsung.</p>
+          </div>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+          <input
+            type="checkbox"
+            checked={media.choices.batchDiarization ?? true}
+            disabled={blocked}
+            onChange={event => {
+              media.setBatchDiarization?.(event.target.checked);
+              onToggleBatchDiarization?.(event.target.checked);
+            }}
+          />
+          <div>
+            <strong>Diarisasi Batch Pasca-Rapat (Post-Meeting)</strong>
+            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Analisis rekaman lengkap di akhir rapat untuk notulen dengan identifikasi pembicara yang konsisten secara global.</p>
+          </div>
+        </label>
+      </div>
+    )}
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}
     <button type="button" className="prejoin-refresh" disabled={blocked} onClick={() => void media.refresh()}>Perbarui daftar perangkat</button>
     <MicrophoneDiagnostic key={media.streams.audioinput?.id || 'no-input'} stream={media.streams.audioinput} pending={media.pending.audioinput} error={media.errors.audioinput} blocked={blocked} onStart={() => void media.capture('audioinput')} onStop={media.stopMicrophone} />

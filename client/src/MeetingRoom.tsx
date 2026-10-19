@@ -842,6 +842,7 @@ export function MeetingRoom({
                   return entry.segments.map((segment, index) => (
                     <article
                       className="live-transcript-entry diarized"
+                      data-speaker={segment.speaker}
                       key={`${entry.id}-${index}`}
                     >
                       <time>
@@ -851,21 +852,23 @@ export function MeetingRoom({
                         })}
                       </time>
                       <span
-                        className={
-                          entry.speakerId === employeeId
-                            ? 'transcript-avatar local'
-                            : 'transcript-avatar'
-                        }
+                        className={`transcript-avatar diarized ${
+                          entry.speakerId === employeeId ? 'local' : ''
+                        }`}
+                        data-speaker={segment.speaker}
                         title={`${entry.speakerName} · ${segment.speaker}`}
                       >
-                        {initials(entry.speakerName)}
+                        {segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
                       </span>
                       <div>
                         <strong className="transcript-username">
                           {entry.speakerName}
                         </strong>
                         <div className="transcript-diarized-row">
-                          <span className="transcript-diarized-speaker">
+                          <span
+                            className="transcript-diarized-speaker"
+                            data-speaker={segment.speaker}
+                          >
                             {segment.speaker}
                           </span>
                           <span className="segment-time-pill">

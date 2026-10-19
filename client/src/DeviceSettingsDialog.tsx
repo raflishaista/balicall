@@ -6,9 +6,18 @@ import type { useDeviceSettings } from './useDeviceSettings';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
-export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, sttProvider, mirror = true, sharedRoomMic = false, onToggleSharedMic, onClose }: {
+export function DeviceSettingsDialog({
+  settings, connected, blocked, micVolume, sttProvider, mirror = true,
+  sharedRoomMic = false, onToggleSharedMic,
+  liveDiarization = true, onToggleLiveDiarization,
+  batchDiarization = true, onToggleBatchDiarization,
+  onClose,
+}: {
   settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
-  sharedRoomMic?: boolean; onToggleSharedMic?: (enabled: boolean) => void; onClose: () => void;
+  sharedRoomMic?: boolean; onToggleSharedMic?: (enabled: boolean) => void;
+  liveDiarization?: boolean; onToggleLiveDiarization?: (enabled: boolean) => void;
+  batchDiarization?: boolean; onToggleBatchDiarization?: (enabled: boolean) => void;
+  onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -45,6 +54,18 @@ export function DeviceSettingsDialog({ settings, connected, blocked, micVolume, 
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
       {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedRoomMic} disabled={disabled} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
+      {onToggleSharedMic && sharedRoomMic && (
+        <div style={{ paddingLeft: '22px', margin: '4px 0 8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+            <input type="checkbox" checked={liveDiarization} disabled={disabled} onChange={e => onToggleLiveDiarization?.(e.target.checked)} />
+            <span>Diarisasi Langsung (Live / Normal)</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+            <input type="checkbox" checked={batchDiarization} disabled={disabled} onChange={e => onToggleBatchDiarization?.(e.target.checked)} />
+            <span>Diarisasi Batch Pasca-Rapat (Post-Meeting)</span>
+          </label>
+        </div>
+      )}
       {onToggleSharedMic && <p className="device-help">Memerlukan upload audio Server dan model diarization aktif. Browser dan WhisperLiveKit belum mendukungnya. Label berlaku per potongan audio, bukan identitas karyawan.</p>}
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />

@@ -140,6 +140,22 @@ function AISettings({ draft, update, transcription, aiStatus }: {
         checked={draft.sharedRoomMic ?? false}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
+      {draft.sharedRoomMic && (
+        <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
+          <PreferenceToggle
+            label="Diarisasi Langsung (Live / Normal)"
+            description="Proses identifikasi pembicara secara real-time pada teks berjalan selama rapat berlangsung."
+            checked={draft.liveDiarization ?? true}
+            onChange={liveDiarization => update({ liveDiarization })}
+          />
+          <PreferenceToggle
+            label="Diarisasi Batch Pasca-Rapat (Post-Meeting)"
+            description="Jalankan diarization penuh pada rekaman kontinu saat rapat berakhir untuk memastikan penomoran pembicara konsisten pada notulen."
+            checked={draft.batchDiarization ?? true}
+            onChange={batchDiarization => update({ batchDiarization })}
+          />
+        </div>
+      )}
       <p className="settings-field-help">Browser dan WhisperLiveKit belum mendukung diarization pada alur ini. Pilihan Otomatis mengikuti layanan yang dipakai saat bergabung. Label pembicara berlaku per potongan audio, bukan identitas atau NIK karyawan; label yang sama pada potongan berbeda belum tentu orang yang sama.</p>
       <p className="settings-field-help" role="status">{!transcription ? 'Konfigurasi layanan belum dapat diperiksa. Pilihan Otomatis dan Browser tetap tersedia.' : !transcription.configured ? 'Layanan Server belum dikonfigurasi. Jika dipilih sebelumnya, rapat memakai Browser.' : 'Pilihan model mengikuti konfigurasi server. Kesiapan pemrosesan suara diperiksa saat digunakan dalam rapat.'}</p>
       {missingModel && <p className="settings-notice" role="status">Model tersimpan belum tersedia. Rapat berikutnya memakai model default yang tersedia.</p>}
