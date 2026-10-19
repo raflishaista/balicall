@@ -15,6 +15,8 @@ export interface RecordingUpload {
   originalFilename: string | null;
   fileSize: number | null;
   language: 'id' | 'en';
+  llmModel: string | null;
+  sttModel: string | null;
   status: UploadStatus;
   stage: string | null;
   error: string | null;
@@ -62,17 +64,32 @@ export const listUploads = () =>
 export const getUpload = (id: string) =>
   apiRequest<{ success: boolean; upload: RecordingUpload }>(`/recording-uploads/${encodeURIComponent(id)}`);
 
-export function uploadRecording(file: File, title: string, language: 'id' | 'en') {
+export const resummarizeUpload = (id: string, llmModel?: string) =>
+  apiRequest<{ success: boolean }>(`/recording-uploads/${encodeURIComponent(id)}/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(llmModel ? { llmModel } : {}),
+  });
+
+export const getOptions = () =>
+  apiRequest<{ success: boolean; llm: { default: string; models: string[] }; stt: { default: string; models: string[] } }>('/recording-uploads/options');
+
+export const SttLabels: Record<string, string> = {
+  small: 'Whisper Small',
+  'small-id': 'Whisper Small (Indonesia)',
+  'qwen3-asr-0.6b': 'Qwen3-ASR 0.6B (eksperimental)',
+};
+
+export function uploadRecording(file: File, title: string, language: 'id' | 'en', llmModel: string, sttModel: string) {
   const form = new FormData();
   form.append('title', title);
   form.append('language', language);
+  if (llmModel) form.append('llmModel', llmModel);
+  if (sttModel) form.append('sttModel', sttModel);
   form.append('file', file); // field teks harus sebelum file
   return apiRequest<{ success: boolean; upload: RecordingUpload }>(
     '/recording-uploads', { method: 'POST', body: form }, UPLOAD_TIMEOUT_MS);
 }
-
-export const resummarizeUpload = (id: string) =>
-  apiRequest<{ success: boolean }>(`/recording-uploads/${encodeURIComponent(id)}/summarize`, { method: 'POST' });
 
 export const deleteUpload = (id: string) =>
   apiRequest<{ success: boolean }>(`/recording-uploads/${encodeURIComponent(id)}`, { method: 'DELETE' });

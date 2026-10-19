@@ -1,5 +1,5 @@
 .rec-form { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
-.rec-form-grid { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 14px; }
+.rec-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
 .rec-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .rec-field > span { font-weight: 600; }
 .rec-field input[type='text'], .rec-field select { padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }

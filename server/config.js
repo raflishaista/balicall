@@ -46,9 +46,11 @@ export function loadConfig(env = process.env) {
     recordingSttUrl: env.RECORDING_STT_URL || '',
     recordingSttModel: env.RECORDING_STT_MODEL || env.STT_MODEL || '',
     recordingSttKey: env.RECORDING_STT_API_KEY || env.STT_API_KEY || '',
-    recordingDiarization: env.RECORDING_DIARIZATION == 'true',
+    recordingDiarization: env.RECORDING_DIARIZATION === 'true',
     recordingPollMs: Number(env.RECORDING_POLL_MS || 5000),
     recordingMaxProcessMin: Number(env.RECORDING_MAX_PROCESS_MIN || 240),
+    recordingLlmModels: (env.RECORDING_LLM_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
+    recordingSttModels: (env.RECORDING_STT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
 
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
     qwenSttKey: env.QWEN_STT_API_KEY || '',
@@ -91,5 +93,17 @@ export function loadConfig(env = process.env) {
   if (!Number.isInteger(config.recordingPollMs) || config.recordingPollMs < 1000 || config.recordingPollMs > 60000) throw new Error('RECORDING_POLL_MS must be 1000–60000 milliseconds');
   if (!Number.isInteger(config.recordingMaxProcessMin) || config.recordingMaxProcessMin < 1 || config.recordingMaxProcessMin > 1440) throw new Error('RECORDING_MAX_PROCESS_MIN must be an integer from 1 to 1440');
   if (config.recordingSttUrl && !['http:', 'https:'].includes(new URL(config.recordingSttUrl).protocol)) throw new Error('Invalid recordingSttUrl protocol');
+  config.recordingLlmModels = [...new Set([config.llmModel, ...config.recordingLlmModels])];
+  config.recordingSttModels = [...new Set([config.recordingSttModel, ...config.recordingSttModels].filter(Boolean))];
+  for (const name of [...config.recordingLlmModels, ...config.recordingSttModels]) {
+    if (!/^[\w.\-:/]{1,64}$/.test(name)) throw new Error(`Invalid model name in recording model list: ${name}`);
+  }
+  config.recordingLlmModels = [...new Set([config.llmModel, ...config.recordingLlmModels])];
+  config.recordingSttModels = [...new Set([config.recordingSttModel, ...config.recordingSttModels].filter(Boolean))]
+    .filter(name => name !== QWEN_STT_MODEL || config.qwenSttBaseUrl);
+  if (config.qwenSttBaseUrl && !config.recordingSttModels.includes(QWEN_STT_MODEL)) config.recordingSttModels.push(QWEN_STT_MODEL);
+  for (const name of [...config.recordingLlmModels, ...config.recordingSttModels]) {
+    if (!/^[\w.\-:/]{1,64}$/.test(name)) throw new Error(`Invalid model name in recording model list: ${name}`);
+  }
   return config;
 }

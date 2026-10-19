@@ -16,6 +16,8 @@ export const toApi = (row, { detail = false } = {}) => ({
   originalFilename: row.original_filename,
   fileSize: row.file_size === null ? null : Number(row.file_size),
   language: row.language,
+  llmModel: row.llm_model ?? null,
+  sttModel: row.stt_model ?? null,
   status: row.status,
   stage: row.stage,
   error: row.error,
@@ -33,15 +35,15 @@ export const toApi = (row, { detail = false } = {}) => ({
 const COLUMNS = {
   status: 'status', stage: 'stage', error: 'error', workerJobId: 'worker_job_id',
   durationSeconds: 'duration_seconds', transcript: 'transcript', summary: 'summary',
-  provider: 'provider', filePath: 'file_path', completedAt: 'completed_at',
+  provider: 'provider', filePath: 'file_path', completedAt: 'completed_at', llmModel: 'llm_model',
 };
 
 export async function createUpload(u) {
   const res = await db().query(
     `INSERT INTO balicall_recording_uploads
-       (id, owner_id, owner_name, title, original_filename, file_path, file_size, language, status, stage)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'queued','queued') RETURNING *`,
-    [u.id, u.ownerId, u.ownerName, u.title, u.originalFilename, u.filePath, u.fileSize, u.language],
+       (id, owner_id, owner_name, title, original_filename, file_path, file_size, language, llm_model, stt_model, status, stage)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued','queued') RETURNING *`,
+    [u.id, u.ownerId, u.ownerName, u.title, u.originalFilename, u.filePath, u.fileSize, u.language, u.llmModel, u.sttModel],
   );
   return toApi(res.rows[0]);
 }
@@ -54,7 +56,7 @@ export async function getUploadRow(id) {
 
 export async function listUploads(ownerId, limit = 50) {
   const res = await db().query(
-    `SELECT id, owner_id, owner_name, title, original_filename, file_size, language, status, stage,
+    `SELECT id, owner_id, owner_name, title, original_filename, file_size, language, llm_model, stt_model, status, stage,
             error, duration_seconds, provider, created_at, updated_at, completed_at,
             (summary IS NOT NULL) AS has_summary
        FROM balicall_recording_uploads

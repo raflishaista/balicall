@@ -5,6 +5,7 @@ import { mkdir, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchJson, ServiceError, summarize } from './providers.js';
+import { QWEN_STT_MODEL } from './config.js';
 import * as uploads from './recordingStore.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -104,14 +105,17 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   }
 
   async function transcribeFile(row) {
-    const base = config.recordingSttUrl.replace(/\/+$/, '');
-    const headers = config.recordingSttKey ? { Authorization: `Bearer ${config.recordingSttKey}` } : {};
+    const isQwen = row.stt_model === QWEN_STT_MODEL;
+    const base = (isQwen ? config.qwenSttBaseUrl : config.recordingSttUrl).replace(/\/+$/, '');
+    const sttKey = isQwen ? config.qwenSttKey : config.recordingSttKey;
+    const headers = sttKey ? { Authorization: `Bearer ${sttKey}` } : {};
     const form = new FormData();
     // File-backed Blob: streams from disk instead of loading the whole recording into RAM.
     form.append('file', await openAsBlob(row.file_path, { type: 'video/mp4' }), 'recording.mp4');
     form.append('model', config.recordingSttModel);
+    form.append('model', row.stt_model || config.recordingSttModel);
     form.append('language', row.language);
-    form.append('diarize', String(config.recordingDiarization));
+    form.append('diarize', String(config.recordingDiarization && !isQwen));
     const submitResponse = await fetchImpl(`${base}/audio/transcriptions/jobs`,
       { method: 'POST', headers, body: form, signal: AbortSignal.timeout(10 * 60 * 1000) })
       .catch(() => { throw new ServiceError('Worker STT tidak dapat dijangkau. Pastikan worker berjalan.', 502); });
@@ -139,14 +143,16 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     }
   }
 
-  async function summarizeTranscript(id, title, transcript) {
+  async function summarizeTranscript(id, title, transcript, llmModel) {
     if (!transcript?.text) throw new ServiceError('Tidak ada ucapan yang terdeteksi pada rekaman ini.', 422);
     await uploads.updateUpload(id, { stage: 'summarizing' });
     const entry = { speakerName: 'Rekaman', text: transcript.text };
     if (transcript.segments?.length) entry.segments = transcript.segments;
-    // summarize() reads roomName, transcripts[] and participants (a Map); no changes to providers.js needed.
     const meeting = { roomName: title, transcripts: [entry], participants: new Map() };
-    const summary = { ...await summarize(meeting, config, fetchImpl), generatedAt: new Date().toISOString() };
+    const summary = {
+      ...await summarize(meeting, { ...config, llmModel: llmModel || config.llmModel }, fetchImpl),
+      generatedAt: new Date().toISOString(),
+    };
     await uploads.updateUpload(id, {
       summary, provider: summary.provider, status: 'done', stage: null, error: null,
       completedAt: new Date().toISOString(),
@@ -160,7 +166,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       await uploads.updateUpload(id, { status: 'processing', stage: 'transcribing', error: null });
       const transcript = await transcribeFile(row);
       await uploads.updateUpload(id, { transcript, durationSeconds: transcript.durationSeconds });
-      await summarizeTranscript(id, row.title, transcript);
+      await summarizeTranscript(id, row.title, transcript, row.llm_model);
     } catch (error) {
       await fail(id, error);
     } finally {
@@ -177,7 +183,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     try {
       const row = await uploads.getUploadRow(id);
       if (!row) return;
-      await summarizeTranscript(id, row.title, row.transcript);
+      await summarizeTranscript(id, row.title, row.transcript, row.llm_model);
     } catch (error) {
       await fail(id, error);
     }
@@ -200,12 +206,22 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         await discard();
         return res.status(400).json({ error: 'Bahasa harus id atau en.' });
       }
+      const llmModel = String(req.body?.llmModel || config.llmModel).trim();
+      if (!config.recordingLlmModels.includes(llmModel)) {
+        await discard();
+        return res.status(400).json({ error: 'Model ringkasan tidak tersedia.' });
+      }
+      const sttModel = String(req.body?.sttModel || config.recordingSttModel).trim();
+      if (!config.recordingSttModels.includes(sttModel)) {
+        await discard();
+        return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
+      }
       const title = String(req.body?.title || '').trim().slice(0, 255)
         || file.originalname.replace(/\.mp4$/i, '').slice(0, 255) || 'Rekaman';
       const created = await uploads.createUpload({
         id: randomUUID(), ownerId: req.recordingActor.id, ownerName: req.recordingActor.name,
         title, originalFilename: file.originalname.slice(0, 255), filePath: file.path,
-        fileSize: file.size, language,
+        fileSize: file.size, llmModel, sttModel, language,
       });
       enqueue(() => processUpload(created.id));
       res.status(202).json({ success: true, upload: created });
@@ -219,6 +235,14 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
     res.json({ success: true, uploads: await uploads.listUploads(req.recordingActor.id, limit) });
   }));
+  
+  app.get('/api/recording-uploads/options', requireActor, (_req, res) => {
+    res.json({
+      success: true,
+      llm: { default: config.llmModel, models: config.recordingLlmModels },
+      stt: { default: config.recordingSttModel, models: config.recordingSttModels },
+    });
+  });
 
   app.get('/api/recording-uploads/:id', requireActor, asyncRoute(async (req, res) => {
     const row = await findOwned(req, res);
@@ -230,7 +254,14 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     if (!row) return;
     if (row.status === 'processing' || row.status === 'queued') return res.status(409).json({ error: 'Rekaman sedang diproses.' });
     if (!row.transcript?.text) return res.status(409).json({ error: 'Belum ada transkrip untuk diringkas.' });
-    const updated = await uploads.updateUpload(row.id, { status: 'processing', stage: 'summarizing', error: null });
+    const llmModel = String(req.body?.llmModel || row.llm_model || config.llmModel).trim();
+    if (!config.recordingLlmModels.includes(llmModel)) return res.status(400).json({ error: 'Model ringkasan tidak tersedia.' });
+    const sttModel = String(req.body?.sttModel || config.recordingSttModel).trim();
+    if (!config.recordingSttModels.includes(sttModel)) {
+      await discard();
+      return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
+    }
+    const updated = await uploads.updateUpload(row.id, { status: 'processing', stage: 'summarizing', error: null, llmModel });
     enqueue(() => resummarize(row.id));
     res.status(202).json({ success: true, upload: { ...updated, transcript: undefined, summary: undefined } });
   }));

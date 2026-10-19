@@ -3,10 +3,11 @@ import { AlertCircle, ChevronLeft, ChevronRight, FileVideo, Loader2, RefreshCw, 
 import { featureError } from './api';
 import {
   MAX_UPLOAD_MB, deleteUpload, formatDuration, formatSize, getUpload, isActive, listUploads,
-  resummarizeUpload, statusLabel, uploadRecording, type RecordingUpload,
+  resummarizeUpload, statusLabel, SttLabels, getOptions, uploadRecording, type RecordingUpload,
 } from './recordingUploads';
 import './SummaryHistory.css';
 import './RecordingUpload.css';
+
 
 const POLL_MS = 4000;
 const date = (value: string) => new Date(value).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
@@ -20,8 +21,9 @@ function StatusBadge({ item }: { item: RecordingUpload }) {
   );
 }
 
-function RecordingDetail({ id, onBack, onDeleted }: { id: string; onBack: () => void; onDeleted: () => void }) {
+function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llmModels: string[]; onBack: () => void; onDeleted: () => void }) {
   const [upload, setUpload] = useState<RecordingUpload | null>(null);
+  const [retryModel, setRetryModel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,10 +42,11 @@ function RecordingDetail({ id, onBack, onDeleted }: { id: string; onBack: () => 
 
   const retry = async () => {
     setBusy(true);
-    try { await resummarizeUpload(id); await load(); }
+    try { await resummarizeUpload(id, retryModel || upload?.llmModel || undefined); await load(); }
     catch (e) { setError(featureError('Meringkas ulang', e)); }
     finally { setBusy(false); }
   };
+
   const remove = async () => {
     if (!window.confirm('Hapus rekaman ini beserta transkrip dan ringkasannya?')) return;
     setBusy(true);
@@ -74,9 +77,17 @@ function RecordingDetail({ id, onBack, onDeleted }: { id: string; onBack: () => 
               <p className="summary-meta">
                 <StatusBadge item={upload} /> · {upload.originalFilename || 'rekaman.mp4'} · {formatSize(upload.fileSize)} ·
                 durasi {formatDuration(upload.durationSeconds)} · diunggah {date(upload.createdAt)}
+                {upload.llmModel ? ` · model ${upload.llmModel}` : ''}
+                {upload.sttModel ? ` · STT ${SttLabels[upload.sttModel] || upload.sttModel}` : ''}
               </p>
             </div>
             <div className="summary-actions">
+              {upload.status === 'failed' && transcript?.text && llmModels.length > 1 && (
+                <select aria-label="Model ringkasan" value={retryModel || upload.llmModel || llmModels[0]}
+                  onChange={e => setRetryModel(e.target.value)} disabled={busy}>
+                  {llmModels.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              )}
               {upload.status === 'failed' && transcript?.text && (
                 <button className="button-primary" onClick={() => void retry()} disabled={busy}>
                   <RefreshCw size={14} /> Ringkas ulang
@@ -121,14 +132,16 @@ function RecordingDetail({ id, onBack, onDeleted }: { id: string; onBack: () => 
               </section>
               <section className="summary-section"><h2>Tindak lanjut</h2>
                 {summary.actionItems?.length ? (
-                  <div className="action-table-wrap"><table className="action-table">
-                    <thead><tr><th>Tugas</th><th>Penanggung jawab</th><th>Prioritas</th><th>Tenggat</th></tr></thead>
+                  <div className="action-table-wrap">
+                    <table className="action-table">
+                    <thead><tr><th style={{ width: '40px' }}>No</th><th>Tugas</th><th>PIC / Penanggung jawab</th><th>Prioritas</th><th>Tenggat / Syarat</th></tr></thead>
                     <tbody>{summary.actionItems.map((item, i) => (
-                      <tr key={i}><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td>
+                      <tr key={i}><td>{i + 1}</td><td>{item.task}</td><td>{item.assignee || 'Belum ditentukan'}</td>
                         <td><span className={`priority priority-${item.priority.toLowerCase()}`}>{item.priority}</span></td>
                         <td>{item.deadline || 'Belum ditentukan'}</td></tr>
                     ))}</tbody>
-                  </table></div>
+                    </table>
+                  </div>
                 ) : <p>Belum ada tindak lanjut yang tercatat.</p>}
               </section>
             </div>
@@ -172,6 +185,17 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [llmModels, setLlmModels] = useState<string[]>([]);
+  const [llmModel, setLlmModel] = useState('');
+  const [sttModels, setSttModels] = useState<string[]>([]);
+  const [sttModel, setSttModel] = useState('');
+
+  useEffect(() => {
+    getOptions().then(o => {
+      setLlmModels(o.llm.models); setLlmModel(o.llm.default);
+      setSttModels(o.stt.models); setSttModel(o.stt.default);
+    }).catch(() => {});
+  }, []);
 
   const refresh = useCallback(async () => {
     try { setItems((await listUploads()).uploads); setListError(null); }
@@ -200,7 +224,7 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
     if (!file || uploading) return;
     setUploading(true); setFormError(null);
     try {
-      const { upload } = await uploadRecording(file, title.trim(), language);
+      const { upload } = await uploadRecording(file, title.trim(), language, llmModel, sttModel);
       setItems(prev => [upload, ...prev]);
       setFile(null); setTitle('');
       if (fileInput.current) fileInput.current.value = '';
@@ -212,7 +236,7 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
   };
 
   if (selectedId) {
-    return <RecordingDetail id={selectedId} onBack={() => { setSelectedId(null); void refresh(); }}
+    return <RecordingDetail id={selectedId} llmModels={llmModels} onBack={() => { setSelectedId(null); void refresh(); }}
       onDeleted={() => { setSelectedId(null); void refresh(); }} />;
   }
 
@@ -255,6 +279,22 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
               <option value="en">English</option>
             </select>
           </label>
+          {llmModels.length > 1 && (
+            <label className="rec-field">
+              <span>Model ringkasan</span>
+              <select value={llmModel} disabled={uploading} onChange={e => setLlmModel(e.target.value)}>
+                {llmModels.map(name => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+          )}
+          {sttModels.length > 1 && (
+            <label className="rec-field">
+              <span>Model transkripsi</span>
+              <select value={sttModel} disabled={uploading} onChange={e => setSttModel(e.target.value)}>
+                {sttModels.map(name => <option key={name} value={name}>{SttLabels[name] || name}</option>)}
+              </select>
+            </label>
+          )}
         </div>
         {file && <p className="rec-file-info"><FileVideo size={14} /> {file.name} · {formatSize(file.size)}</p>}
         {formError && <div className="summary-note" role="alert"><AlertCircle size={16} />{formError}</div>}

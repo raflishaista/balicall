@@ -203,7 +203,8 @@ export async function initDb(customUrl) {
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_balicall_recording_uploads_owner ON balicall_recording_uploads(owner_id, created_at DESC);
       `);
-      
+      await client.query(`ALTER TABLE balicall_recording_uploads ADD COLUMN IF NOT EXISTS llm_model VARCHAR(64);`);
+            await client.query(`ALTER TABLE balicall_recording_uploads ADD COLUMN IF NOT EXISTS stt_model VARCHAR(64);`);
       isConnected = true;
       console.log('[DB] ✅ Balicall database schema (employees, meetings, summaries, transcripts, attendees, schedules) verified successfully.');
       return true;
