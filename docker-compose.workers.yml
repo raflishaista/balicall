@@ -1,0 +1,48 @@
+services:
+  whisper:
+    build:
+      context: ./server/speech
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8001"      # hanya terbuka di laptop, bukan di jaringan
+    environment:
+      WHISPER_MODEL: small
+      SPEECH_DEVICE: cpu
+      WHISPER_CPU_THREADS: "4"
+      WHISPER_SMALL_ID_PATH: /models/faster-whisper-small-id
+      HF_TOKEN: ${HF_TOKEN:-}
+      SPEECH_API_KEY: ${SPEECH_API_KEY:-}
+    volumes:
+      - ./models:/models:ro
+      - hf-cache:/cache/hf
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  qwen:
+    build:
+      context: ./server/speech
+      dockerfile: Dockerfile.qwen
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8006:8006"
+    environment:
+      SPEECH_DEVICE: cpu
+      QWEN_CPU_THREADS: "4"
+      QWEN_DTYPE: float32
+      SPEECH_API_KEY: ${QWEN_STT_API_KEY:-}
+    volumes:
+      - hf-cache:/cache/hf
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+volumes:
+  hf-cache:
