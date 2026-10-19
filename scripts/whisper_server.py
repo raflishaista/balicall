@@ -39,7 +39,7 @@ except ImportError:
 
 # Default configuration
 DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "small")
-DEFAULT_PORT = int(os.getenv("WHISPER_PORT", "8000"))
+DEFAULT_PORT = int(os.getenv("WHISPER_PORT", "8001"))
 DEFAULT_HOST = os.getenv("WHISPER_HOST", "0.0.0.0")
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -146,7 +146,7 @@ def load_model(model_name: str):
 
     # Warmup with small dummy slice
     try:
-        dummy = np.zeros(8000, dtype=np.float32)
+        dummy = np.zeros(8001, dtype=np.float32)
         whisper_model.transcribe(dummy, vad_filter=True)
         print("[OK] faster-whisper pipeline warmed up and ready.")
     except Exception as e:
