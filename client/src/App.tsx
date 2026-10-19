@@ -23,6 +23,7 @@ import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage }
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { SummaryHistoryView } from './SummaryHistoryView';
+import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
@@ -102,7 +103,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings'>(() => {
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -1002,7 +1003,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ? 'Pengaturan' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -1047,7 +1048,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',recordings:'Rekaman terunggah'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1152,6 +1153,10 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onRequestToSpeak={requestToSpeak}
           />
         )}
+        
+        {view === 'recordings' && !isGuest && (
+          <RecordingUploadView onBack={() => { saveActiveView('summary'); setView('summary'); }} />
+        )}
 
         {view === 'summary' && !summaryMeetingId && !isSummarizing && (
           <SummaryHistoryView
@@ -1169,6 +1174,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onRefreshData={fetchDbSummaries}
             isLoadingDb={isLoadingDb}
             notice={historyNotice}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
           />
         )}
 
