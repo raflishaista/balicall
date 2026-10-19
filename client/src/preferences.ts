@@ -77,7 +77,7 @@ export function supportsSharedMicrophone(model?: string) {
 
 export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental dan belum mendukung diarization. Transkrip memakai nama akun peserta, bukan identitas setiap orang di depan satu mikrofon.';
 
-export function resolveTranscriptionPreferences(preferences: Pick<MeetingPreferences, 'transcriptionProvider' | 'transcriptionModel'>, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
+export function resolveTranscriptionPreferences(preferences: MeetingPreferences, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
   const requested = preferences.transcriptionProvider === 'auto' ? defaultProvider : preferences.transcriptionProvider;
   const provider: 'browser' | 'server' = requested === 'server' && configured ? 'server' : 'browser';
   const model = models.includes(preferences.transcriptionModel) ? preferences.transcriptionModel

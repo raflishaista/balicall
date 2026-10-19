@@ -3,19 +3,19 @@ import { VideoTrack, useLocalParticipant } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { Headphones, Loader2, Mic, RefreshCw, Settings2, Video, VideoOff, X } from 'lucide-react';
 import type { useDeviceSettings } from './useDeviceSettings';
-import { DiarizationControls } from './DiarizationControls';
+import { QWEN_TRANSCRIPTION_NOTICE } from './preferences';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
 export function DeviceSettingsDialog({
   settings, connected, blocked, micVolume, sttProvider, mirror = true,
-  sharedRoomMic = false, sttModel, sttConfigured, onToggleSharedMic,
+  sharedRoomMic = false, sharedMicSupported = true, onToggleSharedMic,
   liveDiarization = true, onToggleLiveDiarization,
   batchDiarization = true, onToggleBatchDiarization,
   onClose,
 }: {
   settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
-  sharedRoomMic?: boolean; sttModel: string; sttConfigured: boolean; onToggleSharedMic?: (enabled: boolean) => void;
+  sharedRoomMic?: boolean; sharedMicSupported?: boolean; onToggleSharedMic?: (enabled: boolean) => void;
   liveDiarization?: boolean; onToggleLiveDiarization?: (enabled: boolean) => void;
   batchDiarization?: boolean; onToggleBatchDiarization?: (enabled: boolean) => void;
   onClose: () => void;
@@ -36,7 +36,7 @@ export function DeviceSettingsDialog({
     onCancel={event => { event.preventDefault(); onClose(); }}
     onKeyDown={event => {
       if (event.key !== 'Tab') return;
-      const items = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),select:not([disabled]),input:not([disabled]),[tabindex="0"]')];
+      const items = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),select:not([disabled]),[tabindex="0"]')];
       const first = items[0], last = items.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -54,9 +54,21 @@ export function DeviceSettingsDialog({
     <div className="device-settings-grid"><div className="device-selectors">
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
-      {onToggleSharedMic && <DiarizationControls provider={sttProvider} model={sttModel} configured={sttConfigured}
-        sharedRoomMic={sharedRoomMic} liveDiarization={liveDiarization} batchDiarization={batchDiarization} disabled={disabled}
-        onSharedChange={onToggleSharedMic} onLiveChange={onToggleLiveDiarization} onBatchChange={onToggleBatchDiarization} />}
+      {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedMicSupported && sharedRoomMic} disabled={disabled || !sharedMicSupported} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
+      {!sharedMicSupported && <p className="device-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {onToggleSharedMic && sharedMicSupported && sharedRoomMic && (
+        <div style={{ paddingLeft: '22px', margin: '4px 0 8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+            <input type="checkbox" checked={liveDiarization} disabled={disabled} onChange={e => onToggleLiveDiarization?.(e.target.checked)} />
+            <span>Diarisasi Langsung (Live / Normal)</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+            <input type="checkbox" checked={batchDiarization} disabled={disabled} onChange={e => onToggleBatchDiarization?.(e.target.checked)} />
+            <span>Diarisasi Batch Pasca-Rapat (Post-Meeting)</span>
+          </label>
+        </div>
+      )}
+      {onToggleSharedMic && <p className="device-help">Memerlukan upload audio Server dan model diarization aktif. Browser dan WhisperLiveKit belum mendukungnya. Label berlaku per potongan audio, bukan identitas karyawan.</p>}
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />
       {!settings.outputSupported ? <p className="device-help">Browser ini belum mendukung pemilihan speaker. Atur output melalui pengaturan suara sistem.</p> : settings.outputPickerSupported && <button type="button" className="text-button" disabled={disabled} onClick={() => void settings.requestOutput()}>Izinkan / pilih speaker melalui browser</button>}
