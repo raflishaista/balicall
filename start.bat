@@ -66,10 +66,10 @@ echo   Launching BaliCall Services...
 echo ========================================================
 echo.
 
-:: Launch 1: SFU Server (skip if Docker or another instance is already running)
-netstat -ano | findstr ":7880" >nul
+:: Launch 1: SFU Server (LiveKit WebRTC)
+netstat -ano -p tcp | findstr ":7880 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-    echo [1/3] Starting LiveKit SFU Server on Port 7880...
+    echo [1/4] Starting LiveKit SFU Server on Port 7880...
     if exist "livekit.yaml" (
         start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
     ) else (
@@ -77,53 +77,51 @@ if errorlevel 1 (
     )
     ping -n 3 127.0.0.1 >nul
 ) else (
-    echo [1/3] Port 7880 is already in use [Docker or background SFU is active]. Skipping native launch.
+    echo [1/4] Port 7880 is already active [LiveKit SFU].
 )
 
-:: Optional Launch: Local Whisper STT Server if STT_PROVIDER=server and targeting local port 8000
-if exist "server\.env" (
-    findstr /b /i /c:"STT_PROVIDER=server" "server\.env" >nul 2>nul
-    if not errorlevel 1 (
-        findstr /b /i /c:"STT_BASE_URL=http://127.0.0.1:8000/v1" /c:"STT_BASE_URL=http://localhost:8000/v1" "server\.env" >nul 2>nul
-        if not errorlevel 1 (
-            netstat -ano | findstr ":8000" >nul
-            if errorlevel 1 (
-                echo [*] Starting Local Whisper STT Server on Port 8000...
-                start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
-                ping -n 3 127.0.0.1 >nul
-            )
-        )
-    )
+:: Launch 2: Local Whisper STT + Nemotron-3 Diarization Server
+netstat -ano -p tcp | findstr ":8000 " | findstr "LISTENING" >nul
+if errorlevel 1 (
+    echo [2/4] Starting Local Whisper STT + Diarization Server on Port 8000...
+    start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
+    ping -n 3 127.0.0.1 >nul
+) else (
+    echo [2/4] Port 8000 is already active [Whisper STT Server].
 )
 
-:: Optional multi-model worker: keep the main port 8000 path above unchanged.
-if exist "server\.env" (
-    findstr /b /i /c:"STT_PROVIDER=server" "server\.env" >nul 2>nul
-    if not errorlevel 1 (
-        findstr /b /i /c:"STT_BASE_URL=http://127.0.0.1:8001/v1" /c:"STT_BASE_URL=http://localhost:8001/v1" "server\.env" >nul 2>nul
-        if not errorlevel 1 (
-            netstat -ano | findstr ":8001" >nul
-            if errorlevel 1 (
-                echo [*] Starting multi-model Whisper worker on Port 8001...
-                start "BaliCall Whisper Models" /D "%~dp0" cmd /k "start_whisper.bat --models"
-            )
-        )
-    )
+:: Launch 3: Backend Server
+netstat -ano -p tcp | findstr ":3001 " | findstr "LISTENING" >nul
+if errorlevel 1 (
+    echo [3/4] Starting Backend Server on Port 3001...
+    start "BaliCall Backend" /D "%~dp0server" cmd /k "node index.js"
+    ping -n 3 127.0.0.1 >nul
+) else (
+    echo [3/4] Port 3001 is already active [Backend Server].
 )
 
-:: Launch 2: Backend Server
-echo [2/3] Starting Backend Server on Port 3001...
-start "BaliCall Backend" /D "%~dp0server" cmd /k "npm run dev"
-ping -n 3 127.0.0.1 >nul
-
-:: Launch 3: Client Workspace
-echo [3/3] Starting PC Web Client on Port 5187...
-start "BaliCall Client" /D "%~dp0client" cmd /k "npm run dev"
+:: Launch 4: Client Workspace
+netstat -ano -p tcp | findstr ":5187 " | findstr "LISTENING" >nul
+if errorlevel 1 (
+    echo [4/4] Starting PC Web Client on Port 5187...
+    start "BaliCall Client" /D "%~dp0client" cmd /k "npm run dev"
+    ping -n 3 127.0.0.1 >nul
+) else (
+    echo [4/4] Port 5187 is already active [Web Client].
+)
 
 echo.
 echo ========================================================
-echo   All services launched.
-echo   Open your browser at: http://127.0.0.1:5187
+echo   All BaliCall services are up and running!
+echo.
+echo   [1] Web Client  : http://localhost:5187 (or http://127.0.0.1:5187)
+echo   [2] Backend API : http://127.0.0.1:3001
+echo   [3] LiveKit SFU : ws://127.0.0.1:7880
+echo   [4] Whisper STT : http://127.0.0.1:8000
 echo ========================================================
+echo.
+echo [*] Opening browser at http://localhost:5187 ...
+start http://localhost:5187
+echo.
 pause
 endlocal

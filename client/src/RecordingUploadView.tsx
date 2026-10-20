@@ -3,7 +3,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, FileVideo, Loader2, RefreshCw, 
 import { featureError } from './api';
 import {
   MAX_UPLOAD_MB, deleteUpload, formatDuration, formatSize, getUpload, isActive, listUploads,
-  resummarizeUpload, statusLabel, SttLabels, getOptions, uploadRecording, type RecordingUpload,
+  resummarizeUpload, statusLabel, SttLabels, getOptions,DiarizerLabels, uploadRecording, type RecordingUpload,
 } from './recordingUploads';
 import './SummaryHistory.css';
 import './RecordingUpload.css';
@@ -189,11 +189,14 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
   const [llmModel, setLlmModel] = useState('');
   const [sttModels, setSttModels] = useState<string[]>([]);
   const [sttModel, setSttModel] = useState('');
+  const [diarizers, setDiarizers] = useState<string[]>([]);
+  const [diarizer, setDiarizer] = useState('none');
 
   useEffect(() => {
     getOptions().then(o => {
       setLlmModels(o.llm.models); setLlmModel(o.llm.default);
       setSttModels(o.stt.models); setSttModel(o.stt.default);
+      setDiarizers(o.diarizer.options); setDiarizer(o.diarizer.default);
     }).catch(() => {});
   }, []);
 
@@ -224,7 +227,10 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
     if (!file || uploading) return;
     setUploading(true); setFormError(null);
     try {
-      const { upload } = await uploadRecording(file, title.trim(), language, llmModel, sttModel);
+      const { upload } = await uploadRecording(
+        file, title.trim(), language, llmModel, sttModel,
+        sttModel === 'qwen3-asr-0.6b' ? 'none' : diarizer,
+      );
       setItems(prev => [upload, ...prev]);
       setFile(null); setTitle('');
       if (fileInput.current) fileInput.current.value = '';
@@ -292,6 +298,16 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
               <span>Model transkripsi</span>
               <select value={sttModel} disabled={uploading} onChange={e => setSttModel(e.target.value)}>
                 {sttModels.map(name => <option key={name} value={name}>{SttLabels[name] || name}</option>)}
+              </select>
+            </label>
+          )}
+          {diarizers.length > 1 && (
+            <label className="rec-field">
+              <span>Pemisah pembicara</span>
+              <select value={sttModel === 'qwen3-asr-0.6b' ? 'none' : diarizer}
+                disabled={uploading || sttModel === 'qwen3-asr-0.6b'}
+                onChange={e => setDiarizer(e.target.value)}>
+                {diarizers.map(name => <option key={name} value={name}>{DiarizerLabels[name] || name}</option>)}
               </select>
             </label>
           )}

@@ -51,7 +51,8 @@ export function loadConfig(env = process.env) {
     recordingMaxProcessMin: Number(env.RECORDING_MAX_PROCESS_MIN || 240),
     recordingLlmModels: (env.RECORDING_LLM_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
     recordingSttModels: (env.RECORDING_STT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
-
+    recordingDiarizers: (env.RECORDING_DIARIZERS || '').split(',').map(value => value.trim()).filter(Boolean),
+   
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
     qwenSttKey: env.QWEN_STT_API_KEY || '',
     qwenSttTimeoutMs: Number(env.QWEN_STT_TIMEOUT_MS || 60000),
@@ -105,5 +106,6 @@ export function loadConfig(env = process.env) {
   for (const name of [...config.recordingLlmModels, ...config.recordingSttModels]) {
     if (!/^[\w.\-:/]{1,64}$/.test(name)) throw new Error(`Invalid model name in recording model list: ${name}`);
   }
+  config.recordingDiarizers = ['none', ...new Set(config.recordingDiarizers.filter(name => ['pyannote', 'nemotron'].includes(name)))];
   return config;
 }
