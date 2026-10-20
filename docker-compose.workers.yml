@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8001:8001"      # hanya terbuka di laptop, bukan di jaringan
+      - "127.0.0.1:8001:8001"
     environment:
       WHISPER_MODEL: small
       SPEECH_DEVICE: cpu
@@ -13,6 +13,8 @@ services:
       WHISPER_SMALL_ID_PATH: /models/faster-whisper-small-id
       HF_TOKEN: ${HF_TOKEN:-}
       SPEECH_API_KEY: ${SPEECH_API_KEY:-}
+      NEMOTRON_URL: http://nemotron:8007
+      NEMOTRON_API_KEY: ${NEMOTRON_API_KEY:-}
     volumes:
       - ./models:/models:ro
       - hf-cache:/cache/hf
@@ -43,6 +45,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 300s
+
+  nemotron:
+    build:
+      context: ./server/speech
+      dockerfile: Dockerfile.nemotron
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8007:8007"
+    environment:
+      NEMOTRON_MODEL_PATH: /models/nemotron3-diarization
+      NEMOTRON_CPU_THREADS: "4"
+      SPEECH_API_KEY: ${NEMOTRON_API_KEY:-}
+    volumes:
+      - ./models:/models:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
 
 volumes:
   hf-cache:

@@ -28,6 +28,7 @@ export interface RecordingUpload {
   hasSummary: boolean;
   transcript?: RecordingTranscript | null;
   summary?: MeetingSummary | null;
+  diarizer: string | null;
 }
 
 // Harus sama dengan RECORDING_UPLOAD_MAX_MB di server/.env (bawaan 500).
@@ -72,7 +73,14 @@ export const resummarizeUpload = (id: string, llmModel?: string) =>
   });
 
 export const getOptions = () =>
-  apiRequest<{ success: boolean; llm: { default: string; models: string[] }; stt: { default: string; models: string[] } }>('/recording-uploads/options');
+  apiRequest<{ success: boolean; llm: { default: string; models: string[] }; stt: { default: string; models: string[] };
+    diarizer: { default: string; options: string[] } }>('/recording-uploads/options');
+
+export const DiarizerLabels: Record<string, string> = {
+  none: 'Tanpa pemisah pembicara',
+  nemotron: 'Nemotron-3',
+  pyannote: 'Pyannote',
+};
 
 export const SttLabels: Record<string, string> = {
   small: 'Whisper Small',
@@ -80,12 +88,13 @@ export const SttLabels: Record<string, string> = {
   'qwen3-asr-0.6b': 'Qwen3-ASR 0.6B (eksperimental)',
 };
 
-export function uploadRecording(file: File, title: string, language: 'id' | 'en', llmModel: string, sttModel: string) {
+export function uploadRecording(file: File, title: string, language: 'id' | 'en', llmModel: string, sttModel: string, diarizer: string) {
   const form = new FormData();
   form.append('title', title);
   form.append('language', language);
   if (llmModel) form.append('llmModel', llmModel);
   if (sttModel) form.append('sttModel', sttModel);
+  if (diarizer) form.append('diarizer', diarizer);
   form.append('file', file); // field teks harus sebelum file
   return apiRequest<{ success: boolean; upload: RecordingUpload }>(
     '/recording-uploads', { method: 'POST', body: form }, UPLOAD_TIMEOUT_MS);

@@ -115,7 +115,9 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     form.append('model', config.recordingSttModel);
     form.append('model', row.stt_model || config.recordingSttModel);
     form.append('language', row.language);
-    form.append('diarize', String(config.recordingDiarization && !isQwen));
+    const useDiarizer = !isQwen && row.diarizer && row.diarizer !== 'none';
+    form.append('diarize', String(Boolean(useDiarizer)));
+    if (useDiarizer) form.append('diarizer', row.diarizer);
     const submitResponse = await fetchImpl(`${base}/audio/transcriptions/jobs`,
       { method: 'POST', headers, body: form, signal: AbortSignal.timeout(10 * 60 * 1000) })
       .catch(() => { throw new ServiceError('Worker STT tidak dapat dijangkau. Pastikan worker berjalan.', 502); });
@@ -216,12 +218,21 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         await discard();
         return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
       }
+      const diarizer = String(req.body?.diarizer || 'none').trim();
+      if (!config.recordingDiarizers.includes(diarizer)) {
+        await discard();
+        return res.status(400).json({ error: 'Pemisah pembicara tidak tersedia.' });
+      }
+      if (sttModel === QWEN_STT_MODEL && diarizer !== 'none') {
+        await discard();
+        return res.status(400).json({ error: 'Qwen belum mendukung pemisah pembicara.' });
+      }
       const title = String(req.body?.title || '').trim().slice(0, 255)
         || file.originalname.replace(/\.mp4$/i, '').slice(0, 255) || 'Rekaman';
       const created = await uploads.createUpload({
         id: randomUUID(), ownerId: req.recordingActor.id, ownerName: req.recordingActor.name,
         title, originalFilename: file.originalname.slice(0, 255), filePath: file.path,
-        fileSize: file.size, llmModel, sttModel, language,
+        fileSize: file.size, llmModel, sttModel, language,diarizer,
       });
       enqueue(() => processUpload(created.id));
       res.status(202).json({ success: true, upload: created });
@@ -241,6 +252,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       success: true,
       llm: { default: config.llmModel, models: config.recordingLlmModels },
       stt: { default: config.recordingSttModel, models: config.recordingSttModels },
+      diarizer: { default: 'none', options: config.recordingDiarizers },
     });
   });
 

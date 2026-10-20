@@ -17,6 +17,10 @@ import threading
 import time
 import uuid
 
+import json
+import urllib.request
+import numpy as np
+
 import torch
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from faster_whisper import WhisperModel, decode_audio
@@ -61,8 +65,9 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"model": MODEL, "models": list(SOURCES), "diarization": app.state.diarizer is not None}
-
+    return {"model": MODEL, "models": list(SOURCES), "diarization": app.state.diarizer is not None,
+            "diarizers": [name for name, ok in (("pyannote", app.state.diarizer is not None),
+                                                 ("nemotron", bool(NEMOTRON_URL))) if ok]}
 
 def infer(payload, language, diarize, model):
     # Serialize inference to bound model memory; decode once for both models.
@@ -143,8 +148,26 @@ def purge_jobs():
                    if j.get("finished_at") and now - j["finished_at"] > JOB_TTL_SECONDS]:
         jobs.pop(job_id, None)
 
+NEMOTRON_URL = os.getenv("NEMOTRON_URL", "")
+NEMOTRON_API_KEY = os.getenv("NEMOTRON_API_KEY", "")
+NEMOTRON_TIMEOUT = int(os.getenv("NEMOTRON_TIMEOUT_SECONDS", "3600"))
 
-def infer_long(job, path, language, diarize, model):
+
+def nemotron_turns(audio):
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+    headers = {"Content-Type": "application/octet-stream"}
+    if NEMOTRON_API_KEY:
+        headers["Authorization"] = f"Bearer {NEMOTRON_API_KEY}"
+    request = urllib.request.Request(NEMOTRON_URL.rstrip("/") + "/v1/diarize",
+                                     data=pcm, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=NEMOTRON_TIMEOUT) as response:
+            data = json.load(response)
+    except Exception as error:
+        raise ValueError("Worker Nemotron tidak dapat dijangkau atau gagal memproses audio") from error
+    return [(t["start"], t["end"], t["speaker"]) for t in data.get("turns", [])]
+
+def infer_long(job, path, language, diarize, model, diarizer="pyannote"):
     with lock:
         job["status"] = "running"
         try:
@@ -170,20 +193,23 @@ def infer_long(job, path, language, diarize, model):
                     "segments": [], "duration": duration}
         if not decoded:
             return {"text": "", "segments": [], "duration": duration}
-        output = app.state.diarizer({
-            "waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000,
-        })
-        turns = [(turn.start, turn.end, speaker)
-                 for turn, speaker in output.exclusive_speaker_diarization]
+        if diarizer == "nemotron":
+            turns = nemotron_turns(audio)
+        else:
+            output = app.state.diarizer({
+                "waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000,
+            })
+            turns = [(turn.start, turn.end, speaker)
+                     for turn, speaker in output.exclusive_speaker_diarization]
         words = [(w.start, w.end, w.word) for s in decoded for w in (s.words or [])]
         segments = align_words(words, turns)
         return {"text": " ".join(s["text"] for s in segments),
                 "segments": segments, "duration": duration}
 
 
-def run_job(job, path, language, diarize, model):
+def run_job(job, path, language, diarize, model, diarizer="pyannote"):
     try:
-        job["result"] = infer_long(job, path, language, diarize, model)
+        job["result"] = infer_long(job, path, language, diarize, model, diarizer)
         job["status"] = "done"
     except Exception as error:
         logger.exception("Long transcription job failed")
@@ -201,13 +227,18 @@ def run_job(job, path, language, diarize, model):
 async def submit_long(
     file: UploadFile = File(...), model: str = Form(...),
     language: str = Form("id"), diarize: bool = Form(False),
+    diarizer: str = Form("pyannote"),
     authorization: str = Header(""),
 ):
     check_auth(authorization)
     if model not in SOURCES or language not in ("id", "en"):
         raise HTTPException(400, "Unsupported model or language")
-    if diarize and app.state.diarizer is None:
+    if diarize and diarizer not in ("pyannote", "nemotron"):
+        raise HTTPException(400, "Unsupported diarizer")
+    if diarize and diarizer == "pyannote" and app.state.diarizer is None:
         raise HTTPException(503, "Diarization requires HF_TOKEN and accepted model access")
+    if diarize and diarizer == "nemotron" and not NEMOTRON_URL:
+        raise HTTPException(503, "Nemotron worker is not configured (NEMOTRON_URL)")
     purge_jobs()
     fd, path = tempfile.mkstemp(suffix=".upload", dir=LONG_TMP_DIR)
     size = 0
@@ -229,7 +260,7 @@ async def submit_long(
     job_id = uuid.uuid4().hex
     job = {"status": "queued", "error": None, "result": None, "finished_at": None}
     jobs[job_id] = job
-    threading.Thread(target=run_job, args=(job, path, language, diarize, model), daemon=True).start()
+    threading.Thread(target=run_job, args=(job, path, language, diarize, model, diarizer), daemon=True).start()
     return {"job_id": job_id, "status": "queued"}
 
 
