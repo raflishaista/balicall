@@ -1,5 +1,8 @@
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
+import { transcriptionModelLabel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { speakerDisplayLabel } from './transcriptSpeakers';
+import { SpeakerNameEditor } from './SpeakerNameEditor';
+import type { SpeakerNameChange } from './SpeakerNameEditor';
 import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
@@ -48,6 +51,7 @@ interface Transcript {
     speaker: string;
     start: number;
     end: number;
+    sourceId?: string; sessionId?: string; attribution?: string; speakerName?: string;
   }[];
 }
 
@@ -83,6 +87,7 @@ interface MeetingRoomProps {
 
   sttProvider: 'browser' | 'server';
   sttConfigured: boolean;
+  qwenDiarizationReady?: boolean;
   setSttProvider: (provider: 'browser' | 'server') => void;
 
   sttModel: string;
@@ -102,6 +107,7 @@ interface MeetingRoomProps {
   onToggleTranscription: () => void;
   onFinish: (generate: boolean) => Promise<void>;
   onAddSpeechLine: (text: string) => void;
+  onRenameSpeaker?: (change: SpeakerNameChange) => Promise<void>;
 
   cameraTracks: TrackReferenceOrPlaceholder[];
   isCameraEnabled: boolean;
@@ -173,6 +179,7 @@ export function MeetingRoom({
   saveBlocked,
   sttProvider,
   sttConfigured,
+  qwenDiarizationReady = false,
   setSttProvider,
   sttModel,
   sttModels,
@@ -188,6 +195,7 @@ export function MeetingRoom({
   onToggleTranscription,
   onFinish,
   onAddSpeechLine,
+  onRenameSpeaker,
   cameraTracks,
   isCameraEnabled,
   cameraPending,
@@ -772,7 +780,8 @@ export function MeetingRoom({
 
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-model-select">Model</label>
-                  {!supportsSharedMicrophone(sttModel) && <p role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+                  {sttModel === 'qwen3-asr-0.6b' && <p role="status">{qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
+                  {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}
@@ -865,8 +874,10 @@ export function MeetingRoom({
                             className="transcript-diarized-speaker"
                             data-speaker={segment.speaker}
                           >
-                            {segment.speaker}
+                            {speakerDisplayLabel(segment)}
                           </span>
+                          {onRenameSpeaker && segment.attribution==='assigned' && segment.sourceId && segment.sessionId && (segment.sourceId===employeeId || meetingRole==='host' || meetingRole==='co-host') &&
+                            <SpeakerNameEditor sourceId={segment.sourceId} sessionId={segment.sessionId} speaker={segment.speaker} speakerName={segment.speakerName} onSave={onRenameSpeaker} disabled={busy} />}
                           <span className="segment-time-pill">
                             {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s
                           </span>

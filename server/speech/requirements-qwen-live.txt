@@ -1,0 +1,6 @@
+qwen-asr[vllm]==0.0.6
+fastapi==0.150.0
+uvicorn==0.54.0
+websockets==17.3
+faster-whisper==1.2.1
+python-multipart==0.0.32

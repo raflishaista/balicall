@@ -22,3 +22,11 @@ test('concurrent health checks are coalesced and unmount aborts the request',asy
  try{await act(async()=>{root=create(React.createElement(Harness));});await act(async()=>{state.refresh();state.refresh();});assert.equal(calls,1);assert.equal(state.checking,true);await act(async()=>root.unmount());root=null;assert.equal(signal.aborted,true);}
  finally{await act(async()=>root?.unmount());}
 });
+
+test('retired batch Qwen is absent while native Qwen Live stays selectable',async()=>{
+ let state,root;
+ const {useBackendHealth}=load(async()=>({status:'ok',sttModel:'qwen3-asr-0.6b',sttModels:['qwen3-asr-0.6b','small','qwen3-asr-0.6b-live'],qwenLiveReady:true}));
+ function Harness(){const current=useBackendHealth();React.useEffect(()=>{state=current;});return null;}
+ try{await act(async()=>{root=create(React.createElement(Harness));});assert.deepEqual(state.health.sttModels,['small','qwen3-asr-0.6b-live']);assert.equal(state.health.sttModel,'small');assert.equal(state.health.qwenLiveReady,true);}
+ finally{await act(async()=>root?.unmount());}
+});

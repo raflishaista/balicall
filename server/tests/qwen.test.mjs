@@ -30,6 +30,25 @@ test('Qwen refuses diarization rather than silently saving account text as speak
   }), error => error.status === 400 && /Qwen.*diarization/i.test(error.message));
   assert.equal(calls, 0);
 });
+test('explicit experimental Qwen diarization opt-in preserves validated speaker segments', async () => {
+  const config = loadConfig({ STT_MODEL: model, QWEN_STT_BASE_URL: 'http://qwen/v1',
+    STT_DIARIZATION: 'true', QWEN_DIARIZATION_ENABLED: 'true' });
+  const segments = [{ speaker: 'A', start: 0, end: 1, text: 'Rapat dimulai.' }];
+  const result = await transcribeAudio(Buffer.from('clip'), 'audio/wav', 'id', config, async (_url, options) => {
+    assert.equal(options.body.get('diarize'), 'true');
+    return new Response(JSON.stringify({ text: 'Rapat dimulai.', segments }));
+  });
+  assert.deepEqual(result, { text: 'Rapat dimulai.', segments });
+});
+test('experimental Qwen diarization rejects missing or invalid speaker results', async () => {
+  const config = loadConfig({ STT_MODEL: model, QWEN_STT_BASE_URL: 'http://qwen/v1',
+    STT_DIARIZATION: 'true', QWEN_DIARIZATION_ENABLED: 'true' });
+  for (const data of [{ text: 'speech' }, { text: 'speech', segments: [] },
+    { text: 'speech', segments: [{ text: 'speech', speaker: 'A', start: -1, end: 1 }] }]) {
+    await assert.rejects(transcribeAudio(Buffer.from('clip'), 'audio/wav', 'id', config,
+      async () => new Response(JSON.stringify(data))), /diarization/);
+  }
+});
 test('adding Qwen does not reroute Whisper requests or change their credentials', async () => {
   const config = loadConfig({ STT_MODEL: 'small', STT_BASE_URL: 'http://whisper/v1',
     STT_API_KEY: 'whisper-only', QWEN_STT_BASE_URL: 'http://qwen/v1', QWEN_STT_API_KEY: 'qwen-only' });

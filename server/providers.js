@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { setTimeout as delay } from 'node:timers/promises';
+import { attributedSpeakerName } from './qwenLiveConfig.js';
 
 export class ServiceError extends Error {
   constructor(message, status = 502, details = {}) { super(message); this.status = status; Object.assign(this, details); }
@@ -83,7 +84,7 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
     const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
     const prefix = time ? `--- [${time}]` : '---';
     if (entry.segments && entry.segments.length > 0) {
-      return entry.segments.map(seg => `${prefix} [${entry.speakerName} (${seg.speaker})]: ${seg.text}`).join('\n');
+        return entry.segments.map(seg => `${prefix} [${attributedSpeakerName(entry.speakerName,seg)}]: ${seg.text}`).join('\n');
     }
     return `${prefix} [${entry.speakerName}]: ${entry.text}`;
   }).join('\n');
@@ -105,7 +106,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
       title: `Meeting: ${meeting.roomName}`, executiveSummary: `Pratinjau demo: ${meeting.transcripts.length} kalimat tersimpan. Ringkasan AI belum tersedia.`,
       keyDiscussionPoints: meeting.transcripts.flatMap(entry => {
         if (entry.segments && entry.segments.length > 0) {
-          return entry.segments.map(seg => `${entry.speakerName} (${seg.speaker}): ${seg.text}`);
+          return entry.segments.map(seg => `${attributedSpeakerName(entry.speakerName,seg)}: ${seg.text}`);
         }
         return [`${entry.speakerName}: ${entry.text}`];
       }),
@@ -143,7 +144,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   const baseUrl = qwen ? config.qwenSttBaseUrl : config.sttBaseUrl;
   const key = qwen ? config.qwenSttKey : config.sttKey;
   if (!baseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
-  if (qwen && config.sttDiarization) throw new ServiceError('Qwen belum mendukung diarization. Nonaktifkan mode mikrofon ruang rapat atau pilih model lain.', 400);
+  if (qwen && config.sttDiarization && !config.qwenDiarizationEnabled) throw new ServiceError('Qwen diarization belum diaktifkan untuk pengujian. Nonaktifkan mode mikrofon ruang rapat atau pilih model lain.', 400);
   const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' };
   const extension = extensions[mimeType.split(';')[0]];
   if (!extension) throw new ServiceError('Unsupported audio format', 415);
@@ -158,7 +159,11 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
   }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
   const text = data.text.trim();
-  if (!config.sttDiarization || !data.segments) return { text };
+  if (!config.sttDiarization) return { text };
+  if (!data.segments) {
+    if (qwen) throw new ServiceError('The Qwen service returned no diarization segments');
+    return { text };
+  }
   if (!Array.isArray(data.segments) || data.segments.length > 10000) throw new ServiceError('The speech service returned invalid diarization segments');
   const segments = data.segments.map(segment => {
     if (!segment || typeof segment.text !== 'string' || typeof segment.speaker !== 'string' ||

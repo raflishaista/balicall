@@ -7,6 +7,8 @@ export interface BackendHealth {
   hasLlmKey?: boolean; livekitStatus?: string;
   sttProvider?: 'browser' | 'server'; sttConfigured?: boolean;
   sttModel?: string; sttModels?: string[]; sttDiarization?: boolean;
+  qwenDiarizationReady?: boolean;
+  qwenLiveReady?: boolean; qwenLiveDiarizationReady?: boolean;
   database?: { connected: boolean; configured: boolean };
   outboundWebhookConfigured?: boolean;
 }
@@ -22,6 +24,9 @@ export function useBackendHealth() {
     try {
       const data = await apiRequest<BackendHealth>('/health', { signal: controller.signal }, 5000);
       if (!data || data.status !== 'ok') throw new Error('Respons status layanan tidak valid.');
+      // Retire batch Qwen from model choices; native Qwen Live remains available.
+      data.sttModels = data.sttModels?.filter(model => model !== 'qwen3-asr-0.6b');
+      if (data.sttModel === 'qwen3-asr-0.6b') data.sttModel = data.sttModels?.[0] || '';
       if (!controller.signal.aborted) { setHealth(data); setError(null); }
     } catch {
       if (!controller.signal.aborted) { setHealth(null); setError('Konfigurasi layanan belum dapat diperiksa. Periksa koneksi lalu coba lagi.'); }

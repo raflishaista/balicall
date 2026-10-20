@@ -95,13 +95,87 @@ async function fixture(t, overrides = {}, dependencies = {}) {
     const route = endpoint => `/meetings/${session.meetingId}/${endpoint}`;
     return { ...session, route, post: (endpoint, body = {}) => request(route(endpoint), body, session.token), get: endpoint => request(route(endpoint), undefined, session.token, 'GET') };
   };
-  return { config, request, joinRoom, get store() { return context.store; }, async restart() {
+  return { config, request, joinRoom, get app() { return context.app; }, get store() { return context.store; }, async restart() {
     await new Promise(resolve => server.close(resolve));
     context = setup(); server = context.app.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     base = `http://127.0.0.1:${server.address().port}/api`;
   } };
 }
+
+test('Qwen live tickets bind speaker and shared mode; structured finals persist once',async t=>{
+ const workerTime=1700000000;
+ const f=await fixture(t,{qwenLiveSttUrl:'/qwen-live-stt/asr',qwenLiveSttSecret:'q'.repeat(40)},{fetchImpl:async()=>new Response(JSON.stringify({ready:true,native:true,streaming:true,diarization:true,model:'qwen3-asr-0.6b-live'}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
+ const a=await f.joinRoom('live-owner');
+ const result=await a.post('live-session',{model:'qwen3-asr-0.6b-live',language:'id',diarize:true,streamId:'microphone-instance-123'});
+ assert.equal(result.status,200);
+ const raw=new URL(result.data.url,'http://local').searchParams.get('ticket');
+ const claims=JSON.parse(Buffer.from(raw.split('.')[0],'base64url'));
+ assert.equal(claims.speakerId,'live-owner');assert.equal(claims.diarize,true);
+ assert.equal(claims.streamId,'microphone-instance-123');
+ assert.equal((await a.post('live-session',{model:'qwen3-asr-0.6b-live',language:'id',streamId:'short'})).status,400);
+ assert.equal(claims.exp,workerTime+60,'ticket uses configured worker clock without relaxing replay/expiry verification');
+ const final={segmentId:claims.nonce+'-1',sessionId:claims.nonce,sourceId:'live-owner',text:'Rapat dimulai.',start:0,end:2,speakerLabel:'Pembicara 1',attribution:'assigned'};
+ const upload={sttModel:'qwen3-asr-0.6b-live',final};
+ const first=await a.post('transcript',upload),again=await a.post('transcript',upload);
+ assert.equal(first.status,200);assert.equal(first.data.entry.id,again.data.entry.id);
+ assert.equal(first.data.entry.segments[0].speaker,'Pembicara 1');
+ assert.equal((await a.post('transcript',{...upload,final:{...final,sourceId:'forged'}})).status,400);
+ await a.post('leave');
+ assert.equal((await a.post('live-session',{model:'qwen3-asr-0.6b-live',language:'id'})).status,409);
+});
+
+test('mixed Whisper and Qwen Live transcripts survive batch summary and reject destructive manual batch',async t=>{
+ let batchCalls=0;
+ const f=await fixture(t,{sttBaseUrl:'http://synthetic/v1',sttModel:'small',sttModels:['small']},{fetchImpl:async url=>{
+  if(url.endsWith('/audio/batch-diarize')){batchCalls++;return Response.json({segments:[{text:'Only old Whisper',speaker:'P1',start:0,end:1}],duration:1});}
+  return Response.json({text:'Whisper speech'});
+ }});
+ const a=await f.joinRoom('mixed-owner');
+ assert.equal((await f.request(a.route('audio'),undefined,a.token,'POST',{headers:{Authorization:`Bearer ${a.token}`,'Content-Type':'audio/webm','X-Request-Id':'old-whisper'},body:'synthetic'})).status,200);
+ const final={segmentId:'live-session-1',sessionId:'live-session',sourceId:'mixed-owner',text:'Qwen live speech',start:0,end:1,speakerLabel:'Pembicara 1',attribution:'assigned'};
+ assert.equal((await a.post('transcript',{sttModel:'qwen3-asr-0.6b-live',final})).status,200);
+ const summary=await a.post('summarize',{batchDiarize:true});
+ assert.equal(summary.status,200);
+ assert.equal((await a.get('transcript')).data.transcripts.length,2);
+ assert.equal((await a.post('batch-diarize')).status,409);
+ assert.equal(batchCalls,0);
+});
+
+test('joining a meeting sends exactly one JSON response', async t => {
+  const f = await fixture(t);
+  let writes = 0;
+  const original = f.app.response.json;
+  t.mock.method(f.app.response, 'json', function (...args) {
+    writes++;
+    return original.apply(this, args);
+  });
+  await f.joinRoom('single-token-response');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 1, 'Successful join must not attempt additional responses after sending its token');
+});
+
+test('manual speaker names are scoped, permission checked, durable, and applied to future finals',async t=>{
+ const f=await fixture(t);
+ const owner=await f.joinRoom('mic-owner'),other=await f.joinRoom('other');
+ const final={segmentId:'session-a-1',sessionId:'session-a',sourceId:'mic-owner',text:'Rapat',start:0,end:1,speakerLabel:'Pembicara 1',attribution:'assigned'};
+ await owner.post('transcript',{sttModel:'qwen3-asr-0.6b-live',final});
+ const alias={sourceId:'mic-owner',sessionId:'session-a',speaker:'Pembicara 1',name:'Budi'};
+ assert.equal((await other.post('speaker-name',alias)).status,403);
+ assert.equal((await owner.post('speaker-name',{...alias,name:'x'.repeat(81)})).status,400);
+ assert.equal((await owner.post('speaker-name',{...alias,sessionId:'other-session'})).status,404);
+ const saved=await owner.post('speaker-name',alias);
+ assert.equal(saved.status,200);
+ assert.equal(saved.data.transcripts[0].segments[0].speakerName,'Budi');
+ await owner.post('transcript',{sttModel:'qwen3-asr-0.6b-live',final:{...final,segmentId:'session-a-2'}});
+ assert.equal((await owner.get('transcript')).data.transcripts[1].segments[0].speakerName,'Budi');
+ await owner.post('transcript',{sttModel:'qwen3-asr-0.6b-live',final:{...final,sessionId:'session-b',segmentId:'session-b-1'}});
+ assert.equal((await owner.get('transcript')).data.transcripts[2].segments[0].speakerName,undefined);
+ await f.restart();
+ assert.equal((await owner.get('transcript')).data.transcripts[0].segments[0].speakerName,'Budi');
+ assert.equal((await owner.post('speaker-name',{...alias,name:''})).status,200);
+ assert.equal((await owner.get('transcript')).data.transcripts[0].segments[0].speakerName,undefined);
+});
 
 test('configured Qwen appears alongside Whisper and persists the selected model exactly once', async t => {
   let calls = 0;

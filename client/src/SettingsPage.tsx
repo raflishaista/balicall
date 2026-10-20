@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Info, LockKeyhole, Mic, Monitor, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, UserRound, Video, Volume2 } from 'lucide-react';
 import { initials } from './presentation';
-import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
+import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, qwenDiarizationForModel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
@@ -127,7 +127,9 @@ function AISettings({ draft, update, transcription, aiStatus }: {
   aiStatus?: ReturnType<typeof useBackendHealth>;
 }) {
   const models = transcription?.models || [];
-  const sharedMicSupported = supportsSharedMicrophone(draft.transcriptionModel || transcription?.defaultModel);
+  const isQwen = (draft.transcriptionModel || transcription?.defaultModel) === 'qwen3-asr-0.6b';
+  const sharedMicSupported = supportsSharedMicrophone(draft.transcriptionModel || transcription?.defaultModel, qwenDiarizationForModel(draft.transcriptionModel || transcription?.defaultModel, aiStatus?.health))
+    && (!isQwen || draft.transcriptionProvider === 'server');
   const missingModel = Boolean(draft.transcriptionModel && !models.includes(draft.transcriptionModel));
   return <>
     {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
@@ -137,12 +139,14 @@ function AISettings({ draft, update, transcription, aiStatus }: {
       <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update({ transcriptionModel: event.target.value })}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}{models.map(model => <option key={model} value={model}>{transcriptionModelLabel(model)}</option>)}</select></label>
       <PreferenceToggle
         label="Mode Mikrofon Ruang Rapat (Diarization)"
-        description="Preferensi pemisahan pembicara untuk mikrofon bersama. Memerlukan upload audio Server dan model diarization yang aktif."
+        description="Pemisahan pembicara untuk mikrofon bersama. Memerlukan layanan Server dan model diarization yang aktif."
         checked={sharedMicSupported && (draft.sharedRoomMic ?? false)}
         disabled={!sharedMicSupported}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
       {!sharedMicSupported && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {isQwen && sharedMicSupported && <p role="status">{QWEN_DIARIZATION_NOTICE}</p>}
+      {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
       {sharedMicSupported && draft.sharedRoomMic && (
         <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
           <PreferenceToggle
@@ -154,12 +158,13 @@ function AISettings({ draft, update, transcription, aiStatus }: {
           <PreferenceToggle
             label="Diarisasi Batch Pasca-Rapat (Post-Meeting)"
             description="Jalankan diarization penuh pada rekaman kontinu saat rapat berakhir untuk memastikan penomoran pembicara konsisten pada notulen."
-            checked={draft.batchDiarization ?? true}
+            checked={!isQwen && (draft.batchDiarization ?? true)}
+            disabled={isQwen}
             onChange={batchDiarization => update({ batchDiarization })}
           />
         </div>
       )}
-      <p className="settings-field-help">Browser dan WhisperLiveKit belum mendukung diarization pada alur ini. Pilihan Otomatis mengikuti layanan yang dipakai saat bergabung. Label pembicara berlaku per potongan audio, bukan identitas atau NIK karyawan; label yang sama pada potongan berbeda belum tentu orang yang sama.</p>
+      <p className="settings-field-help">Browser dan WhisperLiveKit belum mendukung diarization pada alur ini. Pilihan Otomatis mengikuti layanan yang dipakai saat bergabung. Pada Qwen Live, label pembicara berlaku selama satu sesi mikrofon. Pada model berbasis potongan audio, label berlaku per potongan. Label ini tidak mengenali nama atau NIK karyawan.</p>
       <p className="settings-field-help" role="status">{!transcription ? 'Konfigurasi layanan belum dapat diperiksa. Pilihan Otomatis dan Browser tetap tersedia.' : !transcription.configured ? 'Layanan Server belum dikonfigurasi. Jika dipilih sebelumnya, rapat memakai Browser.' : 'Pilihan model mengikuti konfigurasi server. Kesiapan pemrosesan suara diperiksa saat digunakan dalam rapat.'}</p>
       {missingModel && <p className="settings-notice" role="status">Model tersimpan belum tersedia. Rapat berikutnya memakai model default yang tersedia.</p>}
       <p className="settings-field-help">Model berlaku saat layanan Server digunakan. Kamu tetap dapat mengganti bahasa, layanan, dan model di ruang rapat. Perubahan di ruang rapat tidak mengubah default ini.</p>

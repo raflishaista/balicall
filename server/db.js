@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { attributedSpeakerName } from './qwenLiveConfig.js';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -308,7 +309,8 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
     const insertQuery = `
       INSERT INTO balicall_transcripts (id, meeting_id, room_name, speaker_id, speaker_name, text, timestamp)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (id) DO NOTHING;
+      ON CONFLICT (id) DO UPDATE SET speaker_name = EXCLUDED.speaker_name
+      WHERE balicall_transcripts.meeting_id = EXCLUDED.meeting_id;
     `;
 
     for (const t of transcripts) {
@@ -317,7 +319,7 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
         for (let idx = 0; idx < t.segments.length; idx++) {
           const seg = t.segments[idx];
           const segId = `${t.id || 'tx'}-seg-${idx}`;
-          const speakerLabel = `${t.speakerName || 'Anonymous'} (${seg.speaker})`;
+          const speakerLabel = attributedSpeakerName(t.speakerName,seg);
           await client.query(insertQuery, [
             segId,
             meetingId,

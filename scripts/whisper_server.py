@@ -14,12 +14,14 @@ import asyncio
 import io
 import os
 import sys
+import secrets
+from threading import Lock
 from typing import Optional, List
 
 try:
     import av
     import numpy as np
-    from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+    from fastapi import FastAPI, File, Form, Header, UploadFile, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     import uvicorn
@@ -41,6 +43,8 @@ except ImportError:
 DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "small")
 DEFAULT_PORT = int(os.getenv("WHISPER_PORT", "8000"))
 DEFAULT_HOST = os.getenv("WHISPER_HOST", "0.0.0.0")
+SPEECH_API_KEY = os.getenv("SPEECH_API_KEY", "")
+inference_lock = Lock()
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DIAR_DIR = os.getenv(
@@ -103,7 +107,7 @@ def decode_audio_to_numpy(audio_bytes: bytes, target_sr: int = 16000) -> np.ndar
         raise HTTPException(status_code=400, detail=f"Failed to decode audio file: {e}")
 
 
-def align_words(words, turns, default_speaker="Pembicara 1"):
+def align_words(words, turns, default_speaker="UNKNOWN", carry_previous_speaker=False):
     """Assign word timestamps to the speaker turn with greatest temporal overlap."""
     segments = []
     for word in words:
@@ -114,7 +118,7 @@ def align_words(words, turns, default_speaker="Pembicara 1"):
         ]
         overlap, speaker = max(overlaps, default=(0.0, default_speaker))
         if overlap <= 0.0:
-            speaker = segments[-1]["speaker"] if segments else default_speaker
+            speaker = segments[-1]["speaker"] if carry_previous_speaker and segments else default_speaker
 
         if segments and segments[-1]["speaker"] == speaker:
             segments[-1]["text"] += " " + text
@@ -189,7 +193,7 @@ def load_diarization_model(model_dir: str):
 def run_diarization(waveform: np.ndarray, sr: int = 16000, threshold: Optional[float] = None) -> list:
     """Runs Nemotron-3 Diarization and returns turns [(start, end, speaker_label), ...]."""
     if diar_model is None or diar_processor is None:
-        return []
+        raise HTTPException(503, "Diarization model is not available.")
 
     thresh = threshold if threshold is not None else diar_threshold
 
@@ -210,7 +214,7 @@ def run_diarization(waveform: np.ndarray, sr: int = 16000, threshold: Optional[f
         return turns
     except Exception as e:
         print(f"[!] Diarization error: {e}")
-        return []
+        raise HTTPException(502, "Diarization inference failed.") from e
 
 
 @app.get("/")
@@ -241,114 +245,109 @@ def list_models():
     }
 
 
+def require_diarization():
+    if diar_model is None or diar_processor is None:
+        raise HTTPException(503, "Diarization model is not available.")
+
+
+
+def authorize(authorization):
+    if SPEECH_API_KEY and not secrets.compare_digest(authorization, f"Bearer {SPEECH_API_KEY}"):
+        raise HTTPException(401, "Invalid speech service credentials.")
+
+
+
+async def read_waveform(file):
+    payload = await file.read(5 * 1024 * 1024 + 1)
+    if not payload:
+        raise HTTPException(400, "Audio is empty.")
+    if len(payload) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Maximum upload size is 5 MB.")
+    waveform = await asyncio.to_thread(decode_audio_to_numpy, payload, 16000)
+    if not waveform.size:
+        raise HTTPException(400, "Audio contains no samples.")
+    if len(waveform) > 16000 * 60:
+        raise HTTPException(413, "Maximum audio duration is 60 seconds.")
+    return waveform
+
+
+
+def transcribe_waveform(waveform, language, diarize=False):
+    if whisper_model is None:
+        raise HTTPException(503, "Whisper model is not available.")
+    decoded, _ = whisper_model.transcribe(
+        waveform, language=language, vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=400),
+        condition_on_previous_text=False, beam_size=1, best_of=1,
+        word_timestamps=diarize,
+    )
+    return list(decoded)
+
+
+
+def infer_transcription(waveform, language, diarize, threshold=None):
+    # One bounded inference at a time; both processes read the same audio.
+    with inference_lock:
+        if diarize:
+            require_diarization()
+        decoded = transcribe_waveform(waveform, language, diarize)
+        text = " ".join(segment.text.strip() for segment in decoded).strip()
+        if not diarize:
+            return {"text": text}
+        if not text:
+            return {"text": "", "segments": []}
+        turns = run_diarization(waveform, sr=16000, threshold=threshold)
+        words = []
+        for segment in decoded:
+            if segment.words:
+                words.extend((word.start, word.end, word.word.strip()) for word in segment.words if word.word.strip())
+            elif segment.text.strip():
+                words.append((segment.start, segment.end, segment.text.strip()))
+        return {"text": text, "segments": align_words(words, turns)}
+
+
+
+def infer_diarization(waveform):
+    with inference_lock:
+        require_diarization()
+        turns = run_diarization(waveform, sr=16000)
+        return {"segments": [{"speaker": speaker, "start": start, "end": end} for start, end, speaker in turns]}
+
+
+
+@app.post("/audio/diarizations")
+@app.post("/v1/audio/diarizations")
+async def diarize_audio(file: UploadFile = File(...), authorization: str = Header("")):
+    authorize(authorization)
+    require_diarization()
+    waveform = await read_waveform(file)
+    return await asyncio.to_thread(infer_diarization, waveform)
+
+
+
 @app.post("/audio/transcriptions")
 @app.post("/v1/audio/transcriptions")
 async def transcribe(
-    file: UploadFile = File(...),
-    model: Optional[str] = Form(None),
-    language: Optional[str] = Form(None),
-    response_format: Optional[str] = Form("json"),
-    diarize: Optional[str] = Form(None),
+    file: UploadFile = File(...), model: Optional[str] = Form(None),
+    language: Optional[str] = Form(None), response_format: Optional[str] = Form("json"),
+    diarize: Optional[str] = Form(None), authorization: str = Header(""),
     diarization_threshold: Optional[float] = Form(None),
 ):
+    authorize(authorization)
     if whisper_model is None:
-        raise HTTPException(status_code=503, detail="Whisper model is still loading or not initialized.")
-
-    audio_bytes = await file.read()
-    if not audio_bytes:
-        return {"text": "", "segments": []} if diarize else {"text": ""}
-
-    waveform = decode_audio_to_numpy(audio_bytes, target_sr=16000)
-    if waveform.size == 0 or len(waveform) < 1600:  # < 0.1s
-        return {"text": "", "segments": []} if diarize else {"text": ""}
-
-    # Parse diarize flag
-    do_diarize = False
-    if diarize is not None:
-        do_diarize = str(diarize).strip().lower() in ("true", "1", "yes")
-
-    # Language mapping for Indonesian and English
-    lang = None
-    if language:
-        clean_lang = language.lower().split("-")[0].split("_")[0]
-        if clean_lang in ("id", "indonesian"):
-            lang = "id"
-        elif clean_lang in ("en", "english"):
-            lang = "en"
-        else:
-            lang = clean_lang
-
+        raise HTTPException(503, "Whisper model is not available.")
+    do_diarize = str(diarize).strip().lower() in ("true", "1", "yes") if diarize is not None else False
+    if do_diarize:
+        require_diarization()
+    lang = language.lower().split("-")[0].split("_")[0] if language else None
+    lang = {"indonesian": "id", "english": "en"}.get(lang, lang)
+    waveform = await read_waveform(file)
     try:
-        # Offload inference to worker thread so the FastAPI event loop stays responsive
-        loop = asyncio.get_running_loop()
-
-        def _infer():
-            # vad_filter=True uses Silero VAD to eliminate silence, noise, and repetition loops
-            segments, info = whisper_model.transcribe(
-                waveform,
-                language=lang,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=400),
-                condition_on_previous_text=False,  # Prevents repeating previous text loops
-                beam_size=1,  # Greedy search for fastest CPU response
-                best_of=1,
-                word_timestamps=do_diarize,
-            )
-            segments = list(segments)
-            transcribed_text = " ".join(seg.text.strip() for seg in segments).strip()
-
-            if not transcribed_text:
-                return {"text": "", "segments": []} if do_diarize else {"text": ""}
-
-            if not do_diarize:
-                return {"text": transcribed_text}
-
-            # Diarization workflow
-            turns = run_diarization(waveform, sr=16000, threshold=diarization_threshold)
-
-            words = []
-            for seg in segments:
-                if seg.words:
-                    for w in seg.words:
-                        w_text = w.word.strip()
-                        if w_text:
-                            words.append((w.start, w.end, w_text))
-                elif seg.text.strip():
-                    words.append((seg.start, seg.end, seg.text.strip()))
-
-            aligned_segments = align_words(words, turns, default_speaker="Pembicara 1")
-
-            # Fallback if alignment produced no non-empty segments
-            if not aligned_segments:
-                aligned_segments = [
-                    {
-                        "speaker": "Pembicara 1",
-                        "start": round(float(seg.start), 2),
-                        "end": round(float(seg.end), 2),
-                        "text": seg.text.strip(),
-                    }
-                    for seg in segments if seg.text.strip()
-                ]
-
-            if not aligned_segments and transcribed_text:
-                duration = round(len(waveform) / 16000.0, 2)
-                aligned_segments = [{
-                    "speaker": "Pembicara 1",
-                    "start": 0.0,
-                    "end": max(0.1, duration),
-                    "text": transcribed_text,
-                }]
-
-            return {"text": transcribed_text, "segments": aligned_segments}
-
-        result = await loop.run_in_executor(None, _infer)
-        if result.get("text"):
-            seg_info = f" with {len(result.get('segments', []))} speaker segments" if do_diarize else ""
-            print(f"[STT] Transcribed ({len(waveform)/16000:.1f}s){seg_info}: \"{result['text']}\"")
-        return result
-    except Exception as e:
-        print(f"[ERROR] Inference failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Inference error: {e}")
+        return await asyncio.to_thread(infer_transcription, waveform, lang, do_diarize, diarization_threshold)
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(500, "Transcription inference failed.") from error
 
 
 @app.post("/audio/batch-diarize")
@@ -430,7 +429,7 @@ async def batch_diarize(
             elif seg.text.strip():
                 words.append((seg.start, seg.end, seg.text.strip()))
 
-        aligned = align_words(words, turns, default_speaker="Pembicara 1")
+        aligned = align_words(words, turns, default_speaker="Pembicara 1", carry_previous_speaker=True)
 
         if not aligned and full_text:
             aligned = [{
@@ -466,12 +465,14 @@ def main():
     parser.add_argument("--diarization-threshold", type=float, default=DEFAULT_DIAR_THRESHOLD, help=f"Nemotron-3 clustering threshold (default: {DEFAULT_DIAR_THRESHOLD})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to bind to (default: {DEFAULT_PORT})")
     parser.add_argument("--host", type=str, default=DEFAULT_HOST, help=f"Host to bind to (default: {DEFAULT_HOST})")
+    parser.add_argument("--diarization-only", action="store_true", help="Serve diarization without loading Whisper")
     args = parser.parse_args()
 
     global diar_threshold
     diar_threshold = args.diarization_threshold
 
-    load_model(args.model)
+    if not args.diarization_only:
+        load_model(args.model)
     if args.diarization_model:
         load_diarization_model(args.diarization_model)
 

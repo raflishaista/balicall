@@ -1,0 +1,8 @@
+.speaker-name-edit { border: 0; background: transparent; color: var(--text-muted, #65738a); text-decoration: underline; font: inherit; font-size: 11px; padding: 3px 5px; cursor: pointer; }
+.speaker-name-form { display: grid; gap: 6px; margin: 8px 0; padding: 10px; border: 1px solid var(--border-color, #d8e1ec); border-radius: 8px; max-width: 330px; }
+.speaker-name-form label { font-size: 12px; font-weight: 600; }
+.speaker-name-form input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid #a5b5ca; border-radius: 5px; font: inherit; }
+.speaker-name-form small { font-size: 11px; color: var(--text-muted, #65738a); }
+.speaker-name-form > div { display: flex; gap: 8px; }
+.speaker-name-form button { padding: 5px 9px; border: 1px solid #a5b5ca; border-radius: 5px; cursor: pointer; }
+.speaker-name-form p { color: #c0392b; font-size: 12px; margin: 0; }

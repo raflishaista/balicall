@@ -68,7 +68,7 @@ export function createTranscriptRealtime(room: Room, meetingId: string, options:
     async notifySaved(entry: TranscriptEntry) {
       if (disposed || !connected()) return;
       try {
-        await room.localParticipant.publishData(encoder.encode(JSON.stringify({ v: 1, meetingId, entryId: entry.id })), {
+        await room.localParticipant.publishData(encoder.encode(JSON.stringify({ v: 1, meetingId, entryId: entry.revision ? `${entry.id}:${entry.revision}` : entry.id })), {
           reliable: true, topic: TRANSCRIPT_TOPIC,
         });
       } catch {

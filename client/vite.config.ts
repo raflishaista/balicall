@@ -14,6 +14,7 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:3001', changeOrigin: true },
       '/live-stt': { target: 'http://127.0.0.1:8003', ws: true, rewrite: value => value.replace(/^\/live-stt/, '') },
+      '/qwen-live-stt': { target: 'http://127.0.0.1:8008', ws: true, rewrite: value => value.replace(/^\/qwen-live-stt/, '') },
     },
   },
 })

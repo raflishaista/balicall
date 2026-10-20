@@ -2,7 +2,7 @@
 
 python -m uvicorn qwen_app:app --host 127.0.0.1 --port 8006
 faster-whisper is used ONLY for audio decoding and Silero VAD here.
-Transcription uses Qwen; word timestamps and diarization are unsupported.
+Transcription uses Qwen; optional turn-based diarization uses a separate service.
 """
 import io
 import os
@@ -21,6 +21,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from faster_whisper.audio import decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from starlette.concurrency import run_in_threadpool
+from qwen_diarization import request_turns, transcribe_turns, diarizer_ready
 
 MODEL_ALIAS = 'qwen3-asr-0.6b'
 LANGUAGES = {'id': 'Indonesian', 'en': 'English'}
@@ -86,7 +87,7 @@ async def lifespan(app):
                                     return_time_stamps=False)[0].text
 
     app.state.recognize = recognize
-    logger.info('Qwen worker ready; device=%s; precision=%s; Silero VAD enabled; diarization unsupported', device, precision)
+    logger.info('Qwen worker ready; device=%s; precision=%s; Silero VAD enabled; diarization service configured=%s', device, precision, bool(os.getenv('QWEN_DIARIZATION_URL')))
     try:
         yield
     finally:
@@ -102,10 +103,19 @@ app.state.api_key = os.getenv('SPEECH_API_KEY', '')
 def health():
     ready = app.state.recognize is not None
     return {'ready': ready, 'model': MODEL_ALIAS, 'models': [MODEL_ALIAS] if ready else [],
-            'vad': 'silero', 'diarization': False, 'wordTimestamps': False}
+            'vad': 'silero', 'diarization': ready and diarizer_ready(),
+            'diarizationConfigured': bool(os.getenv('QWEN_DIARIZATION_URL')),
+            'diarizationValidation': 'experimental; per-upload speaker labels; overlap not separated', 'wordTimestamps': False}
 
 
-def infer(payload, language):
+def recognize_diarized(audio, language):
+    if not len(audio) or not speech_regions(audio):
+        return {'text': '', 'segments': []}
+    return transcribe_turns(audio, LANGUAGES[language], app.state.recognize,
+                            request_turns(audio), speech_regions)
+
+
+def infer(payload, language, diarize=False):
     requested_at = perf_counter()
     if not admission.acquire(blocking=False):
         raise HTTPException(429, 'Qwen queue is full; retry this audio request', headers={'Retry-After': '2'})
@@ -123,7 +133,7 @@ def infer(payload, language):
             raise HTTPException(413, 'Maximum audio duration is 60 seconds')
         if not np.isfinite(audio).all():
             raise HTTPException(400, 'Audio contains invalid samples')
-        result = recognize_audio(audio, language, app.state.recognize)
+        result = recognize_diarized(audio, language) if diarize else recognize_audio(audio, language, app.state.recognize)
         logger.info('Qwen audio_s=%.2f wait_ms=%.0f processing_ms=%.0f', len(audio) / 16000,
                     (acquired_at - requested_at) * 1000, (perf_counter() - acquired_at) * 1000)
         return result
@@ -146,14 +156,14 @@ async def transcribe(file: UploadFile = File(...), model: str = Form(...),
         raise HTTPException(401, 'Invalid speech service credentials')
     if model != MODEL_ALIAS or language not in LANGUAGES or response_format != 'json':
         raise HTTPException(400, 'Unsupported model, language or response format')
-    if diarize:
-        raise HTTPException(400, 'Qwen does not support diarization in this integration')
+    if diarize and not os.getenv('QWEN_DIARIZATION_URL'):
+        raise HTTPException(400, 'Qwen diarization service is not configured')
     if app.state.recognize is None:
         raise HTTPException(503, 'Qwen is not ready')
     payload = await file.read(5 * 1024 * 1024 + 1)
     if not payload or len(payload) > 5 * 1024 * 1024:
         raise HTTPException(413, 'Audio must contain 1 byte to 5 MB')
-    return await run_in_threadpool(infer, payload, language)
+    return await run_in_threadpool(infer, payload, language, diarize)
 
 # ---------------------------------------------------------------------------
 # Long recordings: asynchronous job API (upload -> job_id -> poll).
@@ -204,7 +214,7 @@ def plan_chunks(regions):
     return chunks
 
 
-def infer_long(job, path, language):
+def infer_long(job, path, language, diarize=False):
     job['status'] = 'running'
     try:
         audio = decode_audio(path, sampling_rate=16000)
@@ -217,6 +227,10 @@ def infer_long(job, path, language):
         return {'text': '', 'segments': [], 'duration': 0.0}
     if not np.isfinite(audio).all():
         raise ValueError('Audio contains invalid samples')
+    if diarize:
+        with inference_lock:
+            result = recognize_diarized(audio, language)
+        return {**result, 'duration': duration}
     started = perf_counter()
     parts = []
     chunks = plan_chunks(speech_regions(audio))
@@ -233,14 +247,14 @@ def infer_long(job, path, language):
     return {'text': ' '.join(parts), 'segments': [], 'duration': duration}
 
 
-def run_job(job, path, language):
+def run_job(job, path, language, diarize=False):
     try:
-        job['result'] = infer_long(job, path, language)
+        job['result'] = infer_long(job, path, language, diarize)
         job['status'] = 'done'
     except Exception as error:
         logger.exception('Qwen long transcription job failed')
         job['status'] = 'failed'
-        job['error'] = str(error) if isinstance(error, ValueError) else 'Transcription failed'
+        job['error'] = error.detail if isinstance(error, HTTPException) else str(error) if isinstance(error, ValueError) else 'Transcription failed'
     finally:
         job['finished_at'] = time.time()
         try:
@@ -256,8 +270,8 @@ async def submit_long(file: UploadFile = File(...), model: str = Form(...),
     check_auth(authorization)
     if model != MODEL_ALIAS or language not in LANGUAGES:
         raise HTTPException(400, 'Unsupported model or language')
-    if diarize:
-        raise HTTPException(400, 'Qwen does not support diarization in this integration')
+    if diarize and not os.getenv('QWEN_DIARIZATION_URL'):
+        raise HTTPException(400, 'Qwen diarization service is not configured')
     if app.state.recognize is None:
         raise HTTPException(503, 'Qwen is not ready')
     purge_jobs()
@@ -281,7 +295,7 @@ async def submit_long(file: UploadFile = File(...), model: str = Form(...),
     job_id = uuid.uuid4().hex
     job = {'status': 'queued', 'error': None, 'result': None, 'finished_at': None}
     jobs[job_id] = job
-    threading.Thread(target=run_job, args=(job, path, language), daemon=True).start()
+    threading.Thread(target=run_job, args=(job, path, language, diarize), daemon=True).start()
     return {'job_id': job_id, 'status': 'queued'}
 
 

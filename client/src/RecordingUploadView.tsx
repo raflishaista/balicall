@@ -195,7 +195,8 @@ export function RecordingUploadView({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     getOptions().then(o => {
       setLlmModels(o.llm.models); setLlmModel(o.llm.default);
-      setSttModels(o.stt.models); setSttModel(o.stt.default);
+      const models = o.stt.models.filter(model => model !== 'qwen3-asr-0.6b');
+      setSttModels(models); setSttModel(models.includes(o.stt.default) ? o.stt.default : models[0] || '');
       setDiarizers(o.diarizer.options); setDiarizer(o.diarizer.default);
     }).catch(() => {});
   }, []);

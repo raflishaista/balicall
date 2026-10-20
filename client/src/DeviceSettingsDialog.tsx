@@ -11,13 +11,14 @@ export function DeviceSettingsDialog({
   settings, connected, blocked, micVolume, sttProvider, mirror = true,
   sharedRoomMic = false, sharedMicSupported = true, onToggleSharedMic,
   liveDiarization = true, onToggleLiveDiarization,
-  batchDiarization = true, onToggleBatchDiarization,
+  batchDiarization = true, onToggleBatchDiarization, batchSupported = true,
   onClose,
 }: {
   settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
   sharedRoomMic?: boolean; sharedMicSupported?: boolean; onToggleSharedMic?: (enabled: boolean) => void;
   liveDiarization?: boolean; onToggleLiveDiarization?: (enabled: boolean) => void;
   batchDiarization?: boolean; onToggleBatchDiarization?: (enabled: boolean) => void;
+  batchSupported?: boolean;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -63,7 +64,7 @@ export function DeviceSettingsDialog({
             <span>Diarisasi Langsung (Live / Normal)</span>
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
-            <input type="checkbox" checked={batchDiarization} disabled={disabled} onChange={e => onToggleBatchDiarization?.(e.target.checked)} />
+            <input type="checkbox" checked={batchSupported && batchDiarization} disabled={disabled || !batchSupported} onChange={e => onToggleBatchDiarization?.(e.target.checked)} />
             <span>Diarisasi Batch Pasca-Rapat (Post-Meeting)</span>
           </label>
         </div>

@@ -7,7 +7,7 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 COPY qwen_requirements.txt .
 RUN pip install -r qwen_requirements.txt
 
-COPY qwen_app.py ./
+COPY qwen_app.py qwen_diarization.py ./
 
 EXPOSE 8006
 CMD ["python", "-m", "uvicorn", "qwen_app:app", "--host", "0.0.0.0", "--port", "8006"]

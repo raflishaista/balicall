@@ -33,7 +33,11 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
-import { supportsSharedMicrophone } from './preferences';
+import { supportsSharedMicrophone, qwenDiarizationForModel } from './preferences';
+import type { LiveFinal } from './liveTranscription';
+import { speakerDisplayLabel } from './transcriptSpeakers';
+import type { SpeakerNameChange } from './SpeakerNameEditor';
+import { mergeTranscripts } from './transcriptMerge';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -67,10 +71,6 @@ import {
 } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
-function mergeTranscripts(current: TranscriptEntry[], incoming: TranscriptEntry[]) {
-  const byId = new Map([...current, ...incoming].map(entry => [entry.id, entry]));
-  return [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-}
 
 const PRESET_PERSONAS = [
   { id: 'BT-10492', name: 'Rafli Aditya', dept: 'NOC & Core Network' },
@@ -781,7 +781,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
       // 4. Request summary in the background with complete transcripts
       const isSharedMic = Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
-      const useBatchDiarize = isSharedMic && (callPreferences.batchDiarization ?? joinMedia.batchDiarization ?? true);
+      const useBatchDiarize = !callPreferences.transcriptionModel.startsWith('qwen3-asr-') && isSharedMic && (callPreferences.batchDiarization ?? joinMedia.batchDiarization ?? true);
       try {
         await triggerSummarize(currentMeetingId, currentToken, currentRoomName, finalTranscripts, leavePromise, useBatchDiarize);
       } finally {
@@ -884,12 +884,23 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleAddSpeechLine = (text: string) => {
+  const handleRenameSpeaker = async (change: SpeakerNameChange) => {
+    const targetMeeting=meetingId,targetToken=token;
+    if (!targetMeeting || !targetToken) throw new Error('Akses rapat tidak tersedia.');
+    const data=await apiRequest<{updatedEntries:TranscriptEntry[]}>(meetingPath(targetMeeting,'speaker-name'),{
+      method:'POST',headers:{Authorization:'Bearer '+targetToken,'Content-Type':'application/json'},body:JSON.stringify(change),
+    });
+    for (const entry of data.updatedEntries) transcriptDelivery.saved({meetingId:targetMeeting,entry});
+  };
+
+  const handleAddSpeechLine = (value: LiveFinal) => {
+    const final = typeof value === 'string' ? null : value;
+    const text = typeof value === 'string' ? value : value.text;
     if (!text.trim() || !meetingId || !token) return;
     const path = meetingPath(meetingId, 'transcript');
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.trim(), requestId }),
+      body: JSON.stringify(final ? { sttModel: 'qwen3-asr-0.6b-live', final } : { text: text.trim(), requestId }),
     }).then(result => ({ ...result, meetingId })));
   };
 
@@ -965,18 +976,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleCreateLiveSession = (language: string) => {
+  const handleCreateLiveSession = (language: string, model = 'whisperlivekit-small', diarize = false, streamId?: string) => {
     if (!meetingId || !token) return Promise.reject(new Error('Akses rapat tidak tersedia.'));
     return apiRequest<{ url: string }>(meetingPath(meetingId, 'live-session'), {
     method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'whisperlivekit-small', language: language.split('-')[0] }),
+    body: JSON.stringify({ model, diarize, language: language.split('-')[0], ...(streamId?{streamId}:{}) }),
     });
   };
 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel, backendHealth?.qwenDiarizationReady) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     const useLiveDiarize = isSharedMic && (callPreferences.liveDiarization ?? joinMedia.liveDiarization ?? true);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
@@ -1067,7 +1078,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
   const openLobby = (intent: 'create' | 'join', preferences = userPreferences.preferences) => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
-    preJoinMedia.applyChoices(mediaChoices(preferences));
+    preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
     setMeetingIntent(isGuest ? 'join' : intent);
     setJoinError(null);
     setView('lobby');
@@ -1212,6 +1223,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
+              qwenDiarizationReady={qwenDiarizationForModel(userPreferences.preferences.transcriptionModel, backendHealth)}
               sttModels={backendHealth?.sttModels ?? []}
             />}
             // DISABLED IDENTITY LOCK (saved for future re-enabling):
@@ -1238,6 +1250,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               else if (rec?.status === 'stopped') setIsRecording(false);
             }}
             callPreferences={callPreferences}
+            onSttModelChanged={(model: string) => setCallPreferences(prev => ({ ...prev, transcriptionModel: model }))}
+            qwenDiarizationReady={qwenDiarizationForModel(callPreferences.transcriptionModel, backendHealth)}
             onToggleSharedMic={handleToggleSharedMic}
             onToggleLiveDiarization={handleToggleLiveDiarization}
             onToggleBatchDiarization={handleToggleBatchDiarization}
@@ -1258,6 +1272,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             onAddSpeechLine={handleAddSpeechLine}
+            onRenameSpeaker={handleRenameSpeaker}
             onEndMeeting={handleEndMeeting}
             isSummarizing={isSummarizing}
             microphoneRestricted={microphoneRestricted}
@@ -1341,6 +1356,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
 }
 
 function InCallView({ callDuration,
+  qwenDiarizationReady, onSttModelChanged,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
@@ -1357,6 +1373,7 @@ function InCallView({ callDuration,
   activeTab,
   setActiveTab,
   onAddSpeechLine,
+  onRenameSpeaker,
   onEndMeeting,
   isSummarizing,
   meetingRole,
@@ -1394,6 +1411,7 @@ function InCallView({ callDuration,
       <RoomAudioRenderer />
       <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
       <RoomContent callDuration={callDuration}
+        qwenDiarizationReady={qwenDiarizationReady} onSttModelChanged={onSttModelChanged}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
@@ -1412,7 +1430,7 @@ function InCallView({ callDuration,
         transcripts={transcripts}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onAddSpeechLine={onAddSpeechLine}
+        onAddSpeechLine={onAddSpeechLine} onRenameSpeaker={onRenameSpeaker}
         onEndMeeting={onEndMeeting}
         isSummarizing={isSummarizing}
         meetingRole={meetingRole}
@@ -1431,6 +1449,7 @@ function InCallView({ callDuration,
 }
 
 function RoomContent({
+  qwenDiarizationReady, onSttModelChanged,
   callDuration,
   sttModels,
   defaultSttModel,
@@ -1460,6 +1479,7 @@ function RoomContent({
   activeTab,
   setActiveTab,
   onAddSpeechLine,
+  onRenameSpeaker,
   onEndMeeting,
   isSummarizing,
   microphoneRestricted,
@@ -1505,14 +1525,15 @@ function RoomContent({
   const [modelPending, setModelPending] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const sttModel = selectedSttModel || defaultSttModel;
-  const isLiveModel = sttModel === 'whisperlivekit-small';
+  const isLiveModel = sttModel === 'whisperlivekit-small' || sttModel === 'qwen3-asr-0.6b-live';
   const paused = isMuted || !connected || isSummarizing || saveBlocked;
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
   const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: Boolean(callPreferences.sharedRoomMic), onAudio: onAddAudio });
   const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
     muted: paused || sttProvider !== 'server' || !isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine });
+    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine,
+    model: sttModel, diarize: sttModel === 'qwen3-asr-0.6b-live' && Boolean(callPreferences.sharedRoomMic) && (callPreferences.liveDiarization ?? true) });
   const serverSpeech = isLiveModel ? liveSpeech : backendSpeech;
   const changeSttModel = async (model: string) => {
     if (modelPending || finishing || isSummarizing || microphone.pending || model === sttModel || !sttModels.includes(model)) return;
@@ -1520,6 +1541,7 @@ function RoomContent({
     try {
       await serverSpeech.prepareTrackChange();
       setSelectedSttModel(model);
+      onSttModelChanged?.(model);
       setTranscriptionNotice(null);
     } catch (error) {
       setModelError(error instanceof Error ? error.message : 'Gagal mengganti model transkripsi.');
@@ -1569,6 +1591,7 @@ function RoomContent({
       )}
 
       <MeetingRoom
+        qwenDiarizationReady={qwenDiarizationReady}
         callDuration={callDuration}
         meetingRole={meetingRole}
         meetingHostId={meetingHostId}
@@ -1640,7 +1663,7 @@ function RoomContent({
         onToggleMute={microphone.toggleMicrophone}
         onToggleTranscription={toggleSpeechRecognition}
         onFinish={finishMeeting}
-        onAddSpeechLine={onAddSpeechLine}
+        onAddSpeechLine={onAddSpeechLine} onRenameSpeaker={onRenameSpeaker}
         backgroundControl={blur}
         isCameraBlur={blur.isBlurEnabled}
         cameraBlurPending={blur.blurPending}
@@ -1668,7 +1691,8 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
-          sharedMicSupported={supportsSharedMicrophone(sttModel)}
+          sharedMicSupported={sttProvider === 'server' && supportsSharedMicrophone(sttModel, qwenDiarizationReady)}
+          batchSupported={!sttModel.startsWith('qwen3-asr-')}
           onToggleSharedMic={onToggleSharedMic}
           liveDiarization={callPreferences.liveDiarization ?? true}
           onToggleLiveDiarization={onToggleLiveDiarization}
@@ -1851,7 +1875,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -1936,7 +1960,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -2091,7 +2115,7 @@ function SummaryView({
                   <div>
                     <strong className="transcript-username">{entry.speakerName}</strong>
                     <div className="transcript-diarized-row">
-                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                       <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                     </div>
                     <p>{segment.text}</p>
