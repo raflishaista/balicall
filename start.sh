@@ -80,30 +80,51 @@ else
     echo "  Mode: DEVELOPMENT (Vite Dev Server + Express API)"
     echo "========================================================"
 
-    # Launch LiveKit SFU
-    echo "[1/3] Starting LiveKit SFU Server on Port 7880..."
-    if [ -f "livekit.yaml" ]; then
-        $LIVEKIT_CMD --config livekit.yaml --dev &
+    # [1/4] LiveKit SFU (dilewati kalau port 7880 sudah dipakai, mis. LiveKit Docker)
+    if (echo > /dev/tcp/127.0.0.1/7880) 2>/dev/null; then
+        echo "[1/4] Port 7880 sudah dipakai (LiveKit Docker). Dilewati."
     else
-        $LIVEKIT_CMD --dev &
+        echo "[1/4] Starting LiveKit SFU Server on Port 7880..."
+        if [ -f "livekit.yaml" ]; then
+            $LIVEKIT_CMD --config livekit.yaml --dev &
+        else
+            $LIVEKIT_CMD --dev &
+        fi
+        sleep 2
     fi
-    sleep 2
 
-    # Launch Backend Server
-    echo "[2/3] Starting Backend API on Port 3001..."
+    # [2/4] Worker STT (Docker): Whisper & Qwen
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        echo "[2/4] Starting STT workers (Docker)..."
+        docker compose -f "$PROJECT_ROOT/docker-compose.workers.yml" up -d
+        echo "      Menunggu Whisper siap (maks 6 menit, unduhan model pertama bisa lama)..."
+        for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1; then
+                echo "      Whisper siap."
+                break
+            fi
+            sleep 3
+        done
+    else
+        echo "[2/4] ⚠️  Docker tidak berjalan; worker STT dilewati."
+    fi
+
+    # [3/4] Backend
+    echo "[3/4] Starting Backend API on Port 3001..."
     (cd "$PROJECT_ROOT/server" && npm run dev) &
     sleep 2
 
-    # Launch Vite Client
-    echo "[3/3] Starting Vite Dev Client on Port 5187..."
+    # [4/4] Vite client
+    echo "[4/4] Starting Vite Dev Client on Port 5187..."
     (cd "$PROJECT_ROOT/client" && npm run dev) &
 
     echo ""
     echo "========================================================"
     echo "  ✅ All services launched!"
-    echo "  Web Client:  http://127.0.0.1:5187"
+    echo "  Web Client:  http://127.0.0.1:5173"
     echo "  Backend API: http://127.0.0.1:3001"
-    echo "  Press Ctrl+C to stop all services."
+    echo "  Press Ctrl+C to stop Node/Vite (Docker worker tetap jalan)."
+    echo "  Stop worker: docker compose -f docker-compose.workers.yml down"
     echo "========================================================"
 fi
 
