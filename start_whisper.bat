@@ -19,7 +19,7 @@ echo.
 echo [*] Press Ctrl+C to stop the server.
 echo.
 
-python scripts\whisper_server.py --model "%MODEL%" --host 127.0.0.1 --port 8000
+python scripts\whisper_server.py --model "%MODEL%" --diarization-model models/nemotron3-diarization --host 127.0.0.1 --port 8000
 pause
 exit /b
 

@@ -1221,7 +1221,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const final = store.get(req.meetingId).attendanceFinalization;
       final.status = 'complete'; final.error = null;
     });
-    res.json({ success: true, summary, meetingStatus: store.get(req.meetingId).status });
+    res.json({
+      success: true,
+      summary,
+      meetingStatus: store.get(req.meetingId).status,
+      transcripts: store.get(req.meetingId).transcripts,
+    });
   }));
 
   // Persisted summaries and details from PostgreSQL + in-memory store
