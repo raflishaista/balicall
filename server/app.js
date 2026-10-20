@@ -12,7 +12,7 @@ import { createGuestAccess } from './guestAccess.js';
 import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
-import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
+import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio, normalizeTranscriptText } from './providers.js';
 import { attachRecordingUploads } from './recordingUploads.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady } from './qwenCapabilities.js';
@@ -899,10 +899,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     }
     const { text, requestId = randomUUID() } = req.body || {};
     if (!nonEmpty(text, 10000) || !requestIdValid(requestId)) return res.status(400).json({ error: 'Non-empty text and a valid requestId are required' });
+    const cleanText = normalizeTranscriptText(text);
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous });
     if (!writable(req, res)) return;
-    res.json({ success: true, entry: store.append(req.meetingId, req.speakerId, text, requestId) });
+    res.json({ success: true, entry: store.append(req.meetingId, req.speakerId, cleanText, requestId) });
   });
 
   app.post('/api/meetings/:id/presence', (req, res) => {
@@ -1085,10 +1086,21 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (!inFlightSummarize.has(id)) {
       const task = (async () => {
         const snapshot = structuredClone(meeting);
+        for (const entry of snapshot.transcripts) {
+          entry.text = normalizeTranscriptText(entry.text);
+          if (entry.segments) {
+            for (const seg of entry.segments) {
+              seg.text = normalizeTranscriptText(seg.text);
+            }
+          }
+        }
         const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
         const current = store.get(id);
         if (current && current.transcripts.length === snapshot.transcripts.length) {
-          store.transact(() => { store.get(id).summary = summary; });
+          store.transact(() => {
+            store.get(id).summary = summary;
+            store.get(id).transcripts = snapshot.transcripts;
+          });
         }
 
         // Persist to PostgreSQL database
