@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import io
 import os
+import re
 import sys
 import secrets
 import tempfile
@@ -47,6 +48,34 @@ except ImportError:
 DEFAULT_MODEL = os.getenv("WHISPER_MODEL", "small")
 DEFAULT_PORT = int(os.getenv("WHISPER_PORT", "8001"))
 DEFAULT_HOST = os.getenv("WHISPER_HOST", "0.0.0.0")
+DEFAULT_BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "2"))
+DEFAULT_INITIAL_PROMPT = os.getenv(
+    "WHISPER_INITIAL_PROMPT",
+    "Percakapan rapat kerja teknis Bali Tower / NOC mengenai sistem, jaringan, permohonan admin, speaking permission, logic conditional, nested rules, mikrofon, streaming WebRTC, notulen rapat, dan kehadiran."
+)
+initial_prompt_text = DEFAULT_INITIAL_PROMPT
+beam_size = DEFAULT_BEAM_SIZE
+
+# Domain phonetic corrections for common ASR mishearings in Indonesian-English tech meetings
+DOMAIN_CORRECTIONS = [
+    (re.compile(r'\bperlombongan\b', re.IGNORECASE), 'permohonan'),
+    (re.compile(r'\bnestet(nya)?\b', re.IGNORECASE), lambda m: 'nestednya' if m.group(1) else 'nested'),
+    (re.compile(r'\bkondisionil\b', re.IGNORECASE), 'kondisional'),
+    (re.compile(r'\bspiking\b', re.IGNORECASE), 'speaking'),
+    (re.compile(r'\b(bali\s*tower|balitower)\b', re.IGNORECASE), 'Bali Tower'),
+    (re.compile(r'\blive\s*kit\b', re.IGNORECASE), 'LiveKit'),
+    (re.compile(r'\benok\b', re.IGNORECASE), 'NOC'),
+    (re.compile(r'\bwebrtc\b', re.IGNORECASE), 'WebRTC'),
+]
+
+def apply_domain_corrections(text: str) -> str:
+    if not text:
+        return text
+    cleaned = text
+    for pattern, replacement in DOMAIN_CORRECTIONS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
 SPEECH_API_KEY = os.getenv("SPEECH_API_KEY", "")
 inference_lock = Lock()
 
@@ -278,26 +307,31 @@ async def read_waveform(file):
 
 
 
-def transcribe_waveform(waveform, language, diarize=False):
+def transcribe_waveform(waveform, language, diarize=False, prompt=None):
     if whisper_model is None:
         raise HTTPException(503, "Whisper model is not available.")
+    effective_prompt = prompt.strip() if prompt and prompt.strip() else initial_prompt_text
     decoded, _ = whisper_model.transcribe(
         waveform, language=language, vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=400),
-        condition_on_previous_text=False, beam_size=1, best_of=1,
+        condition_on_previous_text=False,
+        beam_size=beam_size,
+        best_of=beam_size,
+        initial_prompt=effective_prompt,
         word_timestamps=diarize,
     )
     return list(decoded)
 
 
 
-def infer_transcription(waveform, language, diarize, threshold=None):
+def infer_transcription(waveform, language, diarize, threshold=None, prompt=None):
     # One bounded inference at a time; both processes read the same audio.
     with inference_lock:
         if diarize:
             require_diarization()
-        decoded = transcribe_waveform(waveform, language, diarize)
+        decoded = transcribe_waveform(waveform, language, diarize, prompt=prompt)
         text = " ".join(segment.text.strip() for segment in decoded).strip()
+        text = apply_domain_corrections(text)
         if not diarize:
             return {"text": text}
         if not text:
@@ -306,10 +340,13 @@ def infer_transcription(waveform, language, diarize, threshold=None):
         words = []
         for segment in decoded:
             if segment.words:
-                words.extend((word.start, word.end, word.word.strip()) for word in segment.words if word.word.strip())
+                words.extend((word.start, word.end, apply_domain_corrections(word.word.strip())) for word in segment.words if word.word.strip())
             elif segment.text.strip():
-                words.append((segment.start, segment.end, segment.text.strip()))
-        return {"text": text, "segments": align_words(words, turns)}
+                words.append((segment.start, segment.end, apply_domain_corrections(segment.text.strip())))
+        aligned = align_words(words, turns)
+        for seg in aligned:
+            seg["text"] = apply_domain_corrections(seg["text"])
+        return {"text": text, "segments": aligned}
 
 
 
@@ -336,6 +373,7 @@ async def diarize_audio(file: UploadFile = File(...), authorization: str = Heade
 async def transcribe(
     file: UploadFile = File(...), model: Optional[str] = Form(None),
     language: Optional[str] = Form(None), response_format: Optional[str] = Form("json"),
+    prompt: Optional[str] = Form(None),
     diarize: Optional[str] = Form(None), authorization: str = Header(""),
     diarization_threshold: Optional[float] = Form(None),
 ):
@@ -349,7 +387,7 @@ async def transcribe(
     lang = {"indonesian": "id", "english": "en"}.get(lang, lang)
     waveform = await read_waveform(file)
     try:
-        return await asyncio.to_thread(infer_transcription, waveform, lang, do_diarize, diarization_threshold)
+        return await asyncio.to_thread(infer_transcription, waveform, lang, do_diarize, diarization_threshold, prompt)
     except HTTPException:
         raise
     except Exception as error:
@@ -362,6 +400,7 @@ async def batch_diarize(
     file: Optional[UploadFile] = File(None),
     files: Optional[List[UploadFile]] = File(None),
     language: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
     model: Optional[str] = Form(None),
     threshold: Optional[float] = Form(None),
 ):
@@ -409,17 +448,21 @@ async def batch_diarize(
     loop = asyncio.get_running_loop()
 
     def _infer_batch():
+        effective_prompt = prompt.strip() if prompt and prompt.strip() else initial_prompt_text
         # 1. Transcribe complete continuous audio
         segments, info = whisper_model.transcribe(
             full_waveform,
             language=lang,
+            initial_prompt=effective_prompt,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=400),
-            beam_size=1,
+            beam_size=beam_size,
+            best_of=beam_size,
             word_timestamps=True,
         )
         segments = list(segments)
         full_text = " ".join(seg.text.strip() for seg in segments).strip()
+        full_text = apply_domain_corrections(full_text)
 
         # 2. Run Nemotron-3 Diarization over the full continuous waveform
         turns = run_diarization(full_waveform, sr=16000, threshold=threshold)
@@ -429,13 +472,15 @@ async def batch_diarize(
         for seg in segments:
             if seg.words:
                 for w in seg.words:
-                    w_text = w.word.strip()
+                    w_text = apply_domain_corrections(w.word.strip())
                     if w_text:
                         words.append((w.start, w.end, w_text))
             elif seg.text.strip():
-                words.append((seg.start, seg.end, seg.text.strip()))
+                words.append((seg.start, seg.end, apply_domain_corrections(seg.text.strip())))
 
         aligned = align_words(words, turns, default_speaker="Pembicara 1", carry_previous_speaker=True)
+        for seg in aligned:
+            seg["text"] = apply_domain_corrections(seg["text"])
 
         if not aligned and full_text:
             aligned = [{
@@ -625,6 +670,8 @@ def get_transcription_job(job_id: str, authorization: str = Header("")):
 def main():
     parser = argparse.ArgumentParser(description="BaliCall Local faster-whisper Server")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help=f"Model size/path (default: {DEFAULT_MODEL})")
+    parser.add_argument("--initial-prompt", type=str, default=DEFAULT_INITIAL_PROMPT, help="Domain vocabulary prompt for biasing transcription")
+    parser.add_argument("--beam-size", type=int, default=DEFAULT_BEAM_SIZE, help=f"Beam size for decoding (default: {DEFAULT_BEAM_SIZE})")
     parser.add_argument("--diarization-model", type=str, default=DEFAULT_DIAR_DIR, help=f"Nemotron-3 Diarization model path (default: {DEFAULT_DIAR_DIR})")
     parser.add_argument("--diarization-threshold", type=float, default=DEFAULT_DIAR_THRESHOLD, help=f"Nemotron-3 clustering threshold (default: {DEFAULT_DIAR_THRESHOLD})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to bind to (default: {DEFAULT_PORT})")
@@ -632,8 +679,10 @@ def main():
     parser.add_argument("--diarization-only", action="store_true", help="Serve diarization without loading Whisper")
     args = parser.parse_args()
 
-    global diar_threshold
+    global diar_threshold, initial_prompt_text, beam_size
     diar_threshold = args.diarization_threshold
+    initial_prompt_text = args.initial_prompt
+    beam_size = max(1, args.beam_size)
 
     if not args.diarization_only:
         load_model(args.model)
@@ -642,6 +691,7 @@ def main():
 
     print(f"[*] Starting faster-whisper API server on http://{args.host}:{args.port}")
     print(f"[*] OpenAI-compatible endpoint: http://127.0.0.1:{args.port}/v1/audio/transcriptions")
+    print(f"[*] Beam size: {beam_size} | Prompt biasing: active")
     if loaded_diar_model_id:
         print(f"[*] Speaker Diarization active: {loaded_diar_model_id} (threshold: {diar_threshold})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

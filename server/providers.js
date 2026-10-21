@@ -73,6 +73,26 @@ async function fetchOfficeJson(url, options, config, fetchImpl) {
   }
 }
 
+const PHONETIC_CORRECTIONS = [
+  [/\bperlombongan\b/gi, 'permohonan'],
+  [/\bnestet(nya)?\b/gi, (_, nya) => (nya ? 'nested-nya' : 'nested')],
+  [/\bkondisionil\b/gi, 'kondisional'],
+  [/\bspiking\b/gi, 'speaking'],
+  [/\b(bali\s*tower|balitower)\b/gi, 'Bali Tower'],
+  [/\blive\s*kit\b/gi, 'LiveKit'],
+  [/\benok\b/gi, 'NOC'],
+  [/\bwebrtc\b/gi, 'WebRTC'],
+];
+
+export function normalizeTranscriptText(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let result = text;
+  for (const [pattern, replacement] of PHONETIC_CORRECTIONS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 export function effectiveLlm(config) {
   if (config.llmProvider === 'office' && config.llmKey) return 'office';
   if (config.llmProvider === 'gemini' && config.geminiKey) return 'gemini';
@@ -84,12 +104,17 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
     const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
     const prefix = time ? `--- [${time}]` : '---';
     if (entry.segments && entry.segments.length > 0) {
-        return entry.segments.map(seg => `${prefix} [${attributedSpeakerName(entry.speakerName,seg)}]: ${seg.text}`).join('\n');
+        return entry.segments.map(seg => `${prefix} [${attributedSpeakerName(entry.speakerName,seg)}]: ${normalizeTranscriptText(seg.text)}`).join('\n');
     }
-    return `${prefix} [${entry.speakerName}]: ${entry.text}`;
+    return `${prefix} [${entry.speakerName}]: ${normalizeTranscriptText(entry.text)}`;
   }).join('\n');
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
   const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines, conditions or assignments. Use empty arrays if none were stated.
+
+ASR Speech-to-Text Interpretation & Normalization Guidelines:
+- The dialogue was transcribed by ASR. Resolve any minor phonetic mishearings or code-switching technical loanwords into their intended meaning based on context (e.g. "perlombongan" -> "permohonan", "nestet" -> "nested", "kondisionil" -> "kondisional", "spiking" -> "speaking").
+- Base all key discussion points, decisions, and action items on the intended contextual meaning, not on literal phonetic distortions.
+
 Guidelines for actionItems:
 - Extract all actionable tasks agreed upon in the meeting.
 - 'task': Clear, specific description of the task.
@@ -158,7 +183,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
     method: 'POST', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: form,
   }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
-  const text = data.text.trim();
+  const text = normalizeTranscriptText(data.text.trim());
   if (!config.sttDiarization) return { text };
   if (!data.segments) {
     if (qwen) throw new ServiceError('The Qwen service returned no diarization segments');
@@ -171,7 +196,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
         !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
       throw new ServiceError('The speech service returned invalid diarization segments');
     }
-    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+    return { text: normalizeTranscriptText(segment.text.trim()), speaker: segment.speaker, start: segment.start, end: segment.end };
   }).filter(segment => segment.text);
   if (text && !segments.length) throw new ServiceError('The speech service returned no diarization for its text');
   return { text, segments };
@@ -210,7 +235,7 @@ export async function batchDiarizeAudio(audioBuffers, mimeType, language, config
         !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
       throw new ServiceError('The batch diarization service returned invalid diarization segments');
     }
-    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+    return { text: normalizeTranscriptText(segment.text.trim()), speaker: segment.speaker, start: segment.start, end: segment.end };
   }).filter(segment => segment.text);
 
   return {
