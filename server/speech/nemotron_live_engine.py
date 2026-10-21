@@ -9,31 +9,24 @@ class TurnCollector:
         self.position=0
         self.label=()
         self.start=0
-        self.candidate=None
-        self.candidate_start=0
-        self.candidate_count=0
 
     def _turn(self,end):
         if not self.label or end<=self.start: return []
         overlap=len(self.label)>1
+        stable=end-self.start>=self.stable_frames
         return [dict(startSample=self.start*self.frame_samples,endSample=end*self.frame_samples,
-            speakerLabel='Suara bertumpuk' if overlap else f'Pembicara {self.label[0]+1}',
-            attribution='overlap' if overlap else 'assigned')]
+            speakerLabel='Suara bertumpuk' if overlap else f'Pembicara {self.label[0]+1}' if stable else 'Pembicara belum diketahui',
+            attribution='overlap' if overlap else 'assigned' if stable else 'unknown')]
 
     def feed(self,labels):
         result=[]
         for active in labels:
             active=tuple(active)
             if active!=self.label:
-                if active!=self.candidate:
-                    self.candidate,self.candidate_start,self.candidate_count=active,self.position,0
-                self.candidate_count+=1
-                if self.candidate_count>=self.stable_frames:
-                    result+=self._turn(self.candidate_start)
-                    self.label,self.start=active,self.candidate_start
-                    self.candidate=None; self.candidate_count=0
-            else:
-                self.candidate=None; self.candidate_count=0
+                # Preserve short runs as unknown rather than smoothing them into
+                # a different speaker or dropping an interruption entirely.
+                result+=self._turn(self.position)
+                self.label,self.start=active,self.position
             self.position+=1
             # Bound long same-speaker turns without resetting speaker memory.
             if (self.position-self.start)*self.frame_samples>=30*16000 and self.label:
@@ -41,12 +34,8 @@ class TurnCollector:
         return result
 
     def finish(self):
-        result=[]
-        if self.candidate is not None:
-            result+=self._turn(self.candidate_start)
-            self.label,self.start=self.candidate,self.candidate_start
-        result+=self._turn(self.position)
-        self.label=(); self.start=self.position; self.candidate=None
+        result=self._turn(self.position)
+        self.label=(); self.start=self.position
         return result
 
 

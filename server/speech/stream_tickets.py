@@ -25,6 +25,8 @@ class TicketVerifier:
                 or type(data.get('diarize',False)) is not bool): raise ValueError('Invalid session')
             for field in ('nonce','meetingId','speakerId'):
                 if not isinstance(data.get(field),str) or not 1<=len(data[field])<=200: raise ValueError('Missing identity')
+            if 'streamId' in data and (not isinstance(data['streamId'],str) or not 16<=len(data['streamId'])<=100 or not all(c.isascii() and (c.isalnum() or c in '_-') for c in data['streamId'])):
+                raise ValueError('Invalid microphone session')
             self.used={key:expiry for key,expiry in self.used.items() if expiry>now}
             if data['nonce'] in self.used or len(self.used)>=self.limit: raise ValueError('Used ticket or capacity exceeded')
             self.used[data['nonce']]=data['exp']

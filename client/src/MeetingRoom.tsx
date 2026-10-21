@@ -1,5 +1,6 @@
+import { speakerDisplayLabel } from './transcriptSpeakers';
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE } from './preferences';
+import { transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { KeyboardEvent } from 'react';
 import type { Participant } from 'livekit-client';
 import { ConnectionState, RoomEvent } from 'livekit-client';
@@ -48,6 +49,7 @@ interface Transcript {
     speaker: string;
     start: number;
     end: number;
+    sourceId?: string; sessionId?: string; attribution?: string;
   }[];
 }
 
@@ -772,7 +774,8 @@ export function MeetingRoom({
 
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-model-select">Model</label>
-                  {!supportsSharedMicrophone(sttModel) && <p role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+                  {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
+                  {sttModel === 'qwen3-asr-0.6b' && !supportsSharedMicrophone(sttModel) && <p role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}
@@ -865,7 +868,7 @@ export function MeetingRoom({
                             className="transcript-diarized-speaker"
                             data-speaker={segment.speaker}
                           >
-                            {segment.speaker}
+                            {speakerDisplayLabel(segment)}
                           </span>
                           <span className="segment-time-pill">
                             {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s

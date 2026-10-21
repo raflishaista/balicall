@@ -29,6 +29,10 @@ class QwenLiveSession:
             if end<=self.committed: continue
             start=max(start,self.committed)
             if start<self.base or end<start: raise ValueError('Speaker turn references discarded audio')
+            gap=self.buffer[:start-self.base]
+            if len(gap) and await asyncio.to_thread(self.engine.speech,gap):
+                text=await asyncio.to_thread(self.engine.transcribe_turn,gap,self.ticket['language'])
+                finals+=self._segment(text,self.base,start,'Pembicara belum diketahui','unknown')
             clip=self.buffer[start-self.base:end-self.base]
             if await asyncio.to_thread(self.engine.speech,clip):
                 text=await asyncio.to_thread(self.engine.transcribe_turn,clip,self.ticket['language'])
@@ -79,13 +83,30 @@ class QwenLiveSession:
         frames.append(transcript_frame(self.last_interim,finals))
         return frames
 
+    async def pause(self):
+        if self.closed: return []
+        # Flush speaker turns without finalizing Nemotron's speaker cache.
+        # This is generated silence, never microphone capture during mute.
+        frames=await self.feed(bytes(2*RATE*2))
+        if len(self.buffer) and await asyncio.to_thread(self.engine.speech,self.buffer):
+            frames.append(transcript_frame('',await self._personal_final()))
+        else:
+            self._trim(self.total)
+            self.state=self.engine.create_state(self.ticket['language'])
+            self.has_voice=False;self.last_interim=''
+        return frames
+
     async def finish(self):
         if self.closed: return []
-        self.closed=True
-        finals=[]
+        finals=[]; frames=[]
         if self.diarizer:
-            turns=await self.diarizer.feed(b'',finish=True)
-            finals+=await self._turn_finals(turns)
+            try:
+                turns=await self.diarizer.feed(b'',finish=True)
+                finals+=await self._turn_finals(turns)
+            except (ConnectionError,TimeoutError,OSError):
+                await self.diarizer.close(); self.diarizer=None; self.degraded=True
+                frames.append(dict(type='warning',error='Diarization terputus saat selesai; sisa transkrip memakai label pembicara belum diketahui.'))
+        if self.diarizer:
             # Silence or unstable residual turns must not silently lose speech.
             if len(self.buffer) and await asyncio.to_thread(self.engine.speech,self.buffer):
                 text=await asyncio.to_thread(self.engine.transcribe_turn,self.buffer,self.ticket['language'])
@@ -93,7 +114,8 @@ class QwenLiveSession:
             self._trim(self.total)
         else:
             finals+=await self._personal_final()
-        return [transcript_frame('',finals)]
+        self.closed=True
+        return frames+[transcript_frame('',finals)]
 
     async def close(self):
         self.closed=True

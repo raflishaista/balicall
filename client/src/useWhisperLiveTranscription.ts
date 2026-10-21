@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { startLiveTranscription } from './liveTranscription.ts';
+import type { LiveFinal } from './liveTranscription.ts';
 
 export function useWhisperLiveTranscription(options: {
-  muted: boolean; track?: MediaStreamTrack; language: string;
-  createSession: (language: string) => Promise<{ url: string }>;
-  onFinal: (text: string) => void;
+  muted: boolean; track?: MediaStreamTrack; language: string; model?: string; diarize?: boolean;
+  createSession: (language: string, model?: string, diarize?: boolean) => Promise<{ url: string }>;
+  onFinal: (text: LiveFinal) => void;
 }) {
   const [enabled, setEnabled] = useState(true);
   const [changingTrack, setChangingTrack] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [interim, setInterim] = useState('');
   const controller = useRef<ReturnType<typeof startLiveTranscription> | null>(null);
   const previousFinish = useRef<Promise<void>>(Promise.resolve());
@@ -20,16 +22,17 @@ export function useWhisperLiveTranscription(options: {
     if (options.muted || !enabled || changingTrack || !options.track || options.track.readyState === 'ended') return;
     let cancelled = false;
     let live: ReturnType<typeof startLiveTranscription> | undefined;
-    const track = options.track, language = options.language;
+    const track = options.track, language = options.language, model = options.model, diarize = options.diarize;
     // Keep the save destination bound to the meeting that started this stream.
     const onFinal = captureFinalCallback();
     void previousFinish.current.catch(() => {}).then(() => {
       if (cancelled) return;
-      setError(null); setInterim('');
-      live = startLiveTranscription({ track, createSession: () => createSession(language), onFinal,
+      setError(null); setWarning(null); setInterim('');
+      live = startLiveTranscription({ track, createSession: () => createSession(language, model, diarize), onFinal,
         onInterim: text => { if (!cancelled) setInterim(text); },
         onReady: ready => { if (!cancelled) setListening(ready); },
         onError: message => { if (!cancelled) setError(message); },
+        onWarning: message => { if (!cancelled) setWarning(message); },
       });
       controller.current = live;
     });
@@ -42,7 +45,7 @@ export function useWhisperLiveTranscription(options: {
       }
       setListening(false);
     };
-  }, [options.muted, options.track, options.language, enabled, changingTrack, attempt]);
+  }, [options.muted, options.track, options.language, options.model, options.diarize, enabled, changingTrack, attempt]);
   const flush = useCallback(async () => {
     if (controller.current) await controller.current.finish();
     else await previousFinish.current;
@@ -52,7 +55,7 @@ export function useWhisperLiveTranscription(options: {
   const resumeTrackChange = useCallback(() => { setChangingTrack(false); setAttempt(value => value + 1); }, []);
   return {
     isListeningSpeechApi: listening && !options.muted && !error,
-    speechEnabled: enabled, speechError: error, interimText: interim,
+    speechEnabled: enabled, speechError: error || warning, interimText: interim,
     prepareTrackChange, resumeTrackChange,
     async finishTranscription() { await flush(); setEnabled(false); },
     toggleSpeechRecognition() {

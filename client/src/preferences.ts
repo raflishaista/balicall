@@ -36,6 +36,7 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   if (input.speechLanguage === 'id-ID' || input.speechLanguage === 'en-US') result.speechLanguage = input.speechLanguage;
   if (input.transcriptionProvider === 'auto' || input.transcriptionProvider === 'browser' || input.transcriptionProvider === 'server') result.transcriptionProvider = input.transcriptionProvider;
   if (typeof input.transcriptionModel === 'string' && /^[a-zA-Z0-9._-]{0,64}$/.test(input.transcriptionModel)) result.transcriptionModel = input.transcriptionModel;
+  if (result.transcriptionModel === 'qwen3-asr-0.6b') result.transcriptionModel = '';
   for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders', 'sharedRoomMic', 'liveDiarization', 'batchDiarization'] as const) {
     if (typeof input[key] === 'boolean') result[key] = input[key];
   }
@@ -63,16 +64,16 @@ export function writePreferences(storage: Pick<Storage, 'setItem'>, value: Meeti
   return next;
 }
 
-export function mediaChoices(preferences: MeetingPreferences): JoinMediaChoices {
+export function mediaChoices(preferences: MeetingPreferences, qwenDiarizationReady = false): JoinMediaChoices {
   return { microphoneEnabled: preferences.microphoneEnabled, cameraEnabled: preferences.cameraEnabled,
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
-    sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel) && (preferences.sharedRoomMic ?? false),
+    sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel, qwenDiarizationReady) && (preferences.sharedRoomMic ?? false),
     liveDiarization: preferences.liveDiarization ?? true,
     batchDiarization: preferences.batchDiarization ?? true };
 }
 
-export function supportsSharedMicrophone(model?: string) {
-  return model !== 'qwen3-asr-0.6b';
+export function supportsSharedMicrophone(model?: string, qwenDiarizationReady = false) {
+  return model === 'qwen3-asr-0.6b-live' ? qwenDiarizationReady : model !== 'qwen3-asr-0.6b';
 }
 
 export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental dan belum mendukung diarization. Transkrip memakai nama akun peserta, bukan identitas setiap orang di depan satu mikrofon.';
@@ -89,8 +90,11 @@ export function resolveTranscriptionPreferences(preferences: MeetingPreferences,
   return { provider, model, notice };
 }
 
+export function qwenDiarizationForModel(model: string | undefined, health?: {qwenLiveDiarizationReady?: boolean} | null) { return model === 'qwen3-asr-0.6b-live' && Boolean(health?.qwenLiveDiarizationReady); }
+export const QWEN_LIVE_DIARIZATION_NOTICE = 'Qwen Live + Nemotron: label pembicara berlaku per mikrofon dan sesi, bukan nama orang. Suara bertumpuk ditandai; label dapat berubah setelah sambung ulang.';
+
 export function transcriptionModelLabel(model: string) {
-  return model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
+  return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization' : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
     : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
     : model === 'small-id' ? 'faster-whisper · Small Indonesian'
       : model === 'small' ? 'faster-whisper · Small' : model;

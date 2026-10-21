@@ -1,10 +1,17 @@
+export interface StreamingFinal {
+  segmentId: string; sessionId: string; sourceId: string; text: string;
+  start: number; end: number; speakerLabel: string; attribution: 'assigned' | 'unknown' | 'overlap';
+}
+export type LiveFinal = string | StreamingFinal;
+
 export function startLiveTranscription(options: {
   track: MediaStreamTrack;
   createSession: () => Promise<{ url: string }>;
-  onFinal: (text: string) => void;
+  onFinal: (text: LiveFinal) => void;
   onInterim: (text: string) => void;
   onReady: (ready: boolean) => void;
   onError: (message: string) => void;
+  onWarning?: (message: string) => void;
 }) {
   let socket: WebSocket | undefined;
   let context: AudioContext | undefined;
@@ -33,7 +40,7 @@ export function startLiveTranscription(options: {
     url.protocol = url.protocol === 'https:' || url.protocol === 'wss:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('WhisperLiveKit tidak merespons. Coba lagi.')), 15000);
+      const timer = setTimeout(() => reject(new Error('Layanan streaming tidak merespons. Coba lagi.')), 15000);
       socket!.onmessage = ({ data }) => {
         try {
           const message = JSON.parse(data);
@@ -41,11 +48,12 @@ export function startLiveTranscription(options: {
           else if (message.type === 'transcript') {
             for (const text of message.final || []) options.onFinal(text);
             options.onInterim(message.interim || '');
-          } else if (message.type === 'ready_to_stop') { drained = true; resolveDrain(); }
+          } else if (message.type === 'warning') { options.onWarning?.(message.error || 'Atribusi pembicara belum tersedia.'); }
+          else if (message.type === 'ready_to_stop') { drained = true; resolveDrain(); }
           else if (message.type === 'error') throw new Error(message.error || 'Streaming gagal.');
         } catch (error) { clearTimeout(timer); reject(error); fail(error instanceof Error ? error.message : 'Respons streaming tidak valid.'); }
       };
-      socket!.onerror = () => { clearTimeout(timer); reject(new Error('Koneksi WhisperLiveKit gagal.')); fail('Koneksi WhisperLiveKit gagal.'); };
+      socket!.onerror = () => { clearTimeout(timer); reject(new Error('Koneksi transkripsi streaming gagal.')); fail('Koneksi transkripsi streaming gagal.'); };
       socket!.onclose = () => {
         clearTimeout(timer);
         if (!drained) { reject(new Error('Koneksi streaming terputus.')); fail('Koneksi streaming terputus sebelum transkrip selesai. Coba lagi.'); }
@@ -68,7 +76,7 @@ export function startLiveTranscription(options: {
     source.connect(worklet); worklet.connect(gain); gain.connect(context.destination);
     await context.resume();
     options.onReady(true);
-  })().catch(error => fail(error instanceof Error ? error.message : 'WhisperLiveKit gagal dimulai.'));
+  })().catch(error => fail(error instanceof Error ? error.message : 'Transkripsi streaming gagal dimulai.'));
 
   return {
     finish() {

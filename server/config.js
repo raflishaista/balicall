@@ -37,6 +37,9 @@ export function loadConfig(env = process.env) {
     sttKey: env.STT_API_KEY || '',
     liveSttSecret: env.LIVE_STT_SECRET || '',
     liveSttUrl: env.LIVE_STT_URL || '',
+    qwenLiveSttUrl: env.QWEN_LIVE_STT_URL || '',
+    qwenLiveSttSecret: env.QWEN_LIVE_STT_SECRET || '',
+    qwenLiveHealthUrl: env.QWEN_LIVE_HEALTH_URL || 'http://127.0.0.1:8008/health',
     sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
 
@@ -73,6 +76,8 @@ export function loadConfig(env = process.env) {
     (!/^[\w-]{87}$/.test(config.vapidPublicKey)||!/^[\w-]{43}$/.test(config.vapidPrivateKey)||!(/^(mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/.test(config.vapidSubject))))throw new Error('Configure all VAPID keys and a valid mailto/HTTPS subject, or leave all empty.');
   if (!Number.isInteger(config.attendanceGraceMs) || config.attendanceGraceMs < 0 || config.attendanceGraceMs > 30000) throw new Error('ATTENDANCE_FINALIZE_GRACE_MS must be 0–30000 milliseconds');
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
+  if (Boolean(config.qwenLiveSttUrl) !== Boolean(config.qwenLiveSttSecret) || (config.qwenLiveSttSecret && config.qwenLiveSttSecret.length < 32)) throw new Error('Qwen streaming requires QWEN_LIVE_STT_URL and a secret of at least 32 characters');
+  if(config.qwenLiveSttUrl&&!/^\/[\w/-]+$/.test(config.qwenLiveSttUrl))throw new Error('Qwen streaming URL must be a same-origin path');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs', 'qwenSttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }

@@ -1,3 +1,4 @@
+import { speakerDisplayLabel } from './transcriptSpeakers';
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
@@ -33,7 +34,8 @@ import { useBackgroundBlur } from './useBackgroundBlur';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
-import { supportsSharedMicrophone } from './preferences';
+import { supportsSharedMicrophone, qwenDiarizationForModel } from './preferences';
+import type { LiveFinal } from './liveTranscription';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -884,12 +886,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleAddSpeechLine = (text: string) => {
+  const handleAddSpeechLine = (value: LiveFinal) => {
+    const final = typeof value === 'string' ? null : value;
+    const text = typeof value === 'string' ? value : value.text;
     if (!text.trim() || !meetingId || !token) return;
     const path = meetingPath(meetingId, 'transcript');
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.trim(), requestId }),
+      body: JSON.stringify(final ? { sttModel: 'qwen3-asr-0.6b-live', final } : { text: text.trim(), requestId }),
     }).then(result => ({ ...result, meetingId })));
   };
 
@@ -965,11 +969,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleCreateLiveSession = (language: string) => {
+  const handleCreateLiveSession = (language: string, model = 'whisperlivekit-small', diarize = false) => {
     if (!meetingId || !token) return Promise.reject(new Error('Akses rapat tidak tersedia.'));
     return apiRequest<{ url: string }>(meetingPath(meetingId, 'live-session'), {
     method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'whisperlivekit-small', language: language.split('-')[0] }),
+    body: JSON.stringify({ model, diarize, language: language.split('-')[0] }),
     });
   };
 
@@ -1067,7 +1071,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
   const openLobby = (intent: 'create' | 'join', preferences = userPreferences.preferences) => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
-    preJoinMedia.applyChoices(mediaChoices(preferences));
+    preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
     setMeetingIntent(isGuest ? 'join' : intent);
     setJoinError(null);
     setView('lobby');
@@ -1212,6 +1216,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
+              qwenDiarizationReady={qwenDiarizationForModel(userPreferences.preferences.transcriptionModel, backendHealth)}
               sttModels={backendHealth?.sttModels ?? []}
             />}
             // DISABLED IDENTITY LOCK (saved for future re-enabling):
@@ -1238,6 +1243,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               else if (rec?.status === 'stopped') setIsRecording(false);
             }}
             callPreferences={callPreferences}
+            qwenLiveDiarizationReady={backendHealth?.qwenLiveDiarizationReady ?? false}
             onToggleSharedMic={handleToggleSharedMic}
             onToggleLiveDiarization={handleToggleLiveDiarization}
             onToggleBatchDiarization={handleToggleBatchDiarization}
@@ -1340,7 +1346,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
   );
 }
 
-function InCallView({ callDuration,
+function InCallView({ callDuration, qwenLiveDiarizationReady,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
@@ -1393,7 +1399,7 @@ function InCallView({ callDuration,
     >
       <RoomAudioRenderer />
       <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
-      <RoomContent callDuration={callDuration}
+      <RoomContent qwenLiveDiarizationReady={qwenLiveDiarizationReady} callDuration={callDuration}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
         recordingPending={recordingPending}
@@ -1431,6 +1437,7 @@ function InCallView({ callDuration,
 }
 
 function RoomContent({
+  qwenLiveDiarizationReady,
   callDuration,
   sttModels,
   defaultSttModel,
@@ -1505,14 +1512,16 @@ function RoomContent({
   const [modelPending, setModelPending] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const sttModel = selectedSttModel || defaultSttModel;
-  const isLiveModel = sttModel === 'whisperlivekit-small';
+  const qwenDiarizationReady = sttModel === 'qwen3-asr-0.6b-live' && Boolean(qwenLiveDiarizationReady);
+  const isLiveModel = sttModel === 'whisperlivekit-small' || sttModel === 'qwen3-asr-0.6b-live';
   const paused = isMuted || !connected || isSummarizing || saveBlocked;
   const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
   const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: Boolean(callPreferences.sharedRoomMic), onAudio: onAddAudio });
   const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
     muted: paused || sttProvider !== 'server' || !isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine });
+    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine,
+    model: sttModel, diarize: sttModel === 'qwen3-asr-0.6b-live' && Boolean(callPreferences.sharedRoomMic) && (callPreferences.liveDiarization ?? true) });
   const serverSpeech = isLiveModel ? liveSpeech : backendSpeech;
   const changeSttModel = async (model: string) => {
     if (modelPending || finishing || isSummarizing || microphone.pending || model === sttModel || !sttModels.includes(model)) return;
@@ -1668,7 +1677,8 @@ function RoomContent({
             blur.selection
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
-          sharedMicSupported={supportsSharedMicrophone(sttModel)}
+          sharedMicSupported={sttProvider === 'server' && supportsSharedMicrophone(sttModel, qwenDiarizationReady)}
+          batchSupported={!sttModel.startsWith('qwen3-asr-')}
           onToggleSharedMic={onToggleSharedMic}
           liveDiarization={callPreferences.liveDiarization ?? true}
           onToggleLiveDiarization={onToggleLiveDiarization}
@@ -1851,7 +1861,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -1936,7 +1946,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -2091,7 +2101,7 @@ function SummaryView({
                   <div>
                     <strong className="transcript-username">{entry.speakerName}</strong>
                     <div className="transcript-diarized-row">
-                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{segment.speaker}</span>
+                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
                       <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                     </div>
                     <p>{segment.text}</p>

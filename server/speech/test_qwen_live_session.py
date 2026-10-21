@@ -19,6 +19,24 @@ def turn(start=0,end=16000,label='Pembicara 1',attribution='assigned'):
     return dict(startSample=start,endSample=end,speakerLabel=label,attribution=attribution)
 
 class SessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pause_flushes_once_without_closing_speaker_session(self):
+        session=QwenLiveSession(Engine(),dict(language='id',speakerId='o',nonce='s',diarize=True),Diarizer([]))
+        await session.feed(packet())
+        frames=await session.pause()
+        self.assertFalse(session.closed)
+        self.assertEqual(len([s for f in frames for s in f.get('final',[])]),1)
+        self.assertEqual([s for f in await session.pause() for s in f.get('final',[])],[])
+        await session.feed(packet())
+        finals=[s for f in await session.finish() for s in f.get('final',[])]
+        self.assertEqual(finals[0]['segmentId'],'s-2')
+
+    async def test_unmatched_voiced_gap_is_finalized_before_later_known_turn(self):
+        diarizer=Diarizer([turn(start=8000,end=16000,label='Pembicara 2')])
+        session=QwenLiveSession(Engine(),dict(language='id',speakerId='owner',nonce='s',diarize=True),diarizer)
+        finals=[seg for frame in await session.feed(packet()) for seg in frame['final']]
+        self.assertEqual([s['attribution'] for s in finals],['unknown','assigned'])
+        self.assertEqual((finals[0]['start'],finals[0]['end']),(0,0.5))
+
     async def test_long_silence_does_not_exhaust_buffer(self):
         session=QwenLiveSession(Engine(),dict(language='id',speakerId='o',nonce='s',diarize=True),Diarizer([]))
         for _ in range(65): await session.feed(bytes(32000))
@@ -32,6 +50,18 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(frames[0]['type'],'warning')
         frames=await session.finish()
         self.assertEqual(frames[0]['final'][0]['attribution'],'unknown')
+
+    async def test_diarizer_disconnect_only_on_stop_still_flushes_residual_speech(self):
+        class StopFailure(Diarizer):
+            async def feed(self,packet,finish=False):
+                if finish: raise ConnectionError('stop failure')
+                return []
+        session=QwenLiveSession(Engine(),dict(language='id',speakerId='o',nonce='s',diarize=True),StopFailure([]))
+        await session.feed(packet())
+        frames=await session.finish()
+        self.assertEqual(frames[0]['type'],'warning')
+        self.assertEqual(frames[-1]['final'][0]['attribution'],'unknown')
+        self.assertEqual(await session.finish(),[])
 
     async def test_interim_is_not_persisted_and_personal_final_emits_once(self):
         session=QwenLiveSession(Engine(),dict(language='id',speakerId='owner',nonce='session',diarize=False))

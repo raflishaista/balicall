@@ -22,7 +22,7 @@ class TicketTests(unittest.TestCase):
         with self.assertRaises(ValueError): verifier.verify(ticket(), 100)
 
     def test_model_expiry_signature_and_identity_are_checked(self):
-        for changes in [dict(model='small'),dict(exp=99),dict(exp=200),dict(language='xx'),dict(speakerId=''),dict(exp=True),dict(diarize='true')]:
+        for changes in [dict(model='small'),dict(exp=99),dict(exp=200),dict(language='xx'),dict(speakerId=''),dict(exp=True),dict(diarize='true'),dict(streamId='short'),dict(streamId='x'*101),dict(streamId='bad value'+'.'*16)]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 TicketVerifier(SECRET,'qwen3-asr-0.6b-live').verify(ticket(**changes),100)
         with self.assertRaises(ValueError): TicketVerifier('b'*40,'qwen3-asr-0.6b-live').verify(ticket(),100)

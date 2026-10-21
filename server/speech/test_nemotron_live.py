@@ -10,6 +10,18 @@ class Processor:
     def __call__(self,audio,**options): return dict(audio=audio.copy(),options=options)
 
 class NemotronTests(unittest.TestCase):
+    def test_short_speaker_interruptions_are_unknown_instead_of_lost_or_assigned(self):
+        collector=TurnCollector(stable_frames=20,frame_samples=160)
+        result=collector.feed([(0,)]*25+[(1,)]*10+[(0,)]*25+[()]*25)+collector.finish()
+        self.assertEqual([t['attribution'] for t in result],['assigned','unknown','assigned'])
+        self.assertEqual(result[1]['speakerLabel'],'Pembicara belum diketahui')
+        self.assertEqual((result[1]['startSample'],result[1]['endSample']),(4000,5600))
+
+    def test_unstable_tail_is_not_promoted_to_known_speaker_at_stop(self):
+        collector=TurnCollector(stable_frames=20,frame_samples=160)
+        result=collector.feed([(0,)]*10)+collector.finish()
+        self.assertEqual(result[0]['attribution'],'unknown')
+
     def test_turns_keep_arrival_labels_across_silence_and_overlap(self):
         turns=TurnCollector(stable_frames=1, frame_samples=1)
         results=[]

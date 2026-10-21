@@ -10,6 +10,7 @@ from qwen_live_engine import QwenEngine
 from qwen_live_protocol import MODEL,decode_pcm
 from qwen_live_session import QwenLiveSession
 from stream_tickets import TicketVerifier
+from retained_sessions import RetainedSessions
 
 logger=logging.getLogger('uvicorn.error')
 
@@ -52,7 +53,7 @@ def diarization_ready():
     except Exception: return False
 
 
-def create_app(engine=None,secret=None):
+def create_app(engine=None,secret=None,diarizer_factory=None):
     @asynccontextmanager
     async def lifespan(app):
         key=secret if secret is not None else os.getenv('QWEN_LIVE_STT_SECRET','')
@@ -60,35 +61,74 @@ def create_app(engine=None,secret=None):
         app.state.verifier=TicketVerifier(key,MODEL)
         app.state.engine=engine if engine is not None else QwenEngine()
         app.state.active=0
-        yield
+        app.state.sessions=RetainedSessions()
+        async def reap():
+            while True:
+                await asyncio.sleep(5)
+                await app.state.sessions.expire()
+        reaper=asyncio.create_task(reap())
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            with suppress(asyncio.CancelledError): await reaper
+            await app.state.sessions.close()
+            if engine is None:
+                await asyncio.to_thread(app.state.engine.close)
 
     app=FastAPI(lifespan=lifespan)
 
     @app.get('/health')
     def health():
         return dict(ready=hasattr(app.state,'engine'),streaming=True,native=True,model=MODEL,
-            diarization=diarization_ready(),activeSessions=app.state.active,maxSessions=2)
+            diarization=diarization_ready(),activeSessions=app.state.active,maxSessions=2,
+            retainedSessions=len(app.state.sessions.slots)-app.state.sessions.active,resumeGraceSeconds=45)
 
     @app.websocket('/asr')
     async def transcribe(socket:WebSocket):
         try: ticket=app.state.verifier.verify(socket.query_params.get('ticket',''))
         except ValueError:
             await socket.close(code=4401); return
-        if app.state.active>=2:
-            await socket.close(code=4429); return
-        app.state.active+=1
-        session=None; receiver=None
-        try:
-            diarizer=await DiarizationClient.connect() if ticket.get('diarize') else None
-            session=QwenLiveSession(app.state.engine,ticket,diarizer)
+        if socket.query_params.get('end')=='1':
+            if not ticket.get('streamId'):
+                await socket.close(code=4401);return
+            try:
+                frames=await app.state.sessions.end(ticket)
+            except ValueError:
+                await socket.close(code=4409);return
             await socket.accept()
-            await socket.send_json(dict(type='config',sampleRate=16000,model=MODEL,diarization=bool(diarizer)))
+            for frame in frames: await socket.send_json(frame)
+            await socket.send_json(dict(type='ready_to_stop'))
+            await socket.close();return
+        slot=None; receiver=None; get=None; retain=False
+        try:
+            async def create_session():
+                factory=diarizer_factory or DiarizationClient.connect
+                diarizer=await factory() if ticket.get('diarize') else None
+                return QwenLiveSession(app.state.engine,ticket,diarizer)
+            try: slot,resumed=await app.state.sessions.acquire(ticket,create_session)
+            except ValueError:
+                await socket.close(code=4429); return
+            session=slot.session
+            app.state.active+=1
+            await socket.accept()
+            await socket.send_json(dict(type='config',sampleRate=16000,model=MODEL,
+                diarization=bool(session.diarizer),sessionId=session.ticket['nonce'],resumed=resumed,resumeGraceSeconds=45))
+            if resumed and slot.finals:
+                await socket.send_json(dict(type='transcript',interim='',final=list(slot.finals)))
             queue=asyncio.Queue(maxsize=64)
-            pending=0
+            pending=0; transport_gone=False
             async def receive():
                 nonlocal pending
                 while True:
-                    packet=await asyncio.wait_for(socket.receive_bytes(),60)
+                    message=await asyncio.wait_for(socket.receive(),60)
+                    if message['type']=='websocket.disconnect':
+                        await queue.put('disconnect'); return
+                    packet=message.get('bytes')
+                    if packet is None:
+                        control=json.loads(message.get('text',''))
+                        if control!={'type':'pause'} or not slot.resumable: raise ValueError('Invalid streaming control')
+                        await queue.put('pause'); return
                     decode_pcm(packet)
                     pending+=len(packet)
                     if pending>320000 or queue.full(): raise ValueError('Streaming backlog exceeds ten seconds')
@@ -100,24 +140,36 @@ def create_app(engine=None,secret=None):
                 done,_=await asyncio.wait((get,receiver),return_when=asyncio.FIRST_COMPLETED)
                 if receiver in done and receiver.exception() is not None:
                     get.cancel(); raise receiver.exception()
-                # A normally completed receiver has enqueued the stop marker.
-                packet=await get; pending-=len(packet)
-                frames=await (session.feed(packet) if packet else session.finish())
-                for frame in frames: await socket.send_json(frame)
-                if not packet:
+                packet=await get
+                if packet=='disconnect':
+                    retain=True;break
+                if packet=='pause':
+                    frames=await session.pause();retain=True
+                else:
+                    pending-=len(packet)
+                    frames=await (session.feed(packet) if packet else session.finish())
+                # Journal before sending: a lost send is replayed with original IDs.
+                slot.remember(frames)
+                for frame in frames:
+                    if not transport_gone:
+                        try: await socket.send_json(frame)
+                        except (WebSocketDisconnect,OSError): transport_gone=True
+                if packet=='pause' or not packet:
                     await socket.send_json(dict(type='ready_to_stop')); break
         except WebSocketDisconnect:
-            pass
+            retain=True
         except Exception as error:
             logger.warning('Qwen live session failed: %s',type(error).__name__)
             with suppress(Exception):
                 await socket.send_json(dict(type='error',error='Qwen streaming gagal atau kapasitas penuh. Coba lagi.'))
         finally:
-            if receiver:
-                receiver.cancel()
-                with suppress(asyncio.CancelledError,Exception): await receiver
-            if session: await session.close()
-            app.state.active-=1
+            for task in (get,receiver):
+                if task:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError,Exception): await task
+            if slot:
+                await app.state.sessions.release(slot,retain)
+                app.state.active-=1
             with suppress(Exception): await socket.close()
     return app
 

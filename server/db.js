@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { attributedSpeakerName } from './qwenLiveConfig.js';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -317,7 +318,7 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
         for (let idx = 0; idx < t.segments.length; idx++) {
           const seg = t.segments[idx];
           const segId = `${t.id || 'tx'}-seg-${idx}`;
-          const speakerLabel = `${t.speakerName || 'Anonymous'} (${seg.speaker})`;
+          const speakerLabel = attributedSpeakerName(t.speakerName,seg);
           await client.query(insertQuery, [
             segId,
             meetingId,

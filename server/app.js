@@ -15,6 +15,7 @@ import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
 import { attachRecordingUploads } from './recordingUploads.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
+import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal } from './qwenLiveConfig.js';
 import {
   isDbConnected,
   saveMeeting,
@@ -117,6 +118,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     let livekitStatus = 'unavailable';
     try { await probe(); livekitStatus = 'reachable'; } catch { /* API health is independent of SFU. */ }
     const llmEffectiveProvider = effectiveLlm(config);
+    const qwenLive = await qwenLiveCapabilities(config, fetchImpl);
     res.json({
       status: 'ok',
       livekitUrl: config.livekitUrl,
@@ -128,9 +130,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       sttProvider: config.sttProvider,
       sttConfigured: Boolean(config.sttModel && (config.sttModel === QWEN_STT_MODEL ? config.qwenSttBaseUrl : config.sttBaseUrl)),
       sttDiarization: Boolean(config.sttDiarization),
+      qwenLiveReady: qwenLive.ready,
+      qwenLiveDiarizationReady: qwenLive.diarization,
       sttModel: config.sttModel,
       sttModels: [...availableSttModels(config),
-        ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : [])],
+        ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : []),
+        ...(qwenLive.ready ? [QWEN_LIVE_MODEL] : [])],
       database: {
         connected: isDbConnected(),
         configured: Boolean(config.databaseUrl),
@@ -784,16 +789,25 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     res.json({success:true});
   }));
 
-  app.post('/api/meetings/:id/live-session', (req, res) => {
+  app.post('/api/meetings/:id/live-session', asyncRoute(async (req, res) => {
     if (!writable(req, res)) return;
+    const { language, model, diarize = false } = req.body || {};
+    if (model === QWEN_LIVE_MODEL) {
+      const capabilities = await qwenLiveCapabilities(config, fetchImpl);
+      if (!capabilities.ready || (diarize && !capabilities.diarization)) return res.status(503).json({ error: 'Qwen streaming atau diarization belum siap.' });
+      if (!['id','en'].includes(language) || typeof diarize !== 'boolean') return res.status(400).json({ error: 'Bahasa atau mode streaming tidak valid.' });
+      const payload = Buffer.from(JSON.stringify({ meetingId:req.meetingId,speakerId:req.speakerId,
+        language,model,diarize,exp:Math.floor(Date.now()/1000)+60,nonce:randomUUID() })).toString('base64url');
+      const signature = createHmac('sha256',config.qwenLiveSttSecret).update(payload).digest('base64url');
+      return res.set('Cache-Control','no-store').json({url:`${config.qwenLiveSttUrl}?ticket=${payload}.${signature}`});
+    }
     if (!config.liveSttSecret || !config.liveSttUrl) return res.status(503).json({ error: 'WhisperLiveKit belum dikonfigurasi.' });
-    const { language, model } = req.body || {};
     if (!['id', 'en'].includes(language) || model !== 'whisperlivekit-small') return res.status(400).json({ error: 'Bahasa atau model streaming tidak valid.' });
     const payload = Buffer.from(JSON.stringify({ meetingId: req.meetingId, speakerId: req.speakerId,
       language, model, exp: Math.floor(Date.now() / 1000) + 60, nonce: randomUUID() })).toString('base64url');
     const signature = createHmac('sha256', config.liveSttSecret).update(payload).digest('base64url');
     res.set('Cache-Control', 'no-store').json({ url: `${config.liveSttUrl}?ticket=${payload}.${signature}` });
-  });
+  }));
 
   app.get('/api/meetings/:id/transcript', (req, res) => {
     const meeting = store.get(req.meetingId);
@@ -840,6 +854,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   });
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
+    if (req.body?.sttModel === QWEN_LIVE_MODEL) {
+      if (!writable(req,res)) return;
+      let final;
+      try { final = validateLiveFinal(req.body.final,req.speakerId); }
+      catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
+      const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
+      const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,QWEN_LIVE_MODEL);
+      return res.json({success:true,entry});
+    }
     const { text, requestId = randomUUID() } = req.body || {};
     if (!nonEmpty(text, 10000) || !requestIdValid(requestId)) return res.status(400).json({ error: 'Non-empty text and a valid requestId are required' });
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);

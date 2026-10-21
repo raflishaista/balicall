@@ -20,6 +20,12 @@ class QwenEngine:
     def create_state(self,language):
         return self.model.init_streaming_state(language=LANGUAGES[language],chunk_size_sec=2.0)
 
+    def close(self):
+        with self.lock:
+            if self.model is not None:
+                self.model.model.llm_engine.engine_core.shutdown()
+                self.model=None
+
     def feed(self,audio,state):
         with self.lock:
             self.model.streaming_transcribe(audio,state)
