@@ -309,7 +309,8 @@ export async function saveTranscripts(meetingId, roomName, transcripts) {
     const insertQuery = `
       INSERT INTO balicall_transcripts (id, meeting_id, room_name, speaker_id, speaker_name, text, timestamp)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (id) DO NOTHING;
+      ON CONFLICT (id) DO UPDATE SET speaker_name = EXCLUDED.speaker_name
+      WHERE balicall_transcripts.meeting_id = EXCLUDED.meeting_id;
     `;
 
     for (const t of transcripts) {

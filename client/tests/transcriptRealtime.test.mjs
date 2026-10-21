@@ -29,6 +29,15 @@ test('saved notices use reliable LiveKit topic and omit transcript text and toke
   assert.deepEqual(JSON.parse(new TextDecoder().decode(f.sent[0][0])), { v: 1, meetingId: 'meeting-a', entryId: entry.id });
 });
 
+test('speaker rename revisions trigger fresh sync for an existing transcript ID',async t=>{
+ const f=fixture(t);await until(()=>f.received.length===1);
+ f.emit();await until(()=>f.received.length===2);
+ await f.sync.notifySaved({...entry,revision:1});
+ const notice=f.sent.at(-1)[0];assert.equal(decodeTranscriptNotice(notice,'meeting-a'),entry.id+':1');
+ f.emit(notice);await until(()=>f.received.length===3);
+ f.emit(notice);await delay(20);assert.equal(f.received.length,3);
+});
+
 test('peer notices trigger authenticated fetch, never inject payload text, and deduplicate', async t => {
   const f = fixture(t); await until(() => f.received.length === 1);
   f.emit(); await until(() => f.received.length === 2);

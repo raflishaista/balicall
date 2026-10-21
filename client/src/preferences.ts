@@ -69,14 +69,21 @@ export function mediaChoices(preferences: MeetingPreferences, qwenDiarizationRea
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
     sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel, qwenDiarizationReady) && (preferences.sharedRoomMic ?? false),
     liveDiarization: preferences.liveDiarization ?? true,
-    batchDiarization: preferences.batchDiarization ?? true };
+    batchDiarization: preferences.transcriptionModel.startsWith('qwen3-asr-') ? false : preferences.batchDiarization ?? true };
 }
 
 export function supportsSharedMicrophone(model?: string, qwenDiarizationReady = false) {
-  return model === 'qwen3-asr-0.6b-live' ? qwenDiarizationReady : model !== 'qwen3-asr-0.6b';
+  return !model?.startsWith('qwen3-asr-') || qwenDiarizationReady;
 }
 
-export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental dan belum mendukung diarization. Transkrip memakai nama akun peserta, bukan identitas setiap orang di depan satu mikrofon.';
+export function qwenDiarizationForModel(model: string | undefined, health?: {qwenDiarizationReady?: boolean; qwenLiveDiarizationReady?: boolean} | null) {
+  return Boolean(model === 'qwen3-asr-0.6b-live' ? health?.qwenLiveDiarizationReady : health?.qwenDiarizationReady);
+}
+
+export const QWEN_LIVE_DIARIZATION_NOTICE = 'Qwen Live + Nemotron: nama pembicara bisa diedit manual di transkrip. Sesi mikrofon dipertahankan hingga 45 detik saat mute atau koneksi terputus. Setelah sesi berakhir atau worker restart, label perlu diperiksa lagi. Suara bertumpuk tetap ditandai.';
+
+export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental. Layanan diarization belum siap; transkrip memakai nama akun peserta.';
+export const QWEN_DIARIZATION_NOTICE = 'Qwen + Nemotron eksperimental: label pembicara berlaku per potongan audio, bukan nama orang atau identitas tetap sepanjang rapat. Suara bertumpuk belum dipisahkan. Batch pasca-rapat belum tersedia untuk Qwen.';
 
 export function resolveTranscriptionPreferences(preferences: MeetingPreferences, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
   const requested = preferences.transcriptionProvider === 'auto' ? defaultProvider : preferences.transcriptionProvider;
@@ -94,7 +101,8 @@ export function qwenDiarizationForModel(model: string | undefined, health?: {qwe
 export const QWEN_LIVE_DIARIZATION_NOTICE = 'Qwen Live + Nemotron: label pembicara berlaku per mikrofon dan sesi, bukan nama orang. Suara bertumpuk ditandai; label dapat berubah setelah sambung ulang.';
 
 export function transcriptionModelLabel(model: string) {
-  return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization' : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
+  return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization'
+    : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
     : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
     : model === 'small-id' ? 'faster-whisper · Small Indonesian'
       : model === 'small' ? 'faster-whisper · Small' : model;

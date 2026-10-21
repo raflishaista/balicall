@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
-import { isChromiumBrowser, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { isChromiumBrowser, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
@@ -25,7 +25,9 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
   qwenDiarizationReady?: boolean;
 }) {
   const video = useRef<HTMLVideoElement>(null);
-  const sharedMicSupported = supportsSharedMicrophone(transcriptionModel, qwenDiarizationReady);
+  const sharedMicSupported = supportsSharedMicrophone(transcriptionModel, qwenDiarizationReady)
+    && (transcriptionModel !== 'qwen3-asr-0.6b' || transcriptionProvider === 'server');
+  const isQwen = Boolean(transcriptionModel?.startsWith('qwen3-asr-'));
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -105,8 +107,8 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
-    {transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
     {!sharedMicSupported && <p className="prejoin-error" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+    {isQwen && sharedMicSupported && <p role="status">{transcriptionModel === 'qwen3-asr-0.6b-live' ? QWEN_LIVE_DIARIZATION_NOTICE : QWEN_DIARIZATION_NOTICE}</p>}
     {Boolean(sharedMicSupported && media.choices.sharedRoomMic) && (
       <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
@@ -127,8 +129,8 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
           <input
             type="checkbox"
-            checked={media.choices.batchDiarization ?? true}
-            disabled={blocked}
+            checked={!isQwen && (media.choices.batchDiarization ?? true)}
+            disabled={blocked || isQwen}
             onChange={event => {
               media.setBatchDiarization?.(event.target.checked);
               onToggleBatchDiarization?.(event.target.checked);

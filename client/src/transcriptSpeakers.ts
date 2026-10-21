@@ -1,3 +1,4 @@
-export function speakerDisplayLabel(segment: {speaker: string; sessionId?: string}) {
-  return segment.sessionId ? `${segment.speaker} · sesi ${segment.sessionId.slice(0,8)}` : segment.speaker;
+export function speakerDisplayLabel(segment: {speaker: string; sessionId?: string; speakerName?: string}) {
+  const label=segment.speakerName || segment.speaker;
+  return segment.sessionId ? `${label} · sesi ${segment.sessionId.slice(0,8)}` : label;
 }

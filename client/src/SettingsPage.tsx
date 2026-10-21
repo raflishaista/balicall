@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Info, LockKeyhole, Mic, Monitor, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, UserRound, Video, Volume2 } from 'lucide-react';
 import { initials } from './presentation';
-import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE, qwenDiarizationForModel } from './preferences';
+import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, qwenDiarizationForModel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
@@ -127,7 +127,9 @@ function AISettings({ draft, update, transcription, aiStatus }: {
   aiStatus?: ReturnType<typeof useBackendHealth>;
 }) {
   const models = transcription?.models || [];
-  const sharedMicSupported = supportsSharedMicrophone(draft.transcriptionModel || transcription?.defaultModel, qwenDiarizationForModel(draft.transcriptionModel || transcription?.defaultModel, aiStatus?.health));
+  const isQwen = (draft.transcriptionModel || transcription?.defaultModel) === 'qwen3-asr-0.6b';
+  const sharedMicSupported = supportsSharedMicrophone(draft.transcriptionModel || transcription?.defaultModel, qwenDiarizationForModel(draft.transcriptionModel || transcription?.defaultModel, aiStatus?.health))
+    && (!isQwen || draft.transcriptionProvider === 'server');
   const missingModel = Boolean(draft.transcriptionModel && !models.includes(draft.transcriptionModel));
   return <>
     {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
@@ -144,6 +146,8 @@ function AISettings({ draft, update, transcription, aiStatus }: {
       />
       {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
       {!sharedMicSupported && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {isQwen && sharedMicSupported && <p role="status">{QWEN_DIARIZATION_NOTICE}</p>}
+      {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
       {sharedMicSupported && draft.sharedRoomMic && (
         <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
           <PreferenceToggle
@@ -155,7 +159,8 @@ function AISettings({ draft, update, transcription, aiStatus }: {
           <PreferenceToggle
             label="Diarisasi Batch Pasca-Rapat (Post-Meeting)"
             description="Jalankan diarization penuh pada rekaman kontinu saat rapat berakhir untuk memastikan penomoran pembicara konsisten pada notulen."
-            checked={draft.batchDiarization ?? true}
+            checked={!isQwen && (draft.batchDiarization ?? true)}
+            disabled={isQwen}
             onChange={batchDiarization => update({ batchDiarization })}
           />
         </div>

@@ -57,6 +57,8 @@ export function loadConfig(env = process.env) {
     recordingDiarizers: (env.RECORDING_DIARIZERS || '').split(',').map(value => value.trim()).filter(Boolean),
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
+    // Operator opt-in only. Keep UI locked until real diarization QC passes.
+    qwenDiarizationEnabled: env.QWEN_DIARIZATION_ENABLED === 'true',
     qwenSttKey: env.QWEN_STT_API_KEY || '',
     qwenSttTimeoutMs: Number(env.QWEN_STT_TIMEOUT_MS || 60000),
     databaseUrl: env.DATABASE_URL || '',

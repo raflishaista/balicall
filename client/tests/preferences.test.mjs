@@ -72,3 +72,8 @@ test('Qwen has an experimental label and suspends shared mic without erasing the
   assert.equal(preferences.sharedRoomMic, true);
   assert.equal(mediaChoices({ ...preferences, transcriptionModel: 'small' }).sharedRoomMic, true);
 });
+
+test('saved retired batch Qwen falls back to default without removing live preferences', () => {
+  assert.equal(normalizePreferences({ transcriptionModel: 'qwen3-asr-0.6b' }).transcriptionModel, '');
+  assert.equal(normalizePreferences({ transcriptionModel: 'qwen3-asr-0.6b-live', sharedRoomMic: true }).transcriptionModel, 'qwen3-asr-0.6b-live');
+});

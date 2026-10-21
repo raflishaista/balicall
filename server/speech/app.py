@@ -33,6 +33,7 @@ MODEL = os.getenv("WHISPER_MODEL", "small")
 DEVICE = os.getenv("SPEECH_DEVICE", "cpu")
 API_KEY = os.getenv("SPEECH_API_KEY", "")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+DIARIZATION_ONLY = os.getenv("SPEECH_DIARIZATION_ONLY") == "true"
 lock = Lock()
 SOURCES = model_sources(MODEL, os.getenv("WHISPER_SMALL_ID_PATH", ""))
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
@@ -47,8 +48,9 @@ async def lifespan(app):
         cpu_threads=CPU_THREADS,
         compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8" if DEVICE == "cpu" else "float16"),
     ), capacity=int(os.getenv("WHISPER_MODEL_CACHE_SIZE", "1")))
-    app.state.models.get(MODEL)
-    if os.getenv("WHISPER_PRELOAD_MODELS") == "true":
+    if not DIARIZATION_ONLY:
+        app.state.models.get(MODEL)
+    if not DIARIZATION_ONLY and os.getenv("WHISPER_PRELOAD_MODELS") == "true":
         for alias in SOURCES:
             app.state.models.get(alias)
     app.state.diarizer = None
@@ -65,31 +67,53 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"model": MODEL, "models": list(SOURCES), "diarization": app.state.diarizer is not None,
+    return {"model": app.state.models.active, "models": list(SOURCES), "diarization": app.state.diarizer is not None,
             "diarizers": [name for name, ok in (("pyannote", app.state.diarizer is not None),
                                                  ("nemotron", bool(NEMOTRON_URL))) if ok]}
+
+
+def decode_waveform(payload):
+    try:
+        audio = decode_audio(io.BytesIO(payload), sampling_rate=16000)
+    except Exception as error:
+        raise HTTPException(400, "Audio cannot be decoded") from error
+    if len(audio) > 16000 * 60:
+        raise HTTPException(413, "Maximum audio duration is 60 seconds")
+    return audio
+
+
+def transcribe_waveform(audio, language, diarize, whisper):
+    decoded, _ = whisper.transcribe(
+        audio, language=language, vad_filter=True, word_timestamps=diarize,
+        condition_on_previous_text=False, beam_size=BEAM_SIZE, best_of=1,
+    )
+    return list(decoded)
+
+
+def diarize_waveform(audio):
+    if app.state.diarizer is None:
+        raise HTTPException(503, "Diarization model is not available")
+    try:
+        output = app.state.diarizer({
+            "waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000,
+        })
+        return [(turn.start, turn.end, speaker) for turn, speaker in output.exclusive_speaker_diarization]
+    except Exception as error:
+        raise HTTPException(502, "Diarization inference failed") from error
+
 
 def infer(payload, language, diarize, model):
     # Serialize inference to bound model memory; decode once for both models.
     requested_at = perf_counter()
     with lock:
         acquired_at = perf_counter()
-        try:
-            audio = decode_audio(io.BytesIO(payload), sampling_rate=16000)
-        except Exception as error:
-            raise HTTPException(400, "Audio cannot be decoded") from error
-        if len(audio) > 16000 * 60:
-            raise HTTPException(413, "Maximum audio duration is 60 seconds")
+        audio = decode_waveform(payload)
         if not len(audio):
             return {"text": "", "segments": []}
         load_at = perf_counter()
         whisper = app.state.models.get(model)
         inference_at = perf_counter()
-        decoded, _ = whisper.transcribe(
-            audio, language=language, vad_filter=True, word_timestamps=diarize,
-            condition_on_previous_text=False, beam_size=BEAM_SIZE, best_of=1,
-        )
-        decoded = list(decoded)
+        decoded = transcribe_waveform(audio, language, diarize, whisper)
         logger.info("STT model=%s audio_s=%.2f wait_ms=%.0f load_ms=%.0f inference_ms=%.0f total_ms=%.0f",
                     model, len(audio) / 16000, (acquired_at-requested_at)*1000,
                     (inference_at-load_at)*1000, (perf_counter()-inference_at)*1000,
@@ -98,14 +122,29 @@ def infer(payload, language, diarize, model):
             return {"text": " ".join(s.text.strip() for s in decoded).strip()}
         if not decoded:
             return {"text": "", "segments": []}
-        output = app.state.diarizer({
-            "waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000,
-        })
-        turns = [(turn.start, turn.end, speaker)
-                 for turn, speaker in output.exclusive_speaker_diarization]
+        turns = diarize_waveform(audio)
         words = [(w.start, w.end, w.word) for s in decoded for w in (s.words or [])]
         segments = align_words(words, turns)
         return {"text": " ".join(s["text"] for s in segments), "segments": segments}
+
+
+def infer_diarization(payload):
+    with lock:
+        audio = decode_waveform(payload)
+        turns = diarize_waveform(audio) if len(audio) else []
+        return {"segments": [{"speaker": speaker, "start": start, "end": end} for start, end, speaker in turns]}
+
+
+@app.post("/v1/audio/diarizations")
+async def diarize_audio(file: UploadFile = File(...), authorization: str = Header("")):
+    if API_KEY and not secrets.compare_digest(authorization, f"Bearer {API_KEY}"):
+        raise HTTPException(401, "Invalid speech service credentials")
+    if app.state.diarizer is None:
+        raise HTTPException(503, "Diarization model is not available")
+    payload = await file.read(5 * 1024 * 1024 + 1)
+    if not payload or len(payload) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Audio must contain 1 byte to 5 MB")
+    return await run_in_threadpool(infer_diarization, payload)
 
 
 @app.post("/v1/audio/transcriptions")

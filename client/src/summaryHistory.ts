@@ -1,7 +1,7 @@
 import { accountKey, withAccountScope } from './accountScope.ts';
 export interface TranscriptEntry {
-  id: string; speakerId: string; speakerName: string; text: string; timestamp: string;
-  segments?: { text: string; speaker: string; start: number; end: number; sourceId?: string; sessionId?: string; attribution?: string }[];
+  id: string; speakerId: string; speakerName: string; text: string; timestamp: string; revision?: number;
+  segments?: { text: string; speaker: string; start: number; end: number; sourceId?: string; sessionId?: string; attribution?: string; speakerName?: string }[];
 }
 export interface MeetingSummary {
   title: string; executiveSummary: string; keyDiscussionPoints: string[]; decisions: string[];

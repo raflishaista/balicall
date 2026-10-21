@@ -15,7 +15,8 @@ import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
 import { attachRecordingUploads } from './recordingUploads.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
-import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal } from './qwenLiveConfig.js';
+import { qwenDiarizationReady } from './qwenCapabilities.js';
+import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
 import {
   isDbConnected,
   saveMeeting,
@@ -130,6 +131,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       sttProvider: config.sttProvider,
       sttConfigured: Boolean(config.sttModel && (config.sttModel === QWEN_STT_MODEL ? config.qwenSttBaseUrl : config.sttBaseUrl)),
       sttDiarization: Boolean(config.sttDiarization),
+      qwenDiarizationReady: await qwenDiarizationReady(config, fetchImpl),
       qwenLiveReady: qwenLive.ready,
       qwenLiveDiarizationReady: qwenLive.diarization,
       sttModel: config.sttModel,
@@ -791,13 +793,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   app.post('/api/meetings/:id/live-session', asyncRoute(async (req, res) => {
     if (!writable(req, res)) return;
-    const { language, model, diarize = false } = req.body || {};
+    const { language, model, diarize = false, streamId } = req.body || {};
     if (model === QWEN_LIVE_MODEL) {
       const capabilities = await qwenLiveCapabilities(config, fetchImpl);
       if (!capabilities.ready || (diarize && !capabilities.diarization)) return res.status(503).json({ error: 'Qwen streaming atau diarization belum siap.' });
       if (!['id','en'].includes(language) || typeof diarize !== 'boolean') return res.status(400).json({ error: 'Bahasa atau mode streaming tidak valid.' });
+      if (streamId !== undefined && (typeof streamId !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(streamId))) return res.status(400).json({error:'Sesi mikrofon tidak valid.'});
       const payload = Buffer.from(JSON.stringify({ meetingId:req.meetingId,speakerId:req.speakerId,
-        language,model,diarize,exp:Math.floor(Date.now()/1000)+60,nonce:randomUUID() })).toString('base64url');
+        language,model,diarize,...(streamId?{streamId}:{}),exp:(capabilities.workerTime ?? Math.floor(Date.now()/1000))+60,nonce:randomUUID() })).toString('base64url');
       const signature = createHmac('sha256',config.qwenLiveSttSecret).update(payload).digest('base64url');
       return res.set('Cache-Control','no-store').json({url:`${config.qwenLiveSttUrl}?ticket=${payload}.${signature}`});
     }
@@ -853,12 +856,43 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     });
   });
 
+  app.post('/api/meetings/:id/speaker-name', asyncRoute(async (req,res)=>{
+    if (!writable(req,res)) return;
+    const meeting=store.get(req.meetingId);
+    if (inFlightSummarize.has(meeting.id)) return res.status(409).json({error:'Tunggu proses notulen selesai sebelum mengganti nama.'});
+    const {sourceId,sessionId,speaker,name}=req.body || {};
+    if (![sourceId,sessionId,speaker].every(value=>typeof value==='string' && value.length>0 && value.length<=100)
+      || typeof name!=='string' || name.length>80 || /[\u0000-\u001f\u007f]/.test(name)) return res.status(400).json({error:'Nama pembicara tidak valid (maksimal 80 karakter).'});
+    const manager=req.speakerId===meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
+    if (req.speakerId!==sourceId && !manager) return res.status(403).json({error:'Hanya pemilik mikrofon atau host yang dapat mengubah nama pembicara.'});
+    const key=speakerAliasKey({sourceId,sessionId,speaker});
+    const matches=entry=>entry.sttModel===QWEN_LIVE_MODEL && entry.segments?.some(segment=>speakerAliasKey(segment)===key && segment.attribution==='assigned');
+    if (!meeting.transcripts.some(matches)) return res.status(404).json({error:'Pembicara yang dapat diberi nama tidak ditemukan.'});
+    const updatedEntries=store.transact(()=>{
+      meeting.speakerAliases ||= {};
+      if (name.trim()) meeting.speakerAliases[key]=name.trim();else delete meeting.speakerAliases[key];
+      meeting.summary=null;
+      return meeting.transcripts.filter(matches).map(entry=>{
+        entry.segments=entry.segments.map(segment=>{
+          if (speakerAliasKey(segment)!==key) return segment;
+          const next={...segment};delete next.speakerName;
+          return name.trim()?{...next,speakerName:name.trim()}:next;
+        });
+        entry.revision=(entry.revision || 0)+1;
+        return entry;
+      });
+    });
+    await saveTranscripts(meeting.id,meeting.roomName,meeting.transcripts);
+    res.json({success:true,transcripts:meeting.transcripts,updatedEntries});
+  }));
+
   app.post('/api/meetings/:id/transcript', (req, res) => {
     if (req.body?.sttModel === QWEN_LIVE_MODEL) {
       if (!writable(req,res)) return;
       let final;
       try { final = validateLiveFinal(req.body.final,req.speakerId); }
       catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
+      final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
       const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
       const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,QWEN_LIVE_MODEL);
       return res.json({success:true,entry});
@@ -1105,6 +1139,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     if (!meeting) return res.status(404).json({ error: 'Rapat tidak ditemukan.' });
+    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
+    if (hasLive()) return res.status(409).json({ error: 'Transkrip Qwen Live tidak dapat diganti dengan batch audio yang hanya memuat sebagian rapat.' });
 
     let audioBuffers = [];
     let mimeType = 'audio/webm';
@@ -1124,6 +1160,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const language = req.get('X-Speech-Language') || 'id';
 
     const result = await batchDiarizeAudio(audioBuffers, mimeType, language, config, fetchImpl);
+    if (hasLive()) return res.status(409).json({ error: 'Transkrip Qwen Live masuk saat batch berjalan; transkrip rapat dipertahankan.' });
     if (!result.segments?.length) {
       return res.status(422).json({ error: 'Diarisasi pasca-rapat tidak menghasilkan segmen ucapan.' });
     }
@@ -1210,13 +1247,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     const shouldBatch = req.query.batchDiarize === 'true' || req.body?.batchDiarize === true;
+    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
 
-    if (shouldBatch && meetingAudios.get(req.meetingId)?.length) {
+    if (shouldBatch && !hasLive() && meetingAudios.get(req.meetingId)?.length) {
       try {
         const stored = meetingAudios.get(req.meetingId);
         const language = req.get('X-Speech-Language') || 'id';
         const batchResult = await batchDiarizeAudio(stored.map(s => s.buffer), stored[0]?.mimeType || 'audio/webm', language, config, fetchImpl);
-        if (batchResult.segments?.length) {
+        if (batchResult.segments?.length && !hasLive()) {
           const host = meeting.participants.get(meeting.hostId) || { employeeName: 'Ruang Rapat' };
           const newTranscripts = batchResult.segments.map(seg => ({
             id: randomUUID(),

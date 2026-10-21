@@ -1,8 +1,17 @@
 export const QWEN_LIVE_MODEL='qwen3-asr-0.6b-live';
 
 export function attributedSpeakerName(accountName,segment){
- const label=segment.sessionId?`${segment.speaker} · sesi ${segment.sessionId.slice(0,8)}`:segment.speaker;
+ const name=segment.speakerName || segment.speaker;
+ const label=segment.sessionId?`${name} · sesi ${segment.sessionId.slice(0,8)}`:name;
  return `${accountName||'Anonymous'} (${label})`;
+}
+
+export const speakerAliasKey=segment=>JSON.stringify([segment.sourceId,segment.sessionId,segment.speaker]);
+export function applySpeakerAliases(meeting,segments){
+ return segments.map(segment=>{
+  const name=segment.attribution==='assigned' && meeting.speakerAliases?.[speakerAliasKey(segment)];
+  return name?{...segment,speakerName:name}:segment;
+ });
 }
 
 export async function qwenLiveCapabilities(config,fetchImpl=fetch){
@@ -12,7 +21,10 @@ export async function qwenLiveCapabilities(config,fetchImpl=fetch){
   if(!response.ok)return {ready:false,diarization:false};
   const data=await response.json();
   const ready=data.ready===true&&data.streaming===true&&data.native===true&&data.model===QWEN_LIVE_MODEL;
-  return {ready,diarization:ready&&data.diarization===true};
+  // Use the configured worker's HTTP clock for its short-lived tickets.
+  // Expiry and single-use enforcement remain unchanged on the worker.
+  const workerTime=Date.parse(response.headers.get('date'))/1000;
+  return {ready,diarization:ready&&data.diarization===true,...(Number.isFinite(workerTime)?{workerTime:Math.floor(workerTime)}:{})};
  }catch{return {ready:false,diarization:false};}
 }
 

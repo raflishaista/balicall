@@ -82,3 +82,33 @@ test('unexpected disconnect exposes an error and blocks successful finalization'
   await assert.rejects(live.finish(), /terputus/);
   assert.equal(errors.length, 1);
 });
+
+test('Qwen structured finals preserve attribution and warnings do not stop audio',async t=>{
+ const env=environment(t), finals=[], warnings=[];
+ let ready;const listening=new Promise(resolve=>{ready=resolve;});
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/qwen-live-stt/asr'}),onFinal:value=>finals.push(value),onInterim(){},onError(error){throw Error(error);},onWarning:message=>warnings.push(message),onReady:value=>{if(value)ready();}});
+ await listening;
+ const final={segmentId:'session-1',sessionId:'session',sourceId:'owner',text:'Halo',speakerLabel:'Pembicara 1',start:0,end:1,attribution:'assigned'};
+ env.sockets[0].message({type:'warning',error:'Atribusi belum tersedia'});
+ env.sockets[0].message({type:'transcript',final:[final],interim:''});
+ assert.deepEqual(finals,[final]);assert.deepEqual(warnings,['Atribusi belum tersedia']);
+ const finish=live.finish();await new Promise(resolve=>setImmediate(resolve));env.sockets[0].message({type:'ready_to_stop'});await finish;
+});
+
+test('resumable Qwen pause flushes capture and requests pause rather than closing speaker state',async t=>{
+ const env=environment(t);let ready,config;
+ const listening=new Promise(resolve=>{ready=resolve;});
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/qwen-live-stt/asr'}),onFinal(){},onInterim(){},onError(){},onSession:value=>{config=value;},onReady:value=>{if(value)ready();}});
+ await listening;
+ env.sockets[0].message({type:'config',sessionId:'stable-session',resumed:true,resumeGraceSeconds:45});
+ assert.equal(config.sessionId,'stable-session');
+ const pause=live.finish({pause:true});await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(JSON.parse(env.sockets[0].sent.at(-1)),{type:'pause'});
+ env.sockets[0].message({type:'ready_to_stop'});await pause;
+ assert.equal(env.contexts[0].state,'closed');
+ const end=live.finish();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(env.sockets.length,2,'permanent stop must release the retained slot without capturing a microphone');
+ assert.equal(env.sockets[1].url.searchParams.get('end'),'1');
+ env.sockets[1].message({type:'ready_to_stop'});await end;
+ assert.equal(env.contexts.length,1);
+});
