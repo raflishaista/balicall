@@ -29,9 +29,15 @@ services:
     container_name: balicall-egress
     restart: unless-stopped
     environment:
-      EGRESS_CONFIG_FILE: /etc/egress.yaml
+      EGRESS_CONFIG_BODY: |
+        log_level: debug
+        api_key: devkey
+        api_secret: c35dce5eb68185c1ba3b140ab408da916a75c0d297f42c96cbbe5aa362f7b082
+        ws_url: ws://livekit:7880
+        insecure: true
+        redis:
+          address: redis:6379
     volumes:
-      - ./egress.yaml:/etc/egress.yaml:ro
       - ./recordings:/out
     depends_on:
       - redis

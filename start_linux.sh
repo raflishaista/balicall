@@ -97,20 +97,20 @@ else
     sleep 2
 fi
 
-# Start Service 2: Whisper STT & Diarization Server (Port 8000)
-if is_port_in_use 8000; then
-    echo "[2/4] Port 8000 is already active [Whisper STT Server]."
+# Start Service 2: Whisper STT & Diarization Server (Port 8001)
+if is_port_in_use 8001; then
+    echo "[2/4] Port 8001 is already active [Whisper STT Server]."
 elif [ -n "$WHISPER_PYTHON" ] && [ -f "scripts/whisper_server.py" ]; then
-    echo "[2/4] Starting Local Whisper STT + Diarization on Port 8000..."
+    echo "[2/4] Starting Local Whisper STT + Diarization on Port 8001..."
     DIAR_ARGS=()
     if [ -d "models/nemotron3-diarization" ]; then
         DIAR_ARGS=(--diarization-model "models/nemotron3-diarization")
     fi
-    "$WHISPER_PYTHON" scripts/whisper_server.py --model "small" "${DIAR_ARGS[@]}" --host 127.0.0.1 --port 8000 < /dev/null &
+    "$WHISPER_PYTHON" scripts/whisper_server.py --model "small" "${DIAR_ARGS[@]}" --host 127.0.0.1 --port 8001 < /dev/null &
     PIDS+=($!)
     sleep 2
 else
-    echo "[2/4] Whisper Python runtime not configured; skipping local STT worker (Port 8000)."
+    echo "[2/4] Whisper Python runtime not configured; skipping local STT worker (Port 8001)."
     echo "      (Set up server/speech/.venv or rely on browser/cloud STT)"
 fi
 
@@ -139,7 +139,7 @@ if [ "$MODE" = "prod" ] || [ "$MODE" = "production" ] || [ "$MODE" = "deploy" ];
     echo "  ✅ BaliCall production services running!"
     echo "  Web Workspace: http://127.0.0.1:3001"
     echo "  LiveKit SFU:   ws://127.0.0.1:7880"
-    [ -n "$WHISPER_PYTHON" ] && echo "  Whisper STT:   http://127.0.0.1:8000"
+    [ -n "$WHISPER_PYTHON" ] && echo "  Whisper STT:   http://127.0.0.1:8001"
     echo "  Press Ctrl+C to stop all services."
     echo "========================================================"
 
@@ -174,7 +174,7 @@ else
     echo "  Web Client:  http://127.0.0.1:5187"
     echo "  Backend API: http://127.0.0.1:3001"
     echo "  LiveKit SFU: ws://127.0.0.1:7880"
-    [ -n "$WHISPER_PYTHON" ] && echo "  Whisper STT: http://127.0.0.1:8000"
+    [ -n "$WHISPER_PYTHON" ] && echo "  Whisper STT: http://127.0.0.1:8001"
     echo "  Press Ctrl+C to stop all services."
     echo "========================================================"
 fi

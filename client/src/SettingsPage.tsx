@@ -144,7 +144,6 @@ function AISettings({ draft, update, transcription, aiStatus }: {
         disabled={!sharedMicSupported}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
-      {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
       {!sharedMicSupported && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
       {isQwen && sharedMicSupported && <p role="status">{QWEN_DIARIZATION_NOTICE}</p>}
       {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}

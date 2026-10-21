@@ -15,6 +15,10 @@ import io
 import os
 import sys
 import secrets
+import tempfile
+import threading
+import time
+import uuid
 from threading import Lock
 from typing import Optional, List
 
@@ -84,11 +88,13 @@ def normalize_model_name(name: str) -> str:
     return raw
 
 
-def decode_audio_to_numpy(audio_bytes: bytes, target_sr: int = 16000) -> np.ndarray:
+def decode_audio_to_numpy(audio_source, target_sr: int = 16000) -> np.ndarray:
     """Decodes any audio format (WebM, Ogg Opus, WAV, MP4, MP3) to 16kHz mono float32."""
     try:
-        buffer = io.BytesIO(audio_bytes)
-        container = av.open(buffer)
+        if isinstance(audio_source, (bytes, bytearray)):
+            container = av.open(io.BytesIO(audio_source))
+        else:
+            container = av.open(audio_source)
         resampler = av.AudioResampler(format="fltp", layout="mono", rate=target_sr)
 
         frames = []
@@ -456,6 +462,164 @@ async def batch_diarize(
     except Exception as e:
         print(f"[ERROR] Batch diarization failed: {e}")
         raise HTTPException(status_code=500, detail=f"Batch diarization error: {e}")
+
+
+LONG_JOBS = {}
+LONG_JOB_TTL_SECONDS = int(os.getenv("LONG_JOB_TTL_SECONDS", "7200"))
+
+
+def purge_jobs():
+    now = time.time()
+    for job_id in [k for k, j in LONG_JOBS.items()
+                   if j.get("finished_at") and now - j["finished_at"] > LONG_JOB_TTL_SECONDS]:
+        LONG_JOBS.pop(job_id, None)
+
+
+def run_transcription_job(job_id: str, file_path: str, language: Optional[str], do_diarize: bool, threshold: Optional[float]):
+    job = LONG_JOBS.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    try:
+        with inference_lock:
+            waveform = decode_audio_to_numpy(file_path, target_sr=16000)
+            if not waveform.size:
+                raise ValueError("Audio file is empty or could not be decoded.")
+
+            duration_sec = round(len(waveform) / 16000.0, 2)
+            print(f"[*] Job {job_id}: Transcribing audio duration {duration_sec}s ({duration_sec/60:.2f} mins)...")
+
+            segments, info = whisper_model.transcribe(
+                waveform,
+                language=language,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=400),
+                beam_size=1,
+                word_timestamps=True,
+            )
+            segments = list(segments)
+            full_text = " ".join(seg.text.strip() for seg in segments).strip()
+
+            aligned = []
+            if do_diarize and diar_model is not None:
+                print(f"[*] Job {job_id}: Running Nemotron-3 diarization...")
+                turns = run_diarization(waveform, sr=16000, threshold=threshold)
+                words = []
+                for seg in segments:
+                    if seg.words:
+                        for w in seg.words:
+                            w_text = w.word.strip()
+                            if w_text:
+                                words.append((w.start, w.end, w_text))
+                    elif seg.text.strip():
+                        words.append((seg.start, seg.end, seg.text.strip()))
+                aligned = align_words(words, turns, default_speaker="Pembicara 1", carry_previous_speaker=True)
+            elif segments:
+                aligned = [
+                    {
+                        "speaker": "Pembicara 1",
+                        "start": round(float(seg.start), 2),
+                        "end": round(float(seg.end), 2),
+                        "text": seg.text.strip(),
+                    }
+                    for seg in segments if seg.text.strip()
+                ]
+
+            if not aligned and full_text:
+                aligned = [{
+                    "speaker": "Pembicara 1",
+                    "start": 0.0,
+                    "end": duration_sec,
+                    "text": full_text,
+                }]
+
+            job["result"] = {
+                "text": full_text,
+                "segments": aligned,
+                "duration": duration_sec,
+            }
+            job["status"] = "done"
+            print(f"[OK] Job {job_id} complete: {len(aligned)} dialogue turns across {duration_sec:.1f}s.")
+    except Exception as e:
+        print(f"[ERROR] Job {job_id} failed: {e}")
+        job["status"] = "failed"
+        job["error"] = str(e)
+    finally:
+        job["finished_at"] = time.time()
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except OSError:
+            pass
+
+
+@app.post("/audio/transcriptions/jobs", status_code=202)
+@app.post("/v1/audio/transcriptions/jobs", status_code=202)
+async def submit_transcription_job(
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+    language: Optional[str] = Form("id"),
+    diarize: Optional[str] = Form(None),
+    diarizer: Optional[str] = Form(None),
+    diarization_threshold: Optional[float] = Form(None),
+    authorization: str = Header(""),
+):
+    authorize(authorization)
+    if whisper_model is None:
+        raise HTTPException(503, "Whisper model is not available.")
+
+    do_diarize = str(diarize).strip().lower() in ("true", "1", "yes") if diarize is not None else False
+    if do_diarize and diar_model is None:
+        print("[!] Note: Diarization requested but diar_model not available, continuing with standard transcription")
+        do_diarize = False
+
+    lang = language.lower().split("-")[0].split("_")[0] if language else None
+    lang = {"indonesian": "id", "english": "en"}.get(lang, lang)
+
+    purge_jobs()
+
+    fd, path = tempfile.mkstemp(suffix=".upload")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                out.write(chunk)
+    except Exception as e:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+        raise HTTPException(500, f"Failed to save uploaded file: {e}")
+
+    job_id = uuid.uuid4().hex
+    LONG_JOBS[job_id] = {
+        "status": "queued",
+        "error": None,
+        "result": None,
+        "finished_at": None,
+    }
+
+    threading.Thread(
+        target=run_transcription_job,
+        args=(job_id, path, lang, do_diarize, diarization_threshold),
+        daemon=True,
+    ).start()
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/audio/transcriptions/jobs/{job_id}")
+@app.get("/v1/audio/transcriptions/jobs/{job_id}")
+def get_transcription_job(job_id: str, authorization: str = Header("")):
+    authorize(authorization)
+    job = LONG_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    return {
+        "status": job["status"],
+        "error": job["error"],
+        "result": job["result"] if job["status"] == "done" else None,
+    }
 
 
 def main():
