@@ -1,4 +1,5 @@
 import type { JoinMediaChoices } from './usePreJoinMedia';
+import { SEA_LIVE_MODEL } from './modelSelection.ts';
 
 export interface MeetingPreferences {
   microphoneEnabled: boolean;
@@ -69,15 +70,16 @@ export function mediaChoices(preferences: MeetingPreferences, qwenDiarizationRea
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
     sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel, qwenDiarizationReady) && (preferences.sharedRoomMic ?? false),
     liveDiarization: preferences.liveDiarization ?? true,
-    batchDiarization: preferences.transcriptionModel.startsWith('qwen3-asr-') ? false : preferences.batchDiarization ?? true };
+    batchDiarization: preferences.transcriptionModel.startsWith('qwen3-asr-') || [SEA_LIVE_MODEL].includes(preferences.transcriptionModel) ? false : preferences.batchDiarization ?? true };
 }
 
 export function supportsSharedMicrophone(model?: string, qwenDiarizationReady = false) {
+  if (model === SEA_LIVE_MODEL) return qwenDiarizationReady;
   return !model?.startsWith('qwen3-asr-') || qwenDiarizationReady;
 }
 
-export function qwenDiarizationForModel(model: string | undefined, health?: {qwenDiarizationReady?: boolean; qwenLiveDiarizationReady?: boolean} | null) {
-  return Boolean(model === 'qwen3-asr-0.6b-live' ? health?.qwenLiveDiarizationReady : health?.qwenDiarizationReady);
+export function qwenDiarizationForModel(model: string | undefined, health?: {qwenDiarizationReady?: boolean; qwenLiveDiarizationReady?: boolean; seaLiveDiarizationReady?: boolean} | null) {
+  return Boolean(model === SEA_LIVE_MODEL ? health?.seaLiveDiarizationReady : model === 'qwen3-asr-0.6b-live' ? health?.qwenLiveDiarizationReady : health?.qwenDiarizationReady);
 }
 
 export const QWEN_LIVE_DIARIZATION_NOTICE = 'Qwen Live + Nemotron: nama pembicara bisa diedit manual di transkrip. Sesi mikrofon dipertahankan hingga 45 detik saat mute atau koneksi terputus. Setelah sesi berakhir atau worker restart, label perlu diperiksa lagi. Suara bertumpuk tetap ditandai.';
@@ -98,6 +100,7 @@ export function resolveTranscriptionPreferences(preferences: MeetingPreferences,
 }
 
 export function transcriptionModelLabel(model: string) {
+  if (model === SEA_LIVE_MODEL) return 'SEA-ASR-ID · Live (Indonesia) · Pilot';
   return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization'
     : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
     : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'

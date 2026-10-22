@@ -9,6 +9,7 @@ export interface BackendHealth {
   sttModel?: string; sttModels?: string[]; sttDiarization?: boolean;
   qwenDiarizationReady?: boolean;
   qwenLiveReady?: boolean; qwenLiveDiarizationReady?: boolean;
+  seaLivePilotReady?: boolean; seaLiveDiarizationReady?: boolean;
   database?: { connected: boolean; configured: boolean };
   outboundWebhookConfigured?: boolean;
 }

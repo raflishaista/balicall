@@ -1,4 +1,5 @@
 export interface StreamingFinal {
+  sessionProof?: string;
   segmentId: string; sessionId: string; sourceId: string; text: string;
   start: number; end: number; speakerLabel: string; attribution: 'assigned' | 'unknown' | 'overlap';
 }

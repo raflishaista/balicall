@@ -1,9 +1,10 @@
+import { SEA_LIVE_MODEL } from './seaLiveConfig.js';
 import { fileURLToPath } from 'node:url';
 
 export const QWEN_STT_MODEL = 'qwen3-asr-0.6b';
 export function availableSttModels(config) {
   const models = config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : []);
-  return [...new Set([...models.filter(model => model !== QWEN_STT_MODEL || config.qwenSttBaseUrl),
+  return [...new Set([...models.filter(model => model !== SEA_LIVE_MODEL && (model !== QWEN_STT_MODEL || config.qwenSttBaseUrl)),
     ...(config.qwenSttBaseUrl ? [QWEN_STT_MODEL] : [])])];
 }
 
@@ -40,6 +41,11 @@ export function loadConfig(env = process.env) {
     qwenLiveSttUrl: env.QWEN_LIVE_STT_URL || '',
     qwenLiveSttSecret: env.QWEN_LIVE_STT_SECRET || '',
     qwenLiveHealthUrl: env.QWEN_LIVE_HEALTH_URL || 'http://127.0.0.1:8008/health',
+    seaLiveSttUrl: env.SEA_LIVE_STT_URL || '',
+    seaLiveSttSecret: env.SEA_LIVE_STT_SECRET || '',
+    seaLiveHealthUrl: env.SEA_LIVE_HEALTH_URL || 'http://127.0.0.1:8010/health',
+    seaLiveUpstreamUrl: env.SEA_LIVE_UPSTREAM_URL || 'ws://127.0.0.1:8010/asr',
+    seaLivePilotEnabled: env.SEA_LIVE_PILOT_ENABLED === 'true',
     sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
 
@@ -80,6 +86,12 @@ export function loadConfig(env = process.env) {
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
   if (Boolean(config.qwenLiveSttUrl) !== Boolean(config.qwenLiveSttSecret) || (config.qwenLiveSttSecret && config.qwenLiveSttSecret.length < 32)) throw new Error('Qwen streaming requires QWEN_LIVE_STT_URL and a secret of at least 32 characters');
   if(config.qwenLiveSttUrl&&!/^\/[\w/-]+$/.test(config.qwenLiveSttUrl))throw new Error('Qwen streaming URL must be a same-origin path');
+  if (Boolean(config.seaLiveSttUrl) !== Boolean(config.seaLiveSttSecret) || (config.seaLiveSttSecret && config.seaLiveSttSecret.length < 32)) throw new Error('SEA streaming requires paired URL and secret of at least 32 characters');
+  if (config.seaLiveSttUrl && !/^\/[\w/-]+$/.test(config.seaLiveSttUrl)) throw new Error('SEA streaming URL must be a same-origin path');
+  if (config.seaLiveSttUrl && config.seaLiveSttUrl !== '/sea-live-stt/asr') throw new Error('SEA streaming must use the production WebSocket proxy route');
+  const seaUpstream = new URL(config.seaLiveUpstreamUrl);
+  if (!['ws:', 'wss:'].includes(seaUpstream.protocol) || seaUpstream.username || seaUpstream.password || seaUpstream.search || seaUpstream.hash || seaUpstream.pathname !== '/asr') throw new Error('SEA upstream must be a ws/wss /asr URL without credentials or query');
+  if (config.sttModel === SEA_LIVE_MODEL) throw new Error('SEA is an optional live model; retain a batch STT_MODEL default');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs', 'qwenSttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }

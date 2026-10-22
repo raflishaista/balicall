@@ -1,5 +1,7 @@
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { transcriptionModelLabel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { TranscriptionModelOptions } from './TranscriptionModelOptions';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, SEA_LIVE_DIARIZATION_NOTICE } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
 import { SpeakerNameEditor } from './SpeakerNameEditor';
 import type { SpeakerNameChange } from './SpeakerNameEditor';
@@ -751,7 +753,7 @@ export function MeetingRoom({
                   <select
                     id="stt-lang-select"
                     value={speechLanguage}
-                    disabled={busy}
+                    disabled={busy || sttModel === SEA_LIVE_MODEL}
                     onChange={event =>
                       setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')
                     }
@@ -782,6 +784,7 @@ export function MeetingRoom({
                   <label htmlFor="stt-model-select">Model</label>
                   {sttModel === 'qwen3-asr-0.6b' && <p role="status">{qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
                   {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
+                  {sttModel === SEA_LIVE_MODEL && <p role="status">{SEA_LIVE_NOTICE} {SEA_LIVE_DIARIZATION_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}
@@ -796,17 +799,13 @@ export function MeetingRoom({
                     onChange={event => void onChangeSttModel(event.target.value)}
                   >
                     {!sttModels.length && <option value="">Belum tersedia</option>}
-                    {sttModels.map(model => (
-                      <option key={model} value={model}>
-                        {transcriptionModelLabel(model)}
-                      </option>
-                    ))}
+                    <TranscriptionModelOptions models={sttModels} />
                   </select>
                 </div>
 
                 {sttProvider === 'browser' && (
                   <p className="transcription-hint-text" role="status">
-                    Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.
+                    Pilih layanan Server untuk memilih model transkripsi yang tersedia.
                   </p>
                 )}
                 {modelPending && (
@@ -863,7 +862,7 @@ export function MeetingRoom({
                         data-speaker={segment.speaker}
                         title={`${entry.speakerName} · ${segment.speaker}`}
                       >
-                        {segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
+                        {segment.attribution === 'participant' ? initials(entry.speakerName) : segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
                       </span>
                       <div>
                         <strong className="transcript-username">
@@ -874,7 +873,7 @@ export function MeetingRoom({
                             className="transcript-diarized-speaker"
                             data-speaker={segment.speaker}
                           >
-                            {speakerDisplayLabel(segment)}
+                            {speakerDisplayLabel(segment, entry.speakerName)}
                           </span>
                           {onRenameSpeaker && segment.attribution==='assigned' && segment.sourceId && segment.sessionId && (segment.sourceId===employeeId || meetingRole==='host' || meetingRole==='co-host') &&
                             <SpeakerNameEditor sourceId={segment.sourceId} sessionId={segment.sessionId} speaker={segment.speaker} speakerName={segment.speakerName} onSave={onRenameSpeaker} disabled={busy} />}

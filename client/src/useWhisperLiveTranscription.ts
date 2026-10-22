@@ -28,14 +28,14 @@ export function useWhisperLiveTranscription(options: {
     let cancelled = false;
     let live: ReturnType<typeof startLiveTranscription> | undefined;
     const track = options.track, language = options.language, model = options.model, diarize = options.diarize;
-    const resumable = model === 'qwen3-asr-0.6b-live';
+    const resumable = ['qwen3-asr-0.6b-live','sea-asr-id-live'].includes(model || '');
     const device = track.getSettings?.().deviceId || track.id;
     if (!microphone.current || microphone.current.device !== device) {
       microphone.current = {device,id:crypto.randomUUID()};
       previousSession.current=null;
     }
     const streamId = resumable ? microphone.current.id : undefined;
-    const scope = `${streamId}:${language}:${diarize}`;
+    const scope = `${model}:${streamId}:${language}:${diarize}`;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let stableTimer: ReturnType<typeof setTimeout> | undefined;
     // Keep the save destination bound to the meeting that started this stream.
