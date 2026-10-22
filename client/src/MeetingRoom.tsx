@@ -1,7 +1,7 @@
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, SEA_LIVE_DIARIZATION_NOTICE } from './modelSelection';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
 import { SpeakerNameEditor } from './SpeakerNameEditor';
 import type { SpeakerNameChange } from './SpeakerNameEditor';
@@ -784,7 +784,7 @@ export function MeetingRoom({
                   <label htmlFor="stt-model-select">Model</label>
                   {sttModel === 'qwen3-asr-0.6b' && <p role="status">{qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
                   {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
-                  {sttModel === SEA_LIVE_MODEL && <p role="status">{SEA_LIVE_NOTICE} {SEA_LIVE_DIARIZATION_NOTICE}</p>}
+                  {sttModel === SEA_LIVE_MODEL && <p role="status">{SEA_LIVE_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}

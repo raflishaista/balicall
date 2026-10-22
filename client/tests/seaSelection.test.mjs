@@ -10,7 +10,7 @@ test('SEA becomes selectable only after worker readiness and fixes language to I
  assert.deepEqual(modelPreferencePatch(SEA_LIVE_MODEL),{transcriptionModel:SEA_LIVE_MODEL,speechLanguage:'id-ID',sharedRoomMic:false,liveDiarization:true,batchDiarization:false});
  assert.equal(supportsSharedMicrophone(SEA_LIVE_MODEL,true),true);
  assert.equal(mediaChoices(normalizePreferences({transcriptionModel:SEA_LIVE_MODEL,batchDiarization:true})).batchDiarization,false);
- assert.match(transcriptionModelLabel(SEA_LIVE_MODEL),/SEA.*Pilot/);
+ assert.equal(transcriptionModelLabel(SEA_LIVE_MODEL),'SEA-ASR-ID · Live (Indonesia)');
  const final={text:'halo',segmentId:'one-1'};
  assert.deepEqual(liveTranscriptBody(final,SEA_LIVE_MODEL,'request'),{sttModel:SEA_LIVE_MODEL,final});
 });
@@ -24,7 +24,7 @@ test('SEA uses its own diarizer capability and suspends saved shared mic while o
  assert.equal(preferences.sharedRoomMic,true);
 });
 test('SEA notice distinguishes participant microphone labels from acoustic voice separation',()=>{
- assert.match(SEA_LIVE_NOTICE,/pilot/i);
+ assert.match(SEA_LIVE_NOTICE,/QC produksi belum lulus/i);
  assert.match(SEA_LIVE_NOTICE,/akun peserta/i);
  assert.match(SEA_LIVE_NOTICE,/sesi mikrofon/i);
  assert.match(SEA_LIVE_NOTICE,/Nemotron/i);

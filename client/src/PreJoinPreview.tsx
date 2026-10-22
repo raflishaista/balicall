@@ -3,7 +3,7 @@ import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, SEA_LIVE_DIARIZATION_NOTICE } from './modelSelection';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
 import { isChromiumBrowser, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
@@ -107,7 +107,6 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
     </label>
     {!sharedMicSupported && <p className="prejoin-error" role="status">{transcriptionModel === SEA_LIVE_MODEL ? SEA_LIVE_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
     {isQwen && sharedMicSupported && <p role="status">{transcriptionModel === 'qwen3-asr-0.6b-live' ? QWEN_LIVE_DIARIZATION_NOTICE : QWEN_DIARIZATION_NOTICE}</p>}
-    {transcriptionModel === SEA_LIVE_MODEL && sharedMicSupported && <p role="status">{SEA_LIVE_DIARIZATION_NOTICE}</p>}
     {Boolean(sharedMicSupported && media.choices.sharedRoomMic) && (
       <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>

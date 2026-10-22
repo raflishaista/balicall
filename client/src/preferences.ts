@@ -100,7 +100,7 @@ export function resolveTranscriptionPreferences(preferences: MeetingPreferences,
 }
 
 export function transcriptionModelLabel(model: string) {
-  if (model === SEA_LIVE_MODEL) return 'SEA-ASR-ID · Live (Indonesia) · Pilot';
+  if (model === SEA_LIVE_MODEL) return 'SEA-ASR-ID · Live (Indonesia)';
   return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization'
     : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
     : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'
