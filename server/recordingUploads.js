@@ -10,6 +10,13 @@ import * as uploads from './recordingStore.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
+/** @type {Record<string, string>} */
+export const DiarizerLabels = {
+  none: 'Tanpa pemisah pembicara',
+  nemotron: 'Nemotron-3',
+  pyannote: 'Pyannote',
+};
+
 async function looksLikeMp4(path) {
   const handle = await open(path, 'r');
   try {
