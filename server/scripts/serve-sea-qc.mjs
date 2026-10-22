@@ -30,6 +30,6 @@ const config=loadConfig({...process.env,PORT:String(port),AUTH_ENABLED:'false',V
  SEA_LIVE_PILOT_ENABLED:'true',
  SEA_LIVE_HEALTH_URL:process.env.SEA_QC_HEALTH_URL || 'http://127.0.0.1:8010/health',
  DATABASE_URL:'',CORS_ORIGINS:'http://localhost:5187,http://127.0.0.1:5187',MEETING_DATA_FILE:join(directory,'meetings.json')});
-const {app}=createApp(config,{livekitProbe:async()=>[]});
+const {app}=createApp(config);
 const server=app.listen(port,'127.0.0.1',()=>console.log('SEA QC API ready on '+server.address().port));
 attachSeaLiveProxy(server,config);
