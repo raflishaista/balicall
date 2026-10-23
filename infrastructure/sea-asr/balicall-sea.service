@@ -1,0 +1,29 @@
+# User-service candidate. Install only after the SEA production gates pass.
+# Provision the pinned runtime/model in this root; do not move an existing venv.
+[Unit]
+Description=BaliCall SEA-ASR-ID live transcription
+ConditionPathExists=%h/.local/share/balicall-sea/sea-worker.env
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/balicall-sea/service
+Environment=SEA_ASR_ROOT=%h/.local/share/balicall-sea
+Environment=SEA_CPU_THREADS=4 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1
+ExecStart=/bin/bash %h/.local/share/balicall-sea/service/start_sea_live.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+Nice=10
+CPUQuota=400%
+MemoryHigh=5G
+MemoryMax=6G
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

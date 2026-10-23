@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { initDb } from './db.js';
 import { initAuthDb } from './authStore.js';
+import { attachSeaLiveProxy } from './seaLiveProxy.js';
 
 dotenv.config({ path: fileURLToPath(new URL('./.env', import.meta.url)) });
 const config = loadConfig();
@@ -30,4 +31,5 @@ const server = app.listen(config.port, () => {
   console.log(`====================================================`);
 });
 
-server.on('close', close);
+const detachSeaLiveProxy = attachSeaLiveProxy(server, config);
+server.on('close', () => { detachSeaLiveProxy(); close(); });

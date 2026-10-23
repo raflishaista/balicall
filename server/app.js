@@ -1,3 +1,4 @@
+import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLiveConfig.js';
 import express from 'express';
 import { attachAuth } from './auth.js';
 import cors from 'cors';
@@ -119,7 +120,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     let livekitStatus = 'unavailable';
     try { await probe(); livekitStatus = 'reachable'; } catch { /* API health is independent of SFU. */ }
     const llmEffectiveProvider = effectiveLlm(config);
-    const qwenLive = await qwenLiveCapabilities(config, fetchImpl);
+    const [qwenLive, seaLive] = await Promise.all([qwenLiveCapabilities(config, fetchImpl), seaLiveCapabilities(config, fetchImpl)]);
+    const seaLivePilotReady = config.seaLivePilotEnabled && seaLive.ready;
     res.json({
       status: 'ok',
       livekitUrl: config.livekitUrl,
@@ -134,10 +136,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       qwenDiarizationReady: await qwenDiarizationReady(config, fetchImpl),
       qwenLiveReady: qwenLive.ready,
       qwenLiveDiarizationReady: qwenLive.diarization,
+      seaLivePilotReady,
+      seaLiveDiarizationReady: seaLivePilotReady && seaLive.diarization,
       sttModel: config.sttModel,
       sttModels: [...availableSttModels(config),
         ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : []),
-        ...(qwenLive.ready ? [QWEN_LIVE_MODEL] : [])],
+        ...(qwenLive.ready ? [QWEN_LIVE_MODEL] : []),
+        ...(seaLivePilotReady ? [SEA_LIVE_MODEL] : [])],
       database: {
         connected: isDbConnected(),
         configured: Boolean(config.databaseUrl),
@@ -794,6 +799,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/live-session', asyncRoute(async (req, res) => {
     if (!writable(req, res)) return;
     const { language, model, diarize = false, streamId } = req.body || {};
+    if (model === SEA_LIVE_MODEL) {
+      if (!config.seaLivePilotEnabled) return res.status(503).json({error:'SEA Live pilot belum diaktifkan. Pilih model lain.'});
+      const capabilities = await seaLiveCapabilities(config, fetchImpl);
+      if (!capabilities.ready) return res.status(503).json({error:'SEA Live worker belum siap. Pilih model lain.'});
+      if (language !== 'id' || typeof diarize !== 'boolean') return res.status(400).json({error:'Mode SEA Live tidak valid; gunakan Bahasa Indonesia.'});
+      if (diarize && !capabilities.diarization) return res.status(503).json({error:'Nemotron untuk SEA belum siap. Gunakan mikrofon pribadi atau coba lagi.'});
+      if (streamId !== undefined && (typeof streamId !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(streamId))) return res.status(400).json({error:'Sesi mikrofon tidak valid.'});
+      const payload=Buffer.from(JSON.stringify({meetingId:req.meetingId,speakerId:req.speakerId,language,model,
+        diarize,...(streamId?{streamId}:{}),exp:(capabilities.workerTime ?? Math.floor(Date.now()/1000))+60,nonce:randomUUID()})).toString('base64url');
+      const signature=createHmac('sha256',config.seaLiveSttSecret).update(payload).digest('base64url');
+      return res.set('Cache-Control','no-store').json({url:`${config.seaLiveSttUrl}?ticket=${payload}.${signature}`});
+    }
     if (model === QWEN_LIVE_MODEL) {
       const capabilities = await qwenLiveCapabilities(config, fetchImpl);
       if (!capabilities.ready || (diarize && !capabilities.diarization)) return res.status(503).json({ error: 'Qwen streaming atau diarization belum siap.' });
@@ -866,7 +883,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const manager=req.speakerId===meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
     if (req.speakerId!==sourceId && !manager) return res.status(403).json({error:'Hanya pemilik mikrofon atau host yang dapat mengubah nama pembicara.'});
     const key=speakerAliasKey({sourceId,sessionId,speaker});
-    const matches=entry=>entry.sttModel===QWEN_LIVE_MODEL && entry.segments?.some(segment=>speakerAliasKey(segment)===key && segment.attribution==='assigned');
+    const matches=entry=>[QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel) && entry.segments?.some(segment=>speakerAliasKey(segment)===key && segment.attribution==='assigned');
     if (!meeting.transcripts.some(matches)) return res.status(404).json({error:'Pembicara yang dapat diberi nama tidak ditemukan.'});
     const updatedEntries=store.transact(()=>{
       meeting.speakerAliases ||= {};
@@ -887,14 +904,20 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
-    if (req.body?.sttModel === QWEN_LIVE_MODEL) {
+    if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body?.sttModel)) {
       if (!writable(req,res)) return;
       let final;
-      try { final = validateLiveFinal(req.body.final,req.speakerId); }
+      try {
+        final = validateLiveFinal(req.body.final,req.speakerId);
+        if (req.body.sttModel === SEA_LIVE_MODEL && !seaSessionDiarized(req.body.final,config,req.meetingId,req.speakerId)) {
+          if (req.body.final.attribution !== 'unknown') throw Error('SEA personal mode cannot assign acoustic speakers');
+          final.segments = final.segments.map(segment => ({ ...segment, speaker:'Peserta', attribution:'participant' }));
+        }
+      }
       catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
-      final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
+      if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body.sttModel)) final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
       const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
-      const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,QWEN_LIVE_MODEL);
+      const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,req.body.sttModel);
       return res.json({success:true,entry});
     }
     const { text, requestId = randomUUID() } = req.body || {};
@@ -1151,8 +1174,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     if (!meeting) return res.status(404).json({ error: 'Rapat tidak ditemukan.' });
-    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
-    if (hasLive()) return res.status(409).json({ error: 'Transkrip Qwen Live tidak dapat diganti dengan batch audio yang hanya memuat sebagian rapat.' });
+    const hasLive = () => meeting.transcripts.some(entry => [QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel));
+    if (hasLive()) return res.status(409).json({ error: 'Transkrip live tidak dapat diganti dengan batch audio yang hanya memuat sebagian rapat.' });
 
     let audioBuffers = [];
     let mimeType = 'audio/webm';
@@ -1259,7 +1282,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     const shouldBatch = req.query.batchDiarize === 'true' || req.body?.batchDiarize === true;
-    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
+    const hasLive = () => meeting.transcripts.some(entry => [QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel));
 
     if (shouldBatch && !hasLive() && meetingAudios.get(req.meetingId)?.length) {
       try {

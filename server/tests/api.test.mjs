@@ -103,6 +103,59 @@ async function fixture(t, overrides = {}, dependencies = {}) {
   } };
 }
 
+test('SEA gates availability, binds resumable Indonesian tickets and deduplicates saved finals',async t=>{
+ let ready=false;
+ const model='sea-asr-id-live',secret='m'.repeat(40),workerTime=1700000000;
+ const f=await fixture(t,{sttModel:'small',sttModels:['small'],seaLiveSttUrl:'/sea-live-stt/asr',seaLiveSttSecret:secret},{fetchImpl:async()=>new Response(JSON.stringify({ready,streaming:true,model,languages:['id']}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
+ const a=await f.joinRoom('sea-owner');
+ const health=()=>f.request('/health',undefined,null,'GET');
+ assert.ok(!(await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'id'})).status,503);
+ ready=true;
+ assert.equal((await health()).data.seaLivePilotReady,false);
+ assert.ok(!(await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'id'})).status,503);
+ f.config.seaLivePilotEnabled=true;
+ assert.equal((await health()).data.seaLivePilotReady,true);
+ assert.ok((await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'en'})).status,400);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:true})).status,503);
+ assert.equal((await a.post('live-session',{model,language:'id',streamId:'bad'})).status,400);
+ const session=await a.post('live-session',{model,language:'id',streamId:'sea-microphone-12345'});
+ assert.equal(session.status,200);
+ const ticket=new URL(session.data.url,'http://local').searchParams.get('ticket');
+ const [payload,signature]=ticket.split('.');
+ assert.equal(signature,createHmac('sha256',secret).update(payload).digest('base64url'));
+ const claims=JSON.parse(Buffer.from(payload,'base64url'));
+ assert.equal(claims.streamId,'sea-microphone-12345');assert.equal(claims.model,model);assert.equal(claims.speakerId,'sea-owner');assert.equal(claims.exp,workerTime+60);
+ const final={segmentId:claims.nonce+'-1',sessionId:claims.nonce,sourceId:'sea-owner',text:'Halo tim.',start:0,end:2,speakerLabel:'Peserta',attribution:'unknown'};
+ const upload={sttModel:model,final};
+ const first=await a.post('transcript',upload),again=await a.post('transcript',upload);
+ assert.equal(first.status,200);assert.equal(first.data.entry.sttModel,model);
+ assert.equal(first.data.entry.speakerName,'sea-owner');
+ assert.equal(first.data.entry.segments[0].attribution,'participant');
+ assert.equal(first.data.entry.segments[0].speaker,'Peserta');
+ assert.equal(again.data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('transcript',{...upload,final:{...final,sourceId:'other'}})).status,400);
+ for (const attribution of ['assigned','overlap','participant']) {
+  assert.equal((await a.post('transcript',{...upload,final:{...final,attribution}})).status,400);
+ }
+ const forged=await a.post('transcript',{...upload,final:{...final,segmentId:claims.nonce+'-2',speakerLabel:'CEO',speakerName:'CEO'}});
+ assert.equal(forged.status,200);
+ assert.equal(forged.data.entry.speakerName,'sea-owner');
+ assert.equal(forged.data.entry.segments[0].speaker,'Peserta');
+ assert.equal(forged.data.entry.segments[0].speakerName,undefined);
+ assert.equal((await a.post('speaker-name',{sourceId:'sea-owner',sessionId:claims.nonce,speaker:'Peserta',name:'CEO'})).status,404);
+ await f.restart();
+ const entries=(await a.get('transcript')).data.transcripts;
+ assert.equal(entries.length,2);
+ assert.equal(entries[0].segments[0].attribution,'participant');
+ assert.equal(entries[0].segments[0].sessionId,claims.nonce);
+ assert.equal((await a.post('transcript',upload)).data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('batch-diarize',{})).status,409);
+});
+
+
 test('Qwen live tickets bind speaker and shared mode; structured finals persist once',async t=>{
  const workerTime=1700000000;
  const f=await fixture(t,{qwenLiveSttUrl:'/qwen-live-stt/asr',qwenLiveSttSecret:'q'.repeat(40)},{fetchImpl:async()=>new Response(JSON.stringify({ready:true,native:true,streaming:true,diarization:true,model:'qwen3-asr-0.6b-live'}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
@@ -652,3 +705,43 @@ test('schedule API validates time, creates future room, lists and cancels', asyn
 });
 
 
+
+test('SEA acoustic mode keeps unknown/overlap, persists labels and permits owner aliases after reconnect',async t=>{
+ const model='sea-asr-id-live',secret='n'.repeat(40);
+ let diarization=true;
+ const f=await fixture(t,{seaLivePilotEnabled:true,seaLiveSttUrl:'/sea-live-stt/asr',seaLiveSttSecret:secret},{fetchImpl:async()=>Response.json({ready:true,streaming:true,model,languages:['id'],diarization},{headers:{Date:new Date(1700000000000).toUTCString()}})});
+ const a=await f.joinRoom('sea-source'),b=await f.joinRoom('sea-other');
+ assert.equal((await f.request('/health',undefined,null,'GET')).data.seaLiveDiarizationReady,true);
+ const response=await a.post('live-session',{model,language:'id',diarize:true,streamId:'sea-shared-microphone-123'});
+ assert.equal(response.status,200);
+ const proof=new URL(response.data.url,'http://local').searchParams.get('ticket');
+ const claims=JSON.parse(Buffer.from(proof.split('.')[0],'base64url'));
+ assert.equal(claims.diarize,true);
+ const final={sessionId:claims.nonce,segmentId:claims.nonce+'-1',sourceId:'sea-source',text:'Selamat pagi',start:0,end:1,speakerLabel:'Pembicara 1',attribution:'assigned',sessionProof:proof};
+ const upload=value=>a.post('transcript',{sttModel:model,final:value});
+ const first=await upload(final);
+ assert.equal(first.status,200);
+ assert.equal(first.data.entry.segments[0].speaker,'Pembicara 1');
+ assert.equal(first.data.entry.segments[0].attribution,'assigned');
+ assert.ok(!JSON.stringify(first.data).includes(proof));
+ assert.equal((await upload({...final,sessionProof:undefined,segmentId:claims.nonce+'-bad'})).status,400);
+ assert.equal((await b.post('transcript',{sttModel:model,final:{...final,sourceId:'sea-other'}})).status,400);
+ const alias={sourceId:'sea-source',sessionId:claims.nonce,speaker:'Pembicara 1',name:'Rafli'};
+ assert.equal((await b.post('speaker-name',alias)).status,403);
+ assert.equal((await a.post('speaker-name',alias)).status,200);
+ assert.equal((await upload({...final,segmentId:claims.nonce+'-2'})).data.entry.segments[0].speakerName,'Rafli');
+ for(const [index,attribution] of ['unknown','overlap'].entries()) {
+  const saved=await upload({...final,segmentId:claims.nonce+'-'+(index+3),attribution,speakerLabel:attribution==='unknown'?'Pembicara belum diketahui':'Suara bertumpuk'});
+  assert.equal(saved.status,200);assert.equal(saved.data.entry.segments[0].attribution,attribution);
+  assert.equal(saved.data.entry.segments[0].speakerName,undefined);
+ }
+ await f.restart();
+ const saved=(await a.get('transcript')).data.transcripts;
+ assert.equal(saved.length,4);assert.equal(saved[0].segments[0].speakerName,'Rafli');
+ assert.ok(!readFileSync(f.config.dataFile,'utf8').includes(proof));
+ assert.equal((await upload(final)).data.entry.id,first.data.entry.id);
+ diarization=false;
+ assert.equal((await f.request('/health',undefined,null,'GET')).data.seaLiveDiarizationReady,false);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:true})).status,503);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:false})).status,200);
+});

@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
-import { isChromiumBrowser, transcriptionModelLabel, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { TranscriptionModelOptions } from './TranscriptionModelOptions';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
+import { isChromiumBrowser, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
@@ -83,11 +85,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
             disabled={blocked}
             onChange={event => onChangeTranscriptionModel?.(event.target.value)}
           >
-            {sttModels.map(m => (
-              <option key={m} value={m}>
-                {transcriptionModelLabel(m)}
-              </option>
-            ))}
+            <TranscriptionModelOptions models={sttModels} />
           </select>
         </label>
       )}
@@ -107,7 +105,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
-    {!sharedMicSupported && <p className="prejoin-error" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+    {!sharedMicSupported && <p className="prejoin-error" role="status">{transcriptionModel === SEA_LIVE_MODEL ? SEA_LIVE_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
     {isQwen && sharedMicSupported && <p role="status">{transcriptionModel === 'qwen3-asr-0.6b-live' ? QWEN_LIVE_DIARIZATION_NOTICE : QWEN_DIARIZATION_NOTICE}</p>}
     {Boolean(sharedMicSupported && media.choices.sharedRoomMic) && (
       <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -123,14 +121,14 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           />
           <div>
             <strong>Diarisasi Langsung (Live / Normal)</strong>
-            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Deteksi pembicara secara instan pada teks berjalan saat panggilan berlangsung.</p>
+            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Label pembicara mengikuti teks final selama panggilan; label dapat menunggu giliran bicara selesai.</p>
           </div>
         </label>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
           <input
             type="checkbox"
-            checked={!isQwen && (media.choices.batchDiarization ?? true)}
-            disabled={blocked || isQwen}
+            checked={!isQwen && transcriptionModel !== SEA_LIVE_MODEL && (media.choices.batchDiarization ?? true)}
+            disabled={blocked || isQwen || transcriptionModel === SEA_LIVE_MODEL}
             onChange={event => {
               media.setBatchDiarization?.(event.target.checked);
               onToggleBatchDiarization?.(event.target.checked);
