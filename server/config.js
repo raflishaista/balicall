@@ -61,6 +61,7 @@ export function loadConfig(env = process.env) {
     recordingLlmModels: (env.RECORDING_LLM_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
     recordingSttModels: (env.RECORDING_STT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
     recordingDiarizers: (env.RECORDING_DIARIZERS || '').split(',').map(value => value.trim()).filter(Boolean),
+    livekitRecordingsDir: env.LIVEKIT_RECORDINGS_DIR || fileURLToPath(new URL('../infrastructure/livekit/recordings', import.meta.url)),
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
     // Operator opt-in only. Keep UI locked until real diarization QC passes.

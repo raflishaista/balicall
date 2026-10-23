@@ -12,6 +12,7 @@ export interface MeetingSummary {
 export interface SummaryRecord {
   meetingId: string; roomName: string; savedAt: string; summary: MeetingSummary; transcripts: TranscriptEntry[];
   hostId?: string; hostName?: string; department?: string;
+  hasRecording?: boolean; recordingSize?: number;
 }
 export interface InProgressRecord {
   meetingId: string; roomName: string; token?: string; transcripts: TranscriptEntry[]; startedAt: string;
@@ -62,11 +63,13 @@ export function upsertSummary(records: SummaryRecord[], record: SummaryRecord) {
 }
 export function saveSummaryHistory(records: SummaryRecord[]) {
   // Explicit projection keeps bearer tokens out of persistent localStorage.
-  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts, hostId, hostName, department }) => ({
+  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts, hostId, hostName, department, hasRecording, recordingSize }) => ({
     meetingId, roomName, savedAt, summary, transcripts,
     ...(hostId ? { hostId } : {}),
     ...(hostName ? { hostName } : {}),
     ...(department ? { department } : {}),
+    ...(hasRecording !== undefined ? { hasRecording: Boolean(hasRecording) } : {}),
+    ...(typeof recordingSize === 'number' ? { recordingSize } : {}),
   })));
 }
 export function readSummarySession(): SummarySession | null {
@@ -133,6 +136,9 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
     deadline: typeof item?.deadline === 'string' ? item.deadline : 'Belum ditentukan',
   })) : [];
 
+  const hasRecording = Boolean(raw.hasRecording ?? raw.has_recording ?? (raw.recording && raw.recording.status !== 'idle'));
+  const recordingSize = typeof raw.recordingSize === 'number' ? raw.recordingSize : (typeof raw.recording_size === 'number' ? raw.recording_size : undefined);
+
   return {
     meetingId: String(raw.meeting_id || raw.meetingId || raw.id || ''),
     roomName: String(raw.room_name || raw.roomName || 'Ruang Rapat'),
@@ -154,6 +160,8 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
     hostId: raw.host_id || raw.hostId,
     hostName: raw.host_name || raw.hostName,
     department: raw.department,
+    hasRecording,
+    recordingSize,
   };
 }
 

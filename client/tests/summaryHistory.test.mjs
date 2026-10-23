@@ -38,3 +38,36 @@ test('malformed, schema-mismatched and blocked storage does not crash recovery',
   Object.defineProperty(window, 'sessionStorage', { get() { throw new Error('Blocked'); } });
   assert.equal(readSummarySession(), null); assert.equal(saveSummarySession({ meetingId: 'x', roomName: 'x', token: 'x', open: true, transcripts: [] }), false);
 });
+test('summary history and normalizeDbSummary preserve recording metadata', async () => {
+  fixture();
+  const { normalizeDbSummary } = await import('../src/summaryHistory.ts');
+  const normalizedWithRec = normalizeDbSummary({
+    id: 42,
+    meeting_id: 'meeting-rec-1',
+    room_name: 'Evaluasi Jaringan',
+    created_at: '2026-10-23T07:46:19.108Z',
+    hasRecording: true,
+    recordingSize: 1048576,
+    summary: { title: 'Notulen', executive_summary: 'Ringkasan' },
+  });
+  assert.equal(normalizedWithRec.hasRecording, true);
+  assert.equal(normalizedWithRec.recordingSize, 1048576);
+
+  const normalizedWithoutRec = normalizeDbSummary({
+    id: 43,
+    meeting_id: 'meeting-no-rec',
+    room_name: 'Evaluasi Harian',
+    created_at: '2026-10-23T07:46:19.108Z',
+    hasRecording: false,
+    summary: { title: 'Notulen', executive_summary: 'Ringkasan' },
+  });
+  assert.equal(normalizedWithoutRec.hasRecording, false);
+
+  // Test roundtrip in localStorage
+  saveSummaryHistory([normalizedWithRec, normalizedWithoutRec]);
+  const retrieved = readSummaryHistory();
+  assert.equal(retrieved.length, 2);
+  assert.equal(retrieved[0].hasRecording, true);
+  assert.equal(retrieved[0].recordingSize, 1048576);
+  assert.equal(retrieved[1].hasRecording, false);
+});

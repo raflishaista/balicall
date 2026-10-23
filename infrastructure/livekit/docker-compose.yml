@@ -28,7 +28,19 @@ services:
     image: livekit/egress:v1.14.1
     container_name: balicall-egress
     restart: unless-stopped
+    user: "0:0"
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        TARGET_UID=$${HOST_UID:-1003}
+        if [ "$$(id -u egress 2>/dev/null)" -ne "$$TARGET_UID" ]; then
+          usermod -u "$$TARGET_UID" egress 2>/dev/null || true
+          chown -R egress /home/egress 2>/dev/null || true
+        fi
+        exec runuser -u egress -- /entrypoint.sh
     environment:
+      TINI_SUBREAPER: "true"
       EGRESS_CONFIG_BODY: |
         log_level: debug
         api_key: devkey

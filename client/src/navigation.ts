@@ -5,7 +5,8 @@ export type AppView =
   | 'summary'
   | 'schedule'
   | 'settings'
-  | 'recordings';
+  | 'recordings'
+  | 'documentation';
 
 export type SettingsSection =
   | 'overview'
@@ -62,6 +63,8 @@ export function routeToHash(route: RouteState): string {
       return route.intent === 'join' ? '#/lobby?intent=join' : '#/lobby?intent=create';
     case 'in-call':
       return route.meetingId ? `#/call/${encodeURIComponent(route.meetingId)}` : '#/call';
+    case 'documentation':
+      return '#/documentation';
     default:
       return '#/home';
   }
@@ -135,6 +138,9 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
         meetingId,
       };
     }
+
+    case 'documentation':
+      return { view: 'documentation' };
 
     default:
       return fallback || { view: 'home' };

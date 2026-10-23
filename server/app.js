@@ -3,8 +3,8 @@ import express from 'express';
 import { attachAuth } from './auth.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import { randomUUID, randomBytes, createHmac } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
@@ -455,7 +455,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   // Meeting authorization middleware
   app.use('/api/meetings/:id', asyncRoute(async (req, res, next) => {
-    if (['db-summaries', 'db-details'].includes(req.params.id)) return next();
+    if (['db-summaries', 'db-details'].includes(req.params.id) || req.path === '/recording' || req.path === '/recording/download' || req.path.startsWith('/export')) return next();
     const meeting = store.get(req.params.id);
     if (!meeting) return res.status(404).json({ error: 'Meeting session not found' });
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -468,6 +468,37 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     req.speakerId = claims.sub;
     next();
   }));
+
+  function getMeetingRecordingInfo(meetingId, storeMeeting = null) {
+    if (!meetingId) return { hasRecording: false };
+    const cleanId = String(meetingId).replace(/^meeting-/, '');
+    const candidates = [
+      join(config.livekitRecordingsDir, `meeting-${cleanId}.mp4`),
+      join(config.livekitRecordingsDir, `${cleanId}.mp4`),
+      join(config.livekitRecordingsDir, `${meetingId}.mp4`),
+    ];
+    if (storeMeeting?.recording?.filepath) {
+      candidates.unshift(join(config.livekitRecordingsDir, basename(storeMeeting.recording.filepath)));
+    }
+    for (const filePath of candidates) {
+      if (existsSync(filePath)) {
+        try {
+          const stats = statSync(filePath);
+          if (stats.size > 0) {
+            return {
+              hasRecording: true,
+              filePath,
+              fileName: basename(filePath),
+              fileSize: stats.size,
+            };
+          }
+        } catch (err) {
+          console.warn('[RECORDING] stat error for', filePath, err.message);
+        }
+      }
+    }
+    return { hasRecording: false };
+  }
 
   function writable(req, res) {
     const meeting = store.get(req.meetingId);
@@ -1068,6 +1099,40 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     });
   }));
 
+  app.get('/api/meetings/:id/recording', asyncRoute(async (req, res) => {
+    if (req.auth?.user?.isGuest) {
+      return res.status(403).json({ error: 'Tamu tidak diizinkan mengakses rekaman rapat.' });
+    }
+    const storeMeeting = store.get(req.params.id);
+    const rec = getMeetingRecordingInfo(req.params.id, storeMeeting);
+    res.json({
+      success: true,
+      meetingId: req.params.id,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
+      fileName: rec.fileName || null,
+    });
+  }));
+
+  app.get('/api/meetings/:id/recording/download', asyncRoute(async (req, res) => {
+    if (req.auth?.user?.isGuest) {
+      return res.status(403).json({ error: 'Tamu tidak diizinkan mengunduh rekaman rapat.' });
+    }
+    const storeMeeting = store.get(req.params.id);
+    const rec = getMeetingRecordingInfo(req.params.id, storeMeeting);
+    if (!rec.hasRecording || !rec.filePath) {
+      return res.status(404).json({ error: 'Berkas rekaman tidak ditemukan untuk rapat ini.' });
+    }
+
+    const downloadFileName = rec.fileName || `meeting-${req.params.id}.mp4`;
+    res.download(rec.filePath, downloadFileName, (err) => {
+      if (err && !res.headersSent) {
+        console.warn('[RECORDING] Download error:', err.message);
+        res.status(500).json({ error: 'Gagal mengunduh berkas rekaman.' });
+      }
+    });
+  }));
+
   app.post('/api/meetings/:id/audio', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '5mb' }), asyncRoute(async (req, res) => {
     const requestId = req.get('X-Request-Id');
     const language = req.get('X-Speech-Language') || 'id';
@@ -1317,11 +1382,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const final = store.get(req.meetingId).attendanceFinalization;
       final.status = 'complete'; final.error = null;
     });
+    const rec = getMeetingRecordingInfo(req.meetingId, store.get(req.meetingId));
     res.json({
       success: true,
       summary,
       meetingStatus: store.get(req.meetingId).status,
       transcripts: store.get(req.meetingId).transcripts,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
     });
   }));
 
@@ -1330,10 +1398,20 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const limit = parseInt(req.query.limit, 10) || 20;
     const summaries = await getMeetingSummaries(limit);
 
+    const enrichedSummaries = summaries.map(s => {
+      const rec = getMeetingRecordingInfo(s.meeting_id, store.get(s.meeting_id));
+      return {
+        ...s,
+        hasRecording: rec.hasRecording,
+        recordingSize: rec.fileSize || null,
+      };
+    });
+
     const inProgress = [];
     if (store && store.meetings) {
       for (const [id, meeting] of store.meetings.entries()) {
         if (inFlightSummarize.has(id)) {
+          const rec = getMeetingRecordingInfo(id, meeting);
           inProgress.push({
             meetingId: id,
             roomName: meeting.roomName,
@@ -1341,6 +1419,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             transcriptCount: meeting.transcripts.length,
             participants: [...meeting.participants.values()].map(publicParticipant),
             createdAt: meeting.createdAt,
+            hasRecording: rec.hasRecording,
+            recordingSize: rec.fileSize || null,
           });
         }
       }
@@ -1348,17 +1428,19 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
     res.json({
       success: true,
-      count: summaries.length,
+      count: enrichedSummaries.length,
       databaseConnected: isDbConnected(),
       inProgress,
-      summaries,
+      summaries: enrichedSummaries,
     });
   }));
 
   app.get('/api/meetings/db-details/:meetingId', asyncRoute(async (req, res) => {
     const details = await getMeetingDetails(req.params.meetingId);
+    const storeMeeting = store.get(req.params.meetingId);
+    const rec = getMeetingRecordingInfo(req.params.meetingId, storeMeeting);
+
     if (!details) {
-      const storeMeeting = store.get(req.params.meetingId);
       if (storeMeeting) {
         return res.json({
           success: true,
@@ -1372,11 +1454,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           summary: storeMeeting.summary,
           transcripts: storeMeeting.transcripts,
           attendees: [...storeMeeting.participants.values()].map(publicParticipant),
+          hasRecording: rec.hasRecording,
+          recordingSize: rec.fileSize || null,
         });
       }
       return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });
     }
-    res.json({ success: true, ...details });
+    res.json({
+      success: true,
+      ...details,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
+    });
   }));
 
     // Meeting report export authorization.

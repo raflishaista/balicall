@@ -78,6 +78,7 @@ import {
   ChevronLeft,
   Home,
   Sparkles,
+  Video,
 } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
@@ -133,7 +134,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'documentation' | 'recordings'>(() => {
+  const [view, setView] = useState<AppView>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -205,6 +206,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.meetingId || initialSummaryState.session?.meetingId || null);
   const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
   const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || routeSummaryRecord?.roomName || '');
+  const [summaryHasRecording, setSummaryHasRecording] = useState<boolean>(Boolean(initialSummaryState.selected?.hasRecording || routeSummaryRecord?.hasRecording));
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -536,6 +538,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setTranscripts(record.transcripts);
     setSummaryMeetingId(record.meetingId);
     setSummaryRoomName(record.roomName);
+    setSummaryHasRecording(Boolean(record.hasRecording));
     const savedToken = summaryTokenFor(record.meetingId);
     setSummaryToken(savedToken);
     saveSummarySession({
@@ -551,10 +554,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
     // If record lacks transcripts, load from DB
     if (!record.transcripts || record.transcripts.length === 0) {
-      apiRequest<{ success: boolean; transcripts: TranscriptEntry[] }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
+      apiRequest<{ success: boolean; transcripts: TranscriptEntry[]; hasRecording?: boolean }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
         .then(details => {
           if (details?.transcripts && details.transcripts.length > 0) {
             setTranscripts(details.transcripts);
+          }
+          if (details?.hasRecording) {
+            setSummaryHasRecording(true);
           }
         })
         .catch(() => {});
@@ -800,6 +806,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setSummary(completedSummary);
       removeInProgressSummary(targetMeetingId);
       setInProgressList(readInProgressSummaries());
+      const hadRecording = Boolean((data as any).hasRecording || isRecording);
+      setSummaryHasRecording(hadRecording);
       const record: SummaryRecord = {
         meetingId: targetMeetingId,
         roomName: targetRoomName,
@@ -809,6 +817,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         hostId: employeeId,
         hostName: employeeName,
         department,
+        hasRecording: hadRecording,
+        ...((data as any).recordingSize ? { recordingSize: (data as any).recordingSize } : {}),
       };
       if (callPreferences.saveSummaryOffline !== false) {
         const next = upsertSummary(readSummaryHistory(), record);
@@ -1289,7 +1299,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           onDocumentation={() => {
             joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('documentation');
-            setView('documentation');
+            navigateTo({ view: 'documentation' });
           }}
           onSummary={() => {
             saveActiveView('summary');
@@ -1548,6 +1558,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             copied={copied}
             onCopy={copyMarkdownSummary}
             isSummarizing={isSummarizing}
+            hasRecording={summaryHasRecording}
             batchDiarizing={batchDiarizing}
             onBatchDiarize={handleBatchDiarize}
             pendingSaves={pendingSaves}
@@ -1959,6 +1970,7 @@ function SummaryView({
   onRetry,
   onBackToHistory,
   onBatchDiarize,
+  hasRecording = false,
 }: {
   summary: MeetingSummary | null;
   roomName: string;
@@ -1975,12 +1987,69 @@ function SummaryView({
   onRetry?: () => void;
   onBackToHistory?: () => void;
   onBatchDiarize?: () => void;
+  hasRecording?: boolean;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [hasRec, setHasRec] = useState<boolean>(Boolean(hasRecording));
+  const [downloadingRecording, setDownloadingRecording] = useState(false);
+  const [recordingDownloadError, setRecordingDownloadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (hasRecording) {
+      setHasRec(true);
+      return;
+    }
+    if (meetingId) {
+      const cleanId = meetingId.replace(/^meeting-/, '');
+      fetch(`${API_BASE}/meetings/${cleanId}/recording`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.hasRecording) setHasRec(true);
+        })
+        .catch(() => {});
+    }
+  }, [meetingId, hasRecording]);
+
+  const downloadRecording = async () => {
+    setDownloadingRecording(true);
+    setRecordingDownloadError(null);
+    const cleanId = meetingId.replace(/^meeting-/, '');
+    const url = `${API_BASE}/meetings/${cleanId}/recording/download${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        let msg = 'Gagal mengunduh rekaman rapat.';
+        try {
+          const errData = await res.json();
+          if (errData?.error) msg = errData.error;
+        } catch { /* ignore non-JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `balicall-recording-${cleanId}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      setRecordingDownloadError(err?.message || 'Gagal mengunduh rekaman rapat.');
+    } finally {
+      setDownloadingRecording(false);
+    }
+  };
 
   const downloadExport = async (format: 'pdf' | 'json') => {
     setExporting(format);
@@ -2301,6 +2370,19 @@ function SummaryView({
               {exporting === 'pdf' ? 'Menyiapkan PDF...' : 'Export PDF'}
             </button>
 
+            {hasRec && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={downloadRecording}
+                disabled={downloadingRecording}
+                title="Unduh rekaman video MP4 rapat ini"
+              >
+                {downloadingRecording ? <Loader2 className="ui-spinner" size={15} /> : <Video size={15} />}
+                <span>{downloadingRecording ? 'Menyiapkan Rekaman...' : 'Unduh Rekaman (MP4)'}</span>
+              </button>
+            )}
+
             <button className="button-primary" onClick={onNewCall}> Rapat baru <ArrowRight size={15} /></button>
           </div>
         </header>
@@ -2312,6 +2394,13 @@ function SummaryView({
           <div className="summary-note" role="alert">
             <AlertCircle size={16} />
             {exportError}
+          </div>
+        )}
+
+        {recordingDownloadError && (
+          <div className="summary-note" role="alert">
+            <AlertCircle size={16} />
+            {recordingDownloadError}
           </div>
         )}
         <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist" onKeyDown={event => {
