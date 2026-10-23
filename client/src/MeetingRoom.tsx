@@ -1,5 +1,6 @@
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import type { MeetingPreferences } from './preferences';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
 import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
@@ -25,6 +26,7 @@ import {
   ChevronRight,
   Sparkles,
   SlidersHorizontal,
+  ShieldCheck,
 } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
@@ -133,6 +135,7 @@ interface MeetingRoomProps {
   microphonePending: boolean;
   connectionState: ConnectionState;
   mirrorLocalVideo?: boolean;
+  callPreferences?: MeetingPreferences;
 
   recordingPending: boolean;
   recordingError: string | null;
@@ -217,6 +220,7 @@ export function MeetingRoom({
   microphonePending,
   connectionState,
   mirrorLocalVideo = true,
+  callPreferences,
   recordingPending,
   recordingError,
   isRecording,
@@ -260,8 +264,22 @@ export function MeetingRoom({
   // Gunakan status recording yang sudah dikonfirmasi.
   const recording = livekitRecording || isRecording === true;
 
-  const handleToggleRecording = () =>
-    onToggleRecording(!recording);
+  const handleToggleRecording = async () => {
+    if (callPreferences?.recordingConsentPrompt && !recording) {
+      if (!window.confirm('Mulai merekam rapat ini? Seluruh peserta akan menerima pemberitahuan visual bahwa sesi ini sedang direkam.')) {
+        return;
+      }
+    }
+    await onToggleRecording(!recording);
+  };
+
+  const autoRecordDone = useRef(false);
+  useEffect(() => {
+    if (callPreferences?.autoRecordMeeting && connected && meetingRole === 'host' && !recording && !recordingPending && !autoRecordDone.current) {
+      autoRecordDone.current = true;
+      onToggleRecording(true);
+    }
+  }, [callPreferences?.autoRecordMeeting, connected, meetingRole, recording, recordingPending, onToggleRecording]);
   const [backgroundsOpen, setBackgroundsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'speaker'>('grid');
   const compact = useCompactMeeting();
@@ -484,6 +502,12 @@ export function MeetingRoom({
               {recording ? '● Merekam' : 'Tidak merekam'}
             </span>
             <span role="status">Transkripsi · {transcriptStatus}</span>
+            {callPreferences?.showSecurityBadge !== false && (
+              <span role="status" title="Koneksi media WebRTC diamankan dengan enkripsi DTLS-SRTP">
+                <ShieldCheck size={12} style={{ verticalAlign: '-1px', marginRight: '4px' }} />
+                Terenkripsi
+              </span>
+            )}
           </div>
         </div>
 

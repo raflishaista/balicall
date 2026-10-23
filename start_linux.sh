@@ -114,6 +114,20 @@ else
     echo "      (Set up server/speech/.venv or rely on browser/cloud STT)"
 fi
 
+# Start Optional Service: SEA Live STT Worker (Port 8010)
+if is_port_in_use 8010; then
+    echo "[*] Port 8010 is already active [SEA Live STT]."
+elif [ -f "server/speech/start_sea_live.sh" ] && grep -E -q '^\s*SEA_LIVE_PILOT_ENABLED\s*=\s*true' "server/.env" 2>/dev/null; then
+    if [ -r "${SEA_ASR_ROOT:-/var/tmp/jds3-sea-asr}/sea-worker.env" ]; then
+        echo "[*] Starting SEA Live STT on Port 8010..."
+        bash server/speech/start_sea_live.sh < /dev/null &
+        PIDS+=($!)
+        sleep 2
+    else
+        echo "[*] ⚠️  File secret SEA (/var/tmp/jds3-sea-asr/sea-worker.env) tidak ditemukan; SEA dilewati."
+    fi
+fi
+
 if [ "$MODE" = "prod" ] || [ "$MODE" = "production" ] || [ "$MODE" = "deploy" ]; then
     echo "========================================================"
     echo "  Mode: PRODUCTION (Port 3001 serves API & Web Client)"

@@ -17,6 +17,23 @@ export interface MeetingPreferences {
   sharedRoomMic: boolean;
   liveDiarization: boolean;
   batchDiarization: boolean;
+
+  // Rekaman & Penyimpanan
+  autoRecordMeeting: boolean;
+  recordingQuality: 'standard' | 'hd' | 'audio-only';
+  recordingConsentPrompt: boolean;
+  defaultRecordingLanguage: 'id' | 'en';
+  defaultRecordingDiarizer: 'none' | 'nemotron' | 'pyannote';
+  saveSummaryOffline: boolean;
+  autoCopySummary: boolean;
+
+  // Keamanan & Akses
+  allowGuestJoin: boolean;
+  muteOnJoin: boolean;
+  hostOnlyScreenShare: boolean;
+  requireSpeakApprovalForGuests: boolean;
+  autoReleaseDevicesOnLeave: boolean;
+  showSecurityBadge: boolean;
 }
 
 export const PREFERENCES_KEY = 'sentra.meeting-preferences.v1';
@@ -28,6 +45,23 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   sharedRoomMic: false,
   liveDiarization: true,
   batchDiarization: true,
+
+  // Rekaman & Penyimpanan
+  autoRecordMeeting: false,
+  recordingQuality: 'standard',
+  recordingConsentPrompt: true,
+  defaultRecordingLanguage: 'id',
+  defaultRecordingDiarizer: 'none',
+  saveSummaryOffline: true,
+  autoCopySummary: false,
+
+  // Keamanan & Akses
+  allowGuestJoin: true,
+  muteOnJoin: false,
+  hostOnlyScreenShare: false,
+  requireSpeakApprovalForGuests: false,
+  autoReleaseDevicesOnLeave: true,
+  showSecurityBadge: true,
 };
 
 export function normalizePreferences(value: unknown): MeetingPreferences {
@@ -38,8 +72,23 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   if (input.transcriptionProvider === 'auto' || input.transcriptionProvider === 'browser' || input.transcriptionProvider === 'server') result.transcriptionProvider = input.transcriptionProvider;
   if (typeof input.transcriptionModel === 'string' && /^[a-zA-Z0-9._-]{0,64}$/.test(input.transcriptionModel)) result.transcriptionModel = input.transcriptionModel;
   if (result.transcriptionModel === 'qwen3-asr-0.6b') result.transcriptionModel = '';
-  for (const key of ['microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders', 'sharedRoomMic', 'liveDiarization', 'batchDiarization'] as const) {
+  for (const key of [
+    'microphoneEnabled', 'cameraEnabled', 'mirrorLocalVideo', 'autoSpotlight', 'reduceMotion', 'scheduleReminders',
+    'sharedRoomMic', 'liveDiarization', 'batchDiarization',
+    'autoRecordMeeting', 'recordingConsentPrompt', 'saveSummaryOffline', 'autoCopySummary',
+    'allowGuestJoin', 'muteOnJoin', 'hostOnlyScreenShare', 'requireSpeakApprovalForGuests',
+    'autoReleaseDevicesOnLeave', 'showSecurityBadge',
+  ] as const) {
     if (typeof input[key] === 'boolean') result[key] = input[key];
+  }
+  if (input.recordingQuality === 'standard' || input.recordingQuality === 'hd' || input.recordingQuality === 'audio-only') {
+    result.recordingQuality = input.recordingQuality;
+  }
+  if (input.defaultRecordingLanguage === 'id' || input.defaultRecordingLanguage === 'en') {
+    result.defaultRecordingLanguage = input.defaultRecordingLanguage;
+  }
+  if (input.defaultRecordingDiarizer === 'none' || input.defaultRecordingDiarizer === 'nemotron' || input.defaultRecordingDiarizer === 'pyannote') {
+    result.defaultRecordingDiarizer = input.defaultRecordingDiarizer;
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {
     if (typeof input[key] === 'string' && input[key].trim() && input[key].length <= 256) result[key] = input[key].trim();

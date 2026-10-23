@@ -642,9 +642,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         hostName: employeeName,
         department,
       };
-      const next = upsertSummary(readSummaryHistory(), record);
-      setSummaryHistory(next);
-      if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
+      if (callPreferences.saveSummaryOffline !== false) {
+        const next = upsertSummary(readSummaryHistory(), record);
+        setSummaryHistory(next);
+        if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
+      }
+      if (callPreferences.autoCopySummary) {
+        try {
+          const md = `# Notulen BaliTower Sentra: ${completedSummary.title}\n**Tanggal:** ${new Date(completedSummary.generatedAt || Date.now()).toLocaleDateString('id-ID')} | **Ruang:** ${targetRoomName}\n**Peserta:** ${completedSummary.attendanceSummary?.join(', ') || 'Belum tercatat'}\n**Layanan ringkasan:** ${completedSummary.provider || 'Tidak diketahui'}\n\n---\n### Ringkasan\n${completedSummary.executiveSummary}\n\n### Poin Pembahasan\n${completedSummary.keyDiscussionPoints.map(p => `- ${p}`).join('\n')}\n\n### Keputusan\n${completedSummary.decisions.map(d => `- ${d}`).join('\n')}\n\n### Tindak Lanjut\n${completedSummary.actionItems.map(a => `- [${a.priority}] ${a.task} (@${a.assignee}) - Batas: ${a.deadline}`).join('\n')}`;
+          void navigator.clipboard?.writeText(md);
+        } catch {
+          // ignore clipboard write failure
+        }
+      }
     } catch (error) {
       if (generation !== summaryGeneration.current) return;
       setSummaryError(
@@ -1192,7 +1202,24 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage aiStatus={healthStatus} transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && (
+          <SettingsPage
+            aiStatus={healthStatus}
+            transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null}
+            authUser={isGuest ? null : authUser}
+            onProfileUpdated={user => { setEmployeeName(user.name); onProfileUpdated?.(user); }}
+            preferences={userPreferences.preferences}
+            notice={userPreferences.notice}
+            employeeId={employeeId}
+            employeeName={employeeName}
+            department={department}
+            onSave={userPreferences.save}
+            onCheckDevices={next => openLobby('create', next)}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
+            onLogout={onLogout}
+            logoutPending={logoutPending}
+          />
+        )}
 
         {view === 'lobby' && (
           <LobbyView
@@ -1628,6 +1655,7 @@ function RoomContent({
         }
         onOpenDevices={() => setDevicesOpen(true)}
         spotlightIdentity={spotlightIdentity}
+        callPreferences={callPreferences}
         mirrorLocalVideo={callPreferences.mirrorLocalVideo}
         connected={connected}
         isMuted={isMuted}
