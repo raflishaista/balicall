@@ -2,6 +2,7 @@ import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
+import { DocumentationPage } from './DocumentationPage';
 import { useBackendHealth } from './useBackendHealth';
 import { UserAvatar } from './ProfileEditor';
 import { NotificationCenter } from './NotificationCenter';
@@ -105,7 +106,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
+  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'documentation' | 'recordings'>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -1118,6 +1119,11 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             saveActiveView('settings');
             setView('settings');
           }}
+          onDocumentation={() => {
+            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
+            saveActiveView('documentation');
+            setView('documentation');
+          }}
           onSummary={() => {
             joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('summary');
@@ -1134,7 +1140,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'documentation' ? 'Dokumentasi' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
@@ -1179,7 +1185,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',recordings:'Rekaman terunggah'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1220,6 +1226,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             logoutPending={logoutPending}
           />
         )}
+        {view === 'documentation' && <DocumentationPage />}
 
         {view === 'lobby' && (
           <LobbyView
