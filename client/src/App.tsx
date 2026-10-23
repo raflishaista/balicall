@@ -22,6 +22,14 @@ import './App.css';
 import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage } from './summaryHistory';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
+import {
+  routeToHash,
+  hashToRoute,
+  isSameRoute,
+  sanitizeRouteForGuest,
+  syncBrowserHistory,
+} from './navigation';
+import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
@@ -101,17 +109,30 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       savedActiveView,
     };
   });
+
+  const [initialRoute] = useState<RouteState>(() => {
+    if (typeof window !== 'undefined' && window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/' && !window.location.hash.startsWith('#main-content')) {
+      const parsed = hashToRoute(window.location.hash);
+      return sanitizeRouteForGuest(parsed, isGuest);
+    }
+    if (isGuest) return { view: 'lobby', intent: 'join' };
+    if (initialSummaryState.savedActiveView === 'summary') return { view: 'summary' };
+    if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
+    return { view: 'home' };
+  });
+
+  const routeSummaryRecord = initialRoute.view === 'summary' && initialRoute.meetingId
+    ? initialSummaryState.history.find(item => item.meetingId === initialRoute.meetingId)
+    : undefined;
+
   const [inProgressList, setInProgressList] = useState<InProgressRecord[]>(() => readInProgressSummaries());
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
-    if (isGuest) return 'lobby';
-    if (initialSummaryState.savedActiveView === 'summary') return 'summary';
-    if (initialSummaryState.session) return 'summary';
-    return 'home';
-  });
-  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(isGuest ? 'join' : 'create');
+  const [view, setView] = useState<AppView>(initialRoute.view);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
+  const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
+  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
   const contentRef = useRef<HTMLElement>(null);
   usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
@@ -167,17 +188,17 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
   // Active call state
-  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(initialSummaryState.selected?.transcripts || initialSummaryState.session?.transcripts || []);
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(initialSummaryState.selected?.transcripts || routeSummaryRecord?.transcripts || initialSummaryState.session?.transcripts || []);
   const [activeTab, setActiveTab] = useState<'transcript' | 'attendance'>('transcript');
   const [callDuration, setCallDuration] = useState('00:00');
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
-  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected));
+  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected && !routeSummaryRecord));
   const [batchDiarizing, setBatchDiarizing] = useState(false);
-  const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || null);
+  const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || routeSummaryRecord?.summary || null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialSummaryState.session?.meetingId || null);
-  const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || null);
-  const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || '');
+  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.meetingId || initialSummaryState.session?.meetingId || null);
+  const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
+  const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || routeSummaryRecord?.roomName || '');
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -244,6 +265,147 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       clearTimeout(timer);
     };
   }, [view, meetingId, token]);
+
+  const currentRouteRef = useRef<RouteState>({
+    view,
+    section: settingsSection,
+    meetingId: summaryMeetingId,
+    intent: meetingIntent,
+    recordingId,
+  });
+  currentRouteRef.current = {
+    view,
+    section: settingsSection,
+    meetingId: summaryMeetingId,
+    intent: meetingIntent,
+    recordingId,
+  };
+
+  const meetingIdRef = useRef<string | null>(meetingId);
+  meetingIdRef.current = meetingId;
+  const handleEndMeetingRef = useRef<((generate?: boolean) => Promise<void>) | undefined>(undefined);
+
+  const navigateTo = useCallback((next: RouteState, replace = false) => {
+    const sanitized = sanitizeRouteForGuest(next, isGuest);
+    const current = currentRouteRef.current;
+    if (isSameRoute(current, sanitized)) {
+      return;
+    }
+
+    if (current.view === 'lobby' && sanitized.view !== 'lobby') {
+      joinGeneration.current++;
+      joinPending.current = false;
+      setIsJoining(false);
+      preJoinMedia.stopAll();
+    }
+
+    syncBrowserHistory(sanitized, replace);
+
+    setView(sanitized.view);
+    if (sanitized.view === 'settings') {
+      setSettingsSection(sanitized.section || 'overview');
+    }
+    if (sanitized.view === 'summary') {
+      setSummaryMeetingId(sanitized.meetingId || null);
+      if (!sanitized.meetingId) {
+        setSummary(null);
+        setIsSummarizing(false);
+        setSummaryError(null);
+      }
+    }
+    if (sanitized.view === 'recordings') {
+      setRecordingId(sanitized.recordingId || null);
+    }
+    if (sanitized.view === 'lobby') {
+      setMeetingIntent(sanitized.intent || (isGuest ? 'join' : 'create'));
+    }
+  }, [isGuest, preJoinMedia]);
+
+  useEffect(() => {
+    syncBrowserHistory(initialRoute, true);
+  }, [initialRoute]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handlePopState = (event: PopStateEvent) => {
+      if (currentRouteRef.current.view === 'in-call') {
+        const confirmed = window.confirm('Apakah Anda yakin ingin meninggalkan rapat aktif? Percakapan yang sedang berlangsung akan dihentikan.');
+        if (!confirmed) {
+          const callRoute: RouteState = { view: 'in-call', meetingId: meetingIdRef.current };
+          window.history.pushState(callRoute, '', routeToHash(callRoute));
+          return;
+        }
+        void handleEndMeetingRef.current?.(false);
+      }
+
+      const rawRoute: RouteState = (event.state && typeof event.state.view === 'string')
+        ? event.state
+        : hashToRoute(window.location.hash, currentRouteRef.current);
+
+      const nextRoute = sanitizeRouteForGuest(rawRoute, isGuest);
+
+      if (currentRouteRef.current.view === 'lobby' && nextRoute.view !== 'lobby') {
+        joinGeneration.current++;
+        joinPending.current = false;
+        setIsJoining(false);
+        preJoinMedia.stopAll();
+      }
+
+      setView(nextRoute.view);
+      if (nextRoute.view === 'settings') {
+        setSettingsSection(nextRoute.section || 'overview');
+      }
+      if (nextRoute.view === 'summary') {
+        const targetMeetingId = nextRoute.meetingId || null;
+        setSummaryMeetingId(targetMeetingId);
+        if (!targetMeetingId) {
+          setSummary(null);
+          setIsSummarizing(false);
+          setSummaryError(null);
+          const session = readSummarySession();
+          if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+        } else {
+          const found = summaryHistory.find(item => item.meetingId === targetMeetingId);
+          if (found) {
+            setSummary(found.summary);
+            setTranscripts(found.transcripts);
+            setSummaryRoomName(found.roomName);
+            setSummaryToken(summaryTokenFor(found.meetingId));
+          } else {
+            apiRequest<{ success: boolean; summary?: MeetingSummary; transcripts?: TranscriptEntry[]; meeting?: { room_name?: string } }>(
+              `/meetings/db-details/${encodeURIComponent(targetMeetingId)}`
+            ).then(details => {
+              if (details?.summary) {
+                setSummary(details.summary);
+                if (details.transcripts) setTranscripts(details.transcripts);
+                if (details.meeting?.room_name) setSummaryRoomName(details.meeting.room_name);
+              }
+            }).catch(() => {});
+          }
+        }
+      }
+      if (nextRoute.view === 'recordings') {
+        setRecordingId(nextRoute.recordingId || null);
+      }
+      if (nextRoute.view === 'lobby') {
+        setMeetingIntent(nextRoute.intent || (isGuest ? 'join' : 'create'));
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isGuest, summaryHistory, readSummarySession, saveSummarySession, summaryTokenFor]);
+
+  useEffect(() => {
+    if (view !== 'in-call') return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [view]);
 
   useEffect(() => {
     if (view !== 'in-call' && view !== 'lobby') {
@@ -379,7 +541,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       isSummarizing: false,
     });
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: record.meetingId });
 
     // If record lacks transcripts, load from DB
     if (!record.transcripts || record.transcripts.length === 0) {
@@ -412,7 +574,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       isSummarizing: true,
     });
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: record.meetingId });
     void triggerSummarize(record.meetingId, savedToken, record.roomName, record.transcripts);
   };
 
@@ -530,7 +692,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const openSchedule = () => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
     saveActiveView('schedule');
-    setView('schedule');
+    navigateTo({ view: 'schedule' });
   };
 
   const handleJoin = async () => {
@@ -578,7 +740,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
-      setView('in-call');
+      navigateTo({ view: 'in-call', meetingId: data.meetingId });
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
     finally { if (generation === joinGeneration.current) { joinPending.current = false; setIsJoining(false); } }
   };
@@ -666,6 +828,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   };
 
   const handleEndMeeting = async (generate = true) => {
+    handleEndMeetingRef.current = handleEndMeeting;
     if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
@@ -686,7 +849,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setMeetingId(null);
       setTranscripts([]);
       saveActiveView('home');
-      setView(isGuest ? 'lobby' : 'home');
+      navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
       void (async () => {
         try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
         await apiRequest(meetingPath(currentMeetingId, 'leave'), {
@@ -727,7 +890,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
     }
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: currentMeetingId });
     setIsSummarizing(true);
     setSummary(null);
     setSummaryError(null);
@@ -848,7 +1011,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setSummary(null);
     setSummaryError(null);
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary' });
     const formData = new FormData();
     formData.append('audio', file);
     try {
@@ -866,6 +1029,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
       if (data.meetingId) {
         setSummaryMeetingId(data.meetingId);
+        navigateTo({ view: 'summary', meetingId: data.meetingId }, true);
       }
       if (data.token) {
         setSummaryToken(data.token);
@@ -1091,7 +1255,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
     setMeetingIntent(isGuest ? 'join' : intent);
     setJoinError(null);
-    setView('lobby');
+    navigateTo({ view: 'lobby', intent: isGuest ? 'join' : intent });
   };
 
   return (
@@ -1106,22 +1270,19 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           onLogout={onLogout} logoutPending={logoutPending}
           hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('home');
-            setView('home');
+            navigateTo({ view: 'home' });
           }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
           onSchedule={openSchedule}
           onSettings={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('settings');
-            setView('settings');
+            navigateTo({ view: 'settings', section: 'overview' });
           }}
           onSummary={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('summary');
-            setView('summary');
+            navigateTo({ view: 'summary', meetingId: null });
             if (!summary && !isSummarizing) {
               setSummaryMeetingId(null);
             }
@@ -1140,7 +1301,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
 
         <div className="header-meta">
-          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();setSummaryMeetingId(null);setView('summary');}}/>}
+          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();navigateTo({ view: 'summary', meetingId: null });}}/>}
           {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
@@ -1195,7 +1356,13 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             employeeId={employeeId}
             employeeName={employeeName}
             department={department}
-            onBack={() => setView('home')}
+            onBack={() => {
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'schedule') {
+                window.history.back();
+              } else {
+                navigateTo({ view: 'home' });
+              }
+            }}
             onCreateSchedule={handleCreateSchedule}
             onReschedule={handleReschedule}
             onCancelSchedule={handleCancelSchedule}
@@ -1204,6 +1371,14 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
         {view === 'settings' && (
           <SettingsPage
+            section={settingsSection}
+            onSectionChange={nextSection => {
+              if (nextSection === 'overview' && typeof window !== 'undefined' && window.history.state?.view === 'settings' && window.history.state?.section && window.history.state.section !== 'overview') {
+                window.history.back();
+              } else {
+                navigateTo({ view: 'settings', section: nextSection });
+              }
+            }}
             aiStatus={healthStatus}
             transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null}
             authUser={isGuest ? null : authUser}
@@ -1215,7 +1390,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             department={department}
             onSave={userPreferences.save}
             onCheckDevices={next => openLobby('create', next)}
-            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); navigateTo({ view: 'recordings' }); }}
             onLogout={onLogout}
             logoutPending={logoutPending}
           />
@@ -1311,7 +1486,18 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
         
         {view === 'recordings' && !isGuest && (
-          <RecordingUploadView onBack={() => { saveActiveView('summary'); setView('summary'); }} />
+          <RecordingUploadView
+            recordingId={recordingId}
+            onRecordingChange={recId => navigateTo({ view: 'recordings', recordingId: recId })}
+            onBack={() => {
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'recordings') {
+                window.history.back();
+              } else {
+                saveActiveView('summary');
+                navigateTo({ view: 'summary', meetingId: null });
+              }
+            }}
+          />
         )}
 
         {view === 'summary' && !summaryMeetingId && !isSummarizing && (
@@ -1324,14 +1510,18 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onSelectSummary={openSavedSummary}
             onSelectInProgress={openInProgressSummary}
             onBackToHome={() => {
-              saveActiveView('home');
-              setView('home');
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'summary') {
+                window.history.back();
+              } else {
+                saveActiveView('home');
+                navigateTo({ view: 'home' });
+              }
             }}
             onRefreshData={fetchDbSummaries}
             isLoadingDb={isLoadingDb}
             notice={historyNotice}
             onUploadAudio={handleUploadAudioBatch}
-            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); navigateTo({ view: 'recordings' }); }}
           />
         )}
 
@@ -1352,12 +1542,17 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
             onBackToHistory={() => {
-              setSummaryMeetingId(null);
-              setSummary(null);
-              setIsSummarizing(false);
-              setSummaryError(null);
-              const session = readSummarySession();
-              if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+              if (typeof window !== 'undefined' && window.history.state?.view === 'summary' && window.history.state?.meetingId) {
+                window.history.back();
+              } else {
+                setSummaryMeetingId(null);
+                setSummary(null);
+                setIsSummarizing(false);
+                setSummaryError(null);
+                const session = readSummarySession();
+                if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+                navigateTo({ view: 'summary', meetingId: null });
+              }
             }}
             onNewCall={() => {
               summaryGeneration.current++;
@@ -1372,7 +1567,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               setSummaryToken(null);
               setSummaryRoomName('');
               saveActiveView('home');
-              setView('home');
+              navigateTo({ view: 'home' });
             }}
           />
         )}

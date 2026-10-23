@@ -191,11 +191,20 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
   );
 }
 
-export function RecordingUploadView({ onBack }: { onBack: () => void }) {
+export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRecordingChange }: {
+  onBack: () => void;
+  recordingId?: string | null;
+  onRecordingChange?: (id: string | null) => void;
+}) {
   const [items, setItems] = useState<RecordingUpload[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(propRecordingId || null);
+  const selectedId = propRecordingId !== undefined ? propRecordingId : localSelectedId;
+  const setSelectedId = (id: string | null) => {
+    setLocalSelectedId(id);
+    onRecordingChange?.(id);
+  };
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');

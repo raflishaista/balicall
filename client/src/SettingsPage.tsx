@@ -22,9 +22,11 @@ const categories = [
   { id: 'storage', title: 'Rekaman & Penyimpanan', description: 'Perekaman rapat, unggahan MP4, dan data notulen.', Icon: Cloud, available: true },
   { id: 'security', title: 'Keamanan & Akses', description: 'Kontrol akses rapat, privasi, dan status sesi.', Icon: ShieldCheck, available: true },
 ] as const;
-type Section = 'overview' | 'profile' | 'devices' | 'display' | 'notifications' | 'ai' | 'storage' | 'security';
+export type Section = 'overview' | 'profile' | 'devices' | 'display' | 'notifications' | 'ai' | 'storage' | 'security';
 
-export function SettingsPage({ preferences, notice, employeeId, employeeName, department, authUser, transcription, aiStatus, onSave, onCheckDevices, onProfileUpdated, onOpenRecordings, onLogout, logoutPending }: {
+export function SettingsPage({ section: propSection, onSectionChange, preferences, notice, employeeId, employeeName, department, authUser, transcription, aiStatus, onSave, onCheckDevices, onProfileUpdated, onOpenRecordings, onLogout, logoutPending }: {
+  section?: Section;
+  onSectionChange?: (section: Section) => void;
   preferences: MeetingPreferences; notice: string | null; employeeId: string; employeeName: string; department: string;
   authUser?: AuthUser | null; onProfileUpdated?: (user:AuthUser)=>void;
   transcription: { configured: boolean; models: string[]; defaultModel: string } | null;
@@ -35,7 +37,12 @@ export function SettingsPage({ preferences, notice, employeeId, employeeName, de
   onLogout?: () => Promise<void>;
   logoutPending?: boolean;
 }) {
-  const [section, setSection] = useState<Section>('overview');
+  const [localSection, setLocalSection] = useState<Section>(propSection || 'overview');
+  const section = propSection !== undefined ? propSection : localSection;
+  const setSection = (next: Section) => {
+    setLocalSection(next);
+    onSectionChange?.(next);
+  };
   const headingRef = useRef<HTMLHeadingElement>(null);
   const previousSection = useRef<Section>('overview');
   const [query, setQuery] = useState('');
