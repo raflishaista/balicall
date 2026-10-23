@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
@@ -21,10 +21,10 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onLogout, logoutPending, isGuest = false, authUser }: {
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, onLogout, logoutPending, isGuest = false, authUser }: {
   authUser?: AuthUser|null; onLogout?: () => Promise<void>; logoutPending?: boolean; isGuest?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
-  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void;
+  onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void; onDocumentation: () => void;
 }) {
   return <aside className="workspace-sidebar">
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
@@ -40,6 +40,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
         {hasSummary && <span className="sidebar-has-summary-dot" title="Tersedia notulen tersimpan" />}
       </button>}
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
+      <button type="button" className={view === 'documentation' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'documentation' ? 'page' : undefined} onClick={onDocumentation}><BookOpen size={19} /><span>Dokumentasi</span></button>
     </nav>
     <div className="sidebar-bottom">
       {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
