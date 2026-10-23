@@ -1,0 +1,5 @@
+# Protocol tests use fake engines: no model weights, PyTorch, CUDA or ASR runtime.
+fastapi==0.141.1
+httpx==0.28.1
+numpy==2.5.2
+websockets==15.0.1
