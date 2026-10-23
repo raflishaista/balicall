@@ -133,7 +133,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'documentation' | 'recordings'>(() => {
+  const [view, setView] = useState<AppView>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -732,6 +732,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
       summaryGeneration.current++;
+      // Old summary work must not pause ASR or lock controls in the new room.
+      setIsSummarizing(false);
+      setBatchDiarizing(false);
       setCallPreferences({
         ...userPreferences.preferences,
         sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
@@ -834,7 +837,6 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   };
 
   const handleEndMeeting = async (generate = true) => {
-    handleEndMeetingRef.current = handleEndMeeting;
     if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
@@ -969,6 +971,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     })();
   };
+
+  useEffect(() => {
+    handleEndMeetingRef.current = handleEndMeeting;
+  });
 
   const handleRetrySummarize = () => {
     if (summaryMeetingId && summaryToken) {
@@ -1287,9 +1293,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             navigateTo({ view: 'settings', section: 'overview' });
           }}
           onDocumentation={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('documentation');
-            setView('documentation');
+            navigateTo({ view: 'documentation' });
           }}
           onSummary={() => {
             saveActiveView('summary');
