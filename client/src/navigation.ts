@@ -47,6 +47,8 @@ export function routeToHash(route: RouteState): string {
       return '#/home';
     case 'schedule':
       return '#/schedule';
+    case 'documentation':
+      return '#/documentation';
     case 'settings':
       return route.section && route.section !== 'overview'
         ? `#/settings/${route.section}`
@@ -92,6 +94,9 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
 
     case 'schedule':
       return { view: 'schedule' };
+
+    case 'documentation':
+      return { view: 'documentation' };
 
     case 'settings': {
       const section = segments[1]?.toLowerCase();

@@ -738,6 +738,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
       summaryGeneration.current++;
+      // Old summary work must not pause ASR or lock controls in the new room.
+      setIsSummarizing(false);
+      setBatchDiarizing(false);
       setCallPreferences({
         ...userPreferences.preferences,
         sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
@@ -844,7 +847,6 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   };
 
   const handleEndMeeting = async (generate = true) => {
-    handleEndMeetingRef.current = handleEndMeeting;
     if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
@@ -979,6 +981,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     })();
   };
+
+  useEffect(() => {
+    handleEndMeetingRef.current = handleEndMeeting;
+  });
 
   const handleRetrySummarize = () => {
     if (summaryMeetingId && summaryToken) {
@@ -1297,7 +1303,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             navigateTo({ view: 'settings', section: 'overview' });
           }}
           onDocumentation={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('documentation');
             navigateTo({ view: 'documentation' });
           }}
