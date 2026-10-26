@@ -174,3 +174,9 @@ export function scopedSummaryStorage(employeeId: string | null) {
     saveInProgressSummary: bind(saveInProgressSummary), removeInProgressSummary: bind(removeInProgressSummary),
     readActiveView: bind(readActiveView), saveActiveView: bind(saveActiveView) };
 }
+
+export function clearSummarySession() {
+  try {
+    for (const key of [SESSION_KEY, IN_PROGRESS_KEY, TOKEN_KEY]) window.sessionStorage.removeItem(accountKey(key));
+  } catch { /* A revoked server session remains revoked even if browser storage is blocked. */ }
+}

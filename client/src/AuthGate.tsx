@@ -7,6 +7,7 @@ import devices from './assets/login/balicall-connected-devices.png';
 import logo from './assets/login/balitower-balicall-logo-white.png';
 import './Login.css';
 import { disablePush } from './pushNotifications';
+import { clearSummarySession } from './summaryHistory';
 
 export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
@@ -16,6 +17,7 @@ export function AuthGate() {
   const [checking, setChecking] = useState(true);
   const [logoutPending, setLogoutPending] = useState(false);
   const generation = useRef({ value: 0 });
+  const logoutLock = useRef(false);
   const accept = useCallback((next: Session) => {
     setAuthCsrfToken(next.csrfToken || null); setAccountScope(next.user?.employeeId || null);
     setSession(next); setError(null);
@@ -35,22 +37,33 @@ export function AuthGate() {
     return () => { lifecycle.value++; window.removeEventListener(AUTH_EXPIRED_EVENT, expired); };
   }, [check]);
   const logout = async () => {
-    if(logoutPending)return;
-    setLogoutPending(true);setError(null);
-    try { if(session?.user&&!session.user.isGuest)await disablePush(); await apiRequest('/auth/logout', {method:'POST'}); accept({enabled:true,user:null}); }
-    catch(err) {setError(err instanceof Error?err.message:'Gagal keluar. Coba lagi.');}
-    finally {setLogoutPending(false);}
+    if (logoutLock.current) return;
+    logoutLock.current = true;
+    generation.current.value++;
+    setLogoutPending(true); setError(null);
+    try {
+      // Notification cleanup must not prevent revoking the login session.
+      if (session?.user && !session.user.isGuest) {
+        try { await disablePush(); } catch { console.warn('Push cleanup unavailable during logout.'); }
+      }
+      await apiRequest('/auth/logout', {method:'POST'});
+      clearSummarySession();
+      accept({enabled:true,user:null});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal keluar. Coba lagi.');
+    } finally {
+      logoutLock.current = false; setLogoutPending(false);
+    }
   };
-  // DISABLED MANDATORY LOGIN BARRIER (saved for future re-enabling):
-  /*
-  if (!checking && session && (!session.enabled || session.user)) return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user} onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)} onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
-  return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking} onRetry={async () => { setChecking(true); await check(); }} onAuthenticated={accept} />;
-  */
-
-  if (!checking) {
-    return <><App key={session?.user?.employeeId || 'legacy'} authUser={session?.user || null} onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)} onLogout={session?.enabled && session?.user ? logout : undefined} logoutPending={logoutPending} />{error && <div className="login-session-error" role="alert">{error}</div>}</>;
+  if (!checking && session && (!session.enabled || session.user)) {
+    return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
+      onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)}
+      onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />
+      {error && <div className="login-session-error" role="alert">{error}</div>}</>;
   }
-  return <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', background: '#0a1d37', color: '#90cdf4' }}><Loader2 className="ui-spinner" size={24} /></div>;
+  return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking}
+    onRetry={async()=>{setChecking(true);await check();}} onAuthenticated={accept} />;
+
 }
 export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
   checking:boolean;serviceError:string|null;unavailable:boolean;onRetry:()=>Promise<void>;onAuthenticated:(session:Session)=>void;

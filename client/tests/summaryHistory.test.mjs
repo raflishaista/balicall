@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { HISTORY_KEY, HISTORY_LIMIT, SESSION_KEY, readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor, upsertSummary } from '../src/summaryHistory.ts';
 function storage() {
   const data = new Map();
-  return { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  return { getItem: key => data.get(key) ?? null, removeItem: key => data.delete(key), setItem: (key, value) => data.set(key, value) };
 }
 function fixture() { globalThis.window = { localStorage: storage(), sessionStorage: storage() }; }
 function record(id = 'meeting-1') {
@@ -70,4 +70,17 @@ test('summary history and normalizeDbSummary preserve recording metadata', async
   assert.equal(retrieved[0].hasRecording, true);
   assert.equal(retrieved[0].recordingSize, 1048576);
   assert.equal(retrieved[1].hasRecording, false);
+});
+
+test('logout clears this account session tokens while preserving archives and other accounts',async()=>{
+  const {clearSummarySession}=await import('../src/summaryHistory.ts');
+  const {setAccountScope}=await import('../src/accountScope.ts');
+  fixture();
+  try{
+    setAccountScope('account-a');saveSummaryHistory([record()]);saveSummarySession({meetingId:'meeting-1',roomName:'QC',token:'account-a-token',transcripts:[],open:true});
+    setAccountScope('account-b');saveSummarySession({meetingId:'meeting-2',roomName:'QC',token:'account-b-token',transcripts:[],open:true});
+    setAccountScope('account-a');clearSummarySession();
+    assert.equal(readSummarySession(),null);assert.equal(summaryTokenFor('meeting-1'),'');assert.equal(readSummaryHistory().length,1);
+    setAccountScope('account-b');assert.equal(summaryTokenFor('meeting-2'),'account-b-token');
+  }finally{setAccountScope(null);}
 });

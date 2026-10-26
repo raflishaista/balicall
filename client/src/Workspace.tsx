@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, LogOut, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
@@ -43,7 +43,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button type="button" className={view === 'documentation' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'documentation' ? 'page' : undefined} onClick={onDocumentation}><BookOpen size={19} /><span>Dokumentasi</span></button>
     </nav>
     <div className="sidebar-bottom">
-      {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
+      {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogOut size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
       <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
     </div>
