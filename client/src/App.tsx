@@ -71,6 +71,7 @@ import {
   isTrackReference,
 } from '@livekit/components-react';
 import {
+  LogOut,
   Copy,
   Check,
   ArrowRight,
@@ -1333,7 +1334,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          onLogout={onLogout} logoutPending={logoutPending}
           hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => {
             saveActiveView('home');
@@ -1392,6 +1392,9 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               )}
             </div>
           )}
+          {view !== 'in-call' && <button type="button" className="header-account-logout" disabled={logoutPending || !onLogout} onClick={() => void onLogout?.()} title={!onLogout ? 'Mode tanpa login: tidak ada sesi akun untuk dikeluarkan' : 'Keluar dari akun BaliCall'} aria-label="Keluar akun" aria-busy={logoutPending}>
+            {logoutPending ? <Loader2 className="ui-spinner" size={17} aria-hidden="true" /> : <LogOut size={17} aria-hidden="true" />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span>
+          </button>}
           <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span>
         </div>
       </header>

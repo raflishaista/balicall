@@ -1232,3 +1232,9 @@ input::placeholder { color: #a1b1c6; }
 }
 
 .guest-invite-strip{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 24px;background:#eaf4ff;color:#08315b}.guest-invite-strip label{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.guest-invite-strip input{max-width:100%;padding:8px;border:1px solid #bad4ef;border-radius:6px;color:#08315b;background:white;font:inherit}
+
+.header-account-logout { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex-shrink: 0; min-height: 40px; padding: 0 13px; border: 1px solid #dce5ef; border-radius: 9px; background: #fff; color: #294766; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.header-account-logout:hover:not(:disabled) { background: #fff4ed; border-color: #ffb47c; color: #a84712; }
+.header-account-logout:focus-visible { outline: 3px solid #80bbef; outline-offset: 3px; }
+.header-account-logout:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 720px) { .header-account-logout { min-width: 40px; padding: 0 10px; } .header-account-logout span { display: none; } }
