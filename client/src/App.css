@@ -531,6 +531,18 @@ input::placeholder { color: #a1b1c6; }
 .guide-steps { display: grid; gap: 19px; padding-left: 21px; margin: 0 0 26px; color: #6e9bd4; font-size: 11px; }
 .guide-steps strong { display: block; margin-bottom: 6px; color: #49698e; font-weight: 600; }
 .guide-steps span { color: #8e9fb5; font-size: 10px; line-height: 1.7; }
+.leave-dialog { position: relative; width: min(440px,calc(100vw - 32px)); padding: 24px; background: #fff; border-radius: 14px; box-shadow: 0 20px 70px rgba(6,27,61,.35); animation: dialog-in .2s cubic-bezier(.2,.75,.3,1) both; }
+.leave-dialog-header { display: flex; align-items: flex-start; gap: 15px; margin-bottom: 22px; padding-right: 28px; }
+.leave-dialog-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0; }
+.leave-dialog-icon.danger { background: #fee2e2; color: #dc2626; }
+.leave-dialog-icon.warning { background: #fef3c7; color: #d97706; }
+.leave-dialog-icon.summary { background: #eff6ff; color: #2563eb; }
+.leave-dialog-content h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; color: #1e293b; letter-spacing: -.3px; line-height: 1.3; }
+.leave-dialog-content p { margin: 0; font-size: 12px; color: #64748b; line-height: 1.6; }
+.leave-dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.leave-dialog-actions button { min-height: 38px; padding: 0 16px; font-size: 12px; font-weight: 550; border-radius: 7px; display: inline-flex; align-items: center; gap: 7px; }
+.button-danger { background: #dc2626 !important; color: #fff !important; border: none !important; }
+.button-danger:hover:not(:disabled) { background: #b91c1c !important; }
 @media (min-width:1500px) { .dashboard-content { padding-top: 38px; } .dashboard-hero { height: 275px; } .hero-copy { padding: 35px; } .hero-copy h2 { font-size: 36px; } .hero-copy p { font-size: 12px; } .hero-caption { margin-top: 24px; } .quick-action { min-height: 90px; } }
 @media (max-width:1100px) { .app-root { grid-template-columns: 190px minmax(0,1fr); } .workspace-sidebar { padding: 24px 12px; } .sidebar-brand { padding-left: 10px; } .sidebar-brand .brand-logo { width: 140px; } .dashboard-content { padding: 27px 24px; } .workspace-search { flex-basis: 210px; } .quick-action { gap: 9px; padding: 12px; } .quick-action > svg { display: none; } .dashboard-columns { gap: 14px; } .surface-card { padding: 19px; } .lobby-page { padding: 27px 24px; } .lobby-card { padding: 24px; } .lobby-preview { padding: 19px; } .summary-page { padding: 25px; } .summary-heading { flex-direction: column; } .in-call-layout { display: block; } .call-room { grid-template-columns: minmax(0,1fr) 325px; } .call-control-bar { padding: 12px 16px; gap: 8px; } .call-control { min-width: 57px; } .leave-controls { gap: 5px; } .leave-button { padding: 0 10px; } }
 @media (max-width:900px) { .workspace-search { display: none; } .dashboard-columns { grid-template-columns: 1fr; } .assistant-card { min-height: 295px; } .assistant-feature { padding: 11px 0; } .connection-card { margin-top: 18px; } .lobby-layout { grid-template-columns: 1fr; } .lobby-preview { padding: 22px; } .audio-preview { min-height: 210px; } .preview-wave { display: none; } .preview-diagnostic { max-width: 420px; width: 100%; margin: 0 auto; } .audio-preview .preview-avatar { width: 72px; height: 72px; font-size: 25px; margin-bottom: 14px; } .lobby-card { padding: 26px; } }

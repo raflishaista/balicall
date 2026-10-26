@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
+import { LeaveConfirmDialog } from './LeaveConfirmDialog';
 import { shouldMirrorCamera } from './backgroundEffects';
 import type { BackgroundBlurControl } from './useBackgroundBlur';
 import { MeetingControls } from './MeetingControls';
@@ -401,9 +402,25 @@ export function MeetingRoom({
         ? 'Menyiapkan notulen…'
         : 'Menyimpan rapat…';
 
+  const isGuest = employeeId.startsWith('GUEST-');
+  const isLastUser = participants.length <= 1 || participants.filter(p => !p.isLocal).length === 0;
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  const [leaveIntent, setLeaveIntent] = useState<'leave' | 'summary'>('leave');
+
   const requestFinish = (generate: boolean) => {
-    setFinishMode(generate ? 'summary' : 'leave');
-    void onFinish(generate).finally(() => setFinishMode(null));
+    setLeaveIntent(generate ? 'summary' : 'leave');
+    setConfirmLeaveOpen(true);
+  };
+
+  const handleConfirmLeave = () => {
+    setConfirmLeaveOpen(false);
+    const shouldGenerate = (leaveIntent === 'summary' || isLastUser) && !isGuest;
+    setFinishMode(shouldGenerate ? 'summary' : 'leave');
+    void onFinish(shouldGenerate).finally(() => setFinishMode(null));
+  };
+
+  const handleCancelLeave = () => {
+    setConfirmLeaveOpen(false);
   };
 
   const transcriptStatus = !connected
@@ -1189,6 +1206,16 @@ export function MeetingRoom({
           onClose={() => setBackgroundsOpen(false)}
         />
       )}
+
+      <LeaveConfirmDialog
+        isOpen={confirmLeaveOpen}
+        isLastUser={isLastUser}
+        isGuest={isGuest}
+        intent={leaveIntent}
+        busy={busy}
+        onConfirm={handleConfirmLeave}
+        onCancel={handleCancelLeave}
+      />
     </div>
   );
 }

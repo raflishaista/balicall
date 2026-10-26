@@ -232,6 +232,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     const syncMeetingRole = async () => {
       try {
         const data = await apiRequest<{
+          status?: string;
           currentRole?: MeetingRole;
           hostId?: string;
           coHostIds?: string[];
@@ -248,6 +249,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         });
 
         if (cancelled) return;
+
+        if (data.status === 'ended' && !endingMeeting.current) {
+          void handleEndMeetingRef.current?.(true);
+          return;
+        }
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
@@ -838,9 +844,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     } catch (error) {
       if (generation !== summaryGeneration.current) return;
-      setSummaryError(
-        error instanceof Error ? error.message : 'Gagal membuat notulen AI. Silakan coba lagi.'
-      );
+      const rawMessage = error instanceof Error ? error.message : '';
+      const message = rawMessage.includes('No saved speech to summarize')
+        ? 'Belum ada rekaman percakapan untuk dibuat notulen. Silakan berbicara terlebih dahulu saat rapat.'
+        : rawMessage || 'Gagal membuat notulen AI. Silakan coba lagi.';
+      setSummaryError(message);
     } finally {
       if (generation === summaryGeneration.current) setIsSummarizing(false);
     }
@@ -870,7 +878,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
       void (async () => {
         try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
-        await apiRequest(meetingPath(currentMeetingId, 'leave'), {
+        const leaveData = await apiRequest<{ status?: string }>(meetingPath(currentMeetingId, 'leave'), {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
           body: '{}',
@@ -879,6 +887,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           return { status: 'ended' };
         });
         endingMeeting.current = false;
+        if (!isGuest && leaveData?.status === 'ended' && currentRouteRef.current.view === 'home') {
+          openInProgressSummary({
+            meetingId: currentMeetingId,
+            roomName: currentRoomName,
+            token: currentToken,
+            transcripts: capturedTranscripts,
+            startedAt: new Date().toISOString(),
+            hostId: employeeId,
+            hostName: employeeName,
+            department,
+          });
+        }
       })();
       return;
     }
@@ -1828,7 +1848,12 @@ function RoomContent({
     if (finishRequest.current) return;
     finishRequest.current = true;
     setFinishing(true); setFinishError(null);
-    try { await finishTranscription(); await onEndMeeting(generate); }
+    try {
+      const isLastUser = participants.length <= 1 || participants.filter((p: any) => !p.isLocal).length === 0;
+      const shouldGenerate = (generate || isLastUser) && !employeeId.startsWith('GUEST-');
+      await finishTranscription();
+      await onEndMeeting(shouldGenerate);
+    }
     catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
     finally { finishRequest.current = false; setFinishing(false); }
   };
