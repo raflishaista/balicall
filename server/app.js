@@ -3,8 +3,8 @@ import express from 'express';
 import { attachAuth } from './auth.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
-import { existsSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, statSync, realpathSync } from 'node:fs';
+import { join, basename, relative, isAbsolute } from 'node:path';
 import { randomUUID, randomBytes, createHmac } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
@@ -15,6 +15,7 @@ import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
 import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio, normalizeTranscriptText } from './providers.js';
 import { attachRecordingUploads } from './recordingUploads.js';
+import { createPostMeetingBatch, publicBatch } from './postMeetingBatch.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady } from './qwenCapabilities.js';
 import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
@@ -22,6 +23,7 @@ import {
   isDbConnected,
   saveMeeting,
   saveMeetingSummary,
+  savePostMeetingBatch,
   saveTranscripts,
   saveAttendees,
   getMeetingSummaries,
@@ -69,6 +71,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   const inFlightAudio = new Map();
   const inFlightSummarize = new Map();
   const meetingAudios = new Map();
+  const postMeetingBatch = createPostMeetingBatch({ config, store, egress: egressClient, fetchImpl,
+    summarize: meeting => summarize(meeting, config, fetchImpl),
+    persist: async (meeting, result) => {
+      if (config.databaseUrl) {
+        await savePostMeetingBatch(meeting, publicBatch(result));
+        await saveMeetingSummary(meeting.id, meeting.roomName, result.summary);
+      }
+    },
+  });
   const webhookLogs = [];
 
   app.use('/api', (req,res,next)=>{
@@ -135,6 +146,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       sttDiarization: Boolean(config.sttDiarization),
       qwenDiarizationReady: await qwenDiarizationReady(config, fetchImpl),
       qwenLiveReady: qwenLive.ready,
+      qwenBatchConfigured: postMeetingBatch.configured,
+      qwenBatchWorkerReady: await postMeetingBatch.workerReady(),
       qwenLiveDiarizationReady: qwenLive.diarization,
       seaLivePilotReady,
       seaLiveDiarizationReady: seaLivePilotReady && seaLive.diarization,
@@ -470,34 +483,27 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   function getMeetingRecordingInfo(meetingId, storeMeeting = null) {
-    if (!meetingId) return { hasRecording: false };
-    const cleanId = String(meetingId).replace(/^meeting-/, '');
-    const candidates = [
-      join(config.livekitRecordingsDir, `meeting-${cleanId}.mp4`),
-      join(config.livekitRecordingsDir, `${cleanId}.mp4`),
-      join(config.livekitRecordingsDir, `${meetingId}.mp4`),
-    ];
-    if (storeMeeting?.recording?.filepath) {
-      candidates.unshift(join(config.livekitRecordingsDir, basename(storeMeeting.recording.filepath)));
-    }
-    for (const filePath of candidates) {
-      if (existsSync(filePath)) {
+    const cleanId = String(meetingId || '').replace(/^meeting-/, '');
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(cleanId)) return {hasRecording:false};
+    const names = [...new Set(['mp4','ogg'].flatMap(ext => [`meeting-${cleanId}.${ext}`, `${cleanId}.${ext}`]))];
+    const recordedName = storeMeeting?.recording?.filepath && basename(storeMeeting.recording.filepath);
+    if (names.includes(recordedName)) names.unshift(recordedName);
+    const roots = [...new Set([config.livekitRecordingsDir, config.qwenBatchRecordingsDir].filter(Boolean))];
+    for (const root of roots) {
+      let base;
+      try { base = realpathSync(root); } catch { continue; }
+      for (const name of names) {
         try {
+          const filePath = realpathSync(join(base,name));
+          const rel = relative(base,filePath);
+          if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
           const stats = statSync(filePath);
-          if (stats.size > 0) {
-            return {
-              hasRecording: true,
-              filePath,
-              fileName: basename(filePath),
-              fileSize: stats.size,
-            };
-          }
-        } catch (err) {
-          console.warn('[RECORDING] stat error for', filePath, err.message);
-        }
+          if (stats.isFile() && stats.size > 0) return {hasRecording:true,filePath,
+            fileName:basename(filePath),fileSize:stats.size};
+        } catch { /* Missing files are normal while Egress finishes writing. */ }
       }
     }
-    return { hasRecording: false };
+    return {hasRecording:false};
   }
 
   function writable(req, res) {
@@ -880,9 +886,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       coHostIds: meeting.coHostIds || [],
       currentRole,
       recording: meeting.recording || null,
-      transcripts: meeting.transcripts,
+      transcripts: meeting.postMeetingBatch?.status === 'done' ? meeting.postMeetingBatch.transcripts : meeting.transcripts,
+      postMeetingBatch: publicBatch(meeting.postMeetingBatch),
       participants: [...meeting.participants.values()].map(publicParticipant),
-      summary: meeting.summary,
+      summary: meeting.postMeetingBatch?.status === 'done' ? meeting.postMeetingBatch.summary : meeting.summary,
       attendanceFinalization: meeting.attendanceFinalization || null,
       microphoneRestricted: Boolean(
         meeting.participants.get(req.speakerId)?.moderatorMuted
@@ -967,7 +974,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   });
 
   app.post('/api/meetings/:id/recording/start', asyncRoute(async (req, res) => {
+    if (!requireMeetingManager(req, res)) return;
     const meeting = store.get(req.meetingId);
+    const batchRequested = req.body?.postMeetingBatch === true;
+    if (batchRequested && (req.speakerId !== meeting.hostId || !postMeetingBatch.configured)) return res.status(503).json({ error: 'Batch Qwen hanya dapat diaktifkan host setelah worker dan folder rekaman dikonfigurasi.' });
+    if (batchRequested && ((meeting.recordingRuns || 0) > 0 || !['id', 'en'].includes(req.body?.language || 'id'))) return res.status(400).json({ error: 'Batch memerlukan satu rekaman utuh dan bahasa id/en. Mulai dari rapat baru.' });
 
     if (meeting.status !== 'active') {
       return res.status(409).json({ error: 'Meeting sudah selesai.' });
@@ -980,23 +991,25 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       });
     }
 
-    const filepath = `/out/${meeting.livekitRoom}.mp4`;
+    const audioOnly = batchRequested;
+    const filepath = `/out/${meeting.livekitRoom}.${audioOnly ? 'ogg' : 'mp4'}`;
 
     const result = await egressClient.startRoomCompositeEgress(
       meeting.livekitRoom,
       {
         file: {
           filepath,
-          fileType: 1,
+          fileType: audioOnly ? 2 : 1,
         },
       },
       // Empty layout skips the default template's screen-share focus switch.
       // Explicit grid keeps camera tiles equal and promotes screen sharing.
-      { layout: 'grid' },
+      audioOnly ? { audioOnly: true, ...(config.qwenBatchEgressMode === 'sdk' ? {} : { layout: 'grid' }) } : { layout: 'grid' },
     );
 
     const recording = {
       egressId: result.egressId,
+      audioOnly,
       status: 'active',
       startedAt: new Date().toISOString(),
       stoppedAt: null,
@@ -1005,6 +1018,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
     store.transact(() => {
       store.get(req.meetingId).recording = recording;
+      store.get(req.meetingId).recordingRuns = (store.get(req.meetingId).recordingRuns || 0) + 1;
+      if (batchRequested) store.get(req.meetingId).postMeetingBatchRequested = { language: req.body?.language || 'id' };
     });
 
     res.json({
@@ -1043,6 +1058,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
     }
 
+    postMeetingBatch.schedule(updated.id);
     try {
       await saveMeeting(updated);
       await saveAttendees(updated.id, [...updated.participants.values()]);
@@ -1062,6 +1078,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   app.post('/api/meetings/:id/recording/stop', asyncRoute(async (req, res) => {
+    if (!requireMeetingManager(req, res)) return;
     const meeting = store.get(req.meetingId);
     const recording = meeting.recording;
 
@@ -1229,12 +1246,24 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     store,
     pendingAudio: id => [...inFlightAudio].filter(([key]) => key.startsWith(`${id}:`)).map(([, work]) => work),
     persist: async meeting => {
+      postMeetingBatch.schedule(meeting.id);
       await saveMeeting(meeting);
       await saveAttendees(meeting.id, [...meeting.participants.values()]);
       if (meeting.transcripts.length) await saveTranscripts(meeting.id, meeting.roomName, meeting.transcripts);
     },
     summarize: summarizeMeeting,
   });
+
+  app.get('/api/meetings/:id/post-meeting-batch', (req, res) => {
+    res.set('Cache-Control', 'no-store').json({ configured: postMeetingBatch.configured, requested: Boolean(store.get(req.meetingId).postMeetingBatchRequested), job: publicBatch(store.get(req.meetingId).postMeetingBatch) });
+  });
+  app.post('/api/meetings/:id/post-meeting-batch', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (req.speakerId !== meeting.hostId || req.auth?.user?.isGuest) return res.status(403).json({ error: 'Hanya host rapat yang dapat memulai batch Qwen.' });
+    if (inFlightSummarize.has(meeting.id)) return res.status(409).json({ error: 'Tunggu pembuatan notulen live selesai sebelum memulai batch.' });
+    const job = await postMeetingBatch.start(meeting.id, req.body?.language || 'id');
+    res.status(job.status === 'done' ? 200 : 202).json({ job: publicBatch(job) });
+  }));
 
   app.post('/api/meetings/:id/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
@@ -1346,6 +1375,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
+    if (meeting.postMeetingBatch?.status === 'done') return res.json({ success: true,
+      summary: meeting.postMeetingBatch.summary, transcripts: meeting.postMeetingBatch.transcripts, meetingStatus: meeting.status });
     const shouldBatch = req.query.batchDiarize === 'true' || req.body?.batchDiarize === true;
     const hasLive = () => meeting.transcripts.some(entry => [QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel));
 
@@ -1451,8 +1482,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             created_at: storeMeeting.createdAt,
             ended_at: storeMeeting.endedAt,
           },
-          summary: storeMeeting.summary,
-          transcripts: storeMeeting.transcripts,
+          summary: storeMeeting.postMeetingBatch?.status === 'done' ? storeMeeting.postMeetingBatch.summary : storeMeeting.summary,
+          transcripts: storeMeeting.postMeetingBatch?.status === 'done' ? storeMeeting.postMeetingBatch.transcripts : storeMeeting.transcripts,
+          postMeetingBatch: publicBatch(storeMeeting.postMeetingBatch),
           attendees: [...storeMeeting.participants.values()].map(publicParticipant),
           hasRecording: rec.hasRecording,
           recordingSize: rec.fileSize || null,
@@ -1821,6 +1853,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (webhookLogs.length > 50) webhookLogs.pop();
 
     const applied = store.applyLivekitEvent(event, config.attendanceGraceMs ?? 10000);
+    if (applied.meetingId) postMeetingBatch.schedule(applied.meetingId);
     if (applied.meetingId && !applied.duplicate) {
       const meeting = store.get(applied.meetingId);
       await saveMeeting(meeting);
@@ -1870,5 +1903,5 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });
   });
 
-  return { app, store, notificationTick:()=>notifications?.tick(), close(){attendanceFinalizer.close();notifications?.close();} };
+  return { app, store, notificationTick:()=>notifications?.tick(), close(){postMeetingBatch.close();attendanceFinalizer.close();notifications?.close();} };
 }

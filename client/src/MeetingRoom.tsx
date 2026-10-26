@@ -140,7 +140,8 @@ interface MeetingRoomProps {
 
   recordingPending: boolean;
   recordingError: string | null;
-  onToggleRecording: (enabled: boolean) => Promise<void>;
+  onToggleRecording: (enabled: boolean, postMeetingBatch?: boolean) => Promise<void>;
+  qwenBatchConfigured?: boolean;
 
   isCameraBlur?: boolean;
   cameraBlurPending?: boolean;
@@ -226,6 +227,7 @@ export function MeetingRoom({
   recordingError,
   isRecording,
   onToggleRecording,
+  qwenBatchConfigured = false,
   isCameraBlur = false,
   cameraBlurPending = false,
   cameraBlurSupported = true,
@@ -789,6 +791,13 @@ export function MeetingRoom({
               </summary>
 
               <div className="transcription-dropdown-panel">
+                {meetingRole === 'host' && qwenBatchConfigured && <div className="transcription-dropdown-field">
+                  <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
+                  <p>Rekam audio seluruh peserta sejak awal; kamera tidak direkam. Batch dimulai otomatis setelah semua peserta keluar. Label pembicara berlaku untuk rekaman ini; suara bertumpuk ditandai.</p>
+                  <button type="button" className="button-secondary" disabled={recording || recordingPending || !connected} onClick={() => {
+                    if (!callPreferences?.recordingConsentPrompt || window.confirm('Mulai rekaman audio seluruh peserta untuk batch Qwen + Nemotron setelah rapat?')) void onToggleRecording(true, true);
+                  }}>{recording ? 'Rekaman sedang berjalan' : 'Rekam audio untuk batch Qwen'}</button>
+                </div>}
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-lang-select">Bahasa</label>
                   <select

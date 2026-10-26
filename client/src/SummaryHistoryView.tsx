@@ -1,3 +1,4 @@
+import {recordingDownloadName} from './recordingDownload';
 import { useState, useMemo } from 'react';
 import {
   FileText,
@@ -89,7 +90,7 @@ export function SummaryHistoryView({
     const cleanId = record.meetingId.replace(/^meeting-/, '');
     setDownloadingId(record.meetingId);
     try {
-      const res = await fetch(`${API_BASE}/meetings/${cleanId}/recording/download`, {
+      const res = await fetch(`${API_BASE}/meetings/${encodeURIComponent(cleanId)}/recording/download`, {
         method: 'GET',
         credentials: 'include',
       });
@@ -106,7 +107,7 @@ export function SummaryHistoryView({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `balicall-recording-${cleanId}.mp4`;
+      a.download = recordingDownloadName(res, cleanId);
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -530,7 +531,7 @@ export function SummaryHistoryView({
                         className="button-secondary compact-btn recording-download-btn"
                         onClick={e => handleDownloadRecording(record, e)}
                         disabled={downloadingId === record.meetingId}
-                        title="Unduh rekaman video MP4 rapat ini"
+                        title="Unduh rekaman rapat dalam format aslinya (MP4 video atau OGG audio)"
                       >
                         {downloadingId === record.meetingId ? (
                           <Loader2 size={13} className="ui-spinner" />

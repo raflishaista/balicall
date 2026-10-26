@@ -64,6 +64,9 @@ export function loadConfig(env = process.env) {
     livekitRecordingsDir: env.LIVEKIT_RECORDINGS_DIR || fileURLToPath(new URL('../infrastructure/livekit/recordings', import.meta.url)),
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
+    qwenBatchEnabled: env.QWEN_BATCH_ENABLED === 'true',
+    qwenBatchEgressMode: env.QWEN_BATCH_EGRESS_MODE || 'web',
+    qwenBatchRecordingsDir: env.QWEN_BATCH_RECORDINGS_DIR || '',
     // Operator opt-in only. Keep UI locked until real diarization QC passes.
     qwenDiarizationEnabled: env.QWEN_DIARIZATION_ENABLED === 'true',
     qwenSttKey: env.QWEN_STT_API_KEY || '',
@@ -111,6 +114,7 @@ export function loadConfig(env = process.env) {
     throw new Error('Production requires non-development LiveKit credentials');
   }
   if (!Number.isInteger(config.recordingUploadMaxMb) || config.recordingUploadMaxMb < 1 || config.recordingUploadMaxMb > 5000) throw new Error('RECORDING_UPLOAD_MAX_MB must be an integer from 1 to 5000');
+  if (!['web', 'sdk'].includes(config.qwenBatchEgressMode)) throw new Error('QWEN_BATCH_EGRESS_MODE must be web or sdk');
   if (!Number.isInteger(config.recordingPollMs) || config.recordingPollMs < 1000 || config.recordingPollMs > 60000) throw new Error('RECORDING_POLL_MS must be 1000–60000 milliseconds');
   if (!Number.isInteger(config.recordingMaxProcessMin) || config.recordingMaxProcessMin < 1 || config.recordingMaxProcessMin > 1440) throw new Error('RECORDING_MAX_PROCESS_MIN must be an integer from 1 to 1440');
   if (config.recordingSttUrl && !['http:', 'https:'].includes(new URL(config.recordingSttUrl).protocol)) throw new Error('Invalid recordingSttUrl protocol');

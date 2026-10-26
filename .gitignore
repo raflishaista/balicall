@@ -69,3 +69,7 @@ Thumbs.db
 # Python cache
 __pycache__/
 *.py[cod]
+
+# Editor swap files
+*.swp
+*.swo

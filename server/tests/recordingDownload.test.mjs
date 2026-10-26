@@ -12,6 +12,8 @@ test('recording metadata and download endpoints', async t => {
   const dataFile = join(directory, 'meetings.json');
   const { mkdirSync } = await import('node:fs');
   mkdirSync(recordingsDir, { recursive: true });
+  const batchDir = join(directory, 'batch-audio');
+  mkdirSync(batchDir, {recursive:true});
 
   const meetingWithRecId = '3375b069-28a0-47d7-954d-f4717ef925ba';
   const meetingNoRecId = 'ffffffff-0000-0000-0000-000000000000';
@@ -25,6 +27,7 @@ test('recording metadata and download endpoints', async t => {
     ...loadConfig({ LLM_PROVIDER: 'demo' }),
     dataFile,
     livekitRecordingsDir: recordingsDir,
+    qwenBatchRecordingsDir: batchDir,
     authEnabled: false,
   };
 
@@ -66,6 +69,32 @@ test('recording metadata and download endpoints', async t => {
   assert.match(dlRes.headers.get('content-disposition') || '', /attachment;\s*filename="meeting-3375b069/);
   const dlBuffer = Buffer.from(await dlRes.arrayBuffer());
   assert.deepEqual(dlBuffer, mp4Content);
+
+  await t.test('audio OGG remains downloadable without an in-memory meeting',async()=>{
+    const audioId='audio-batch-qc';
+    const bytes=Buffer.from('synthetic OGG fixture');
+    writeFileSync(join(recordingsDir,`meeting-${audioId}.ogg`),bytes);
+    const meta=await (await fetch(`${base}/${audioId}/recording`)).json();
+    assert.equal(meta.hasRecording,true);
+    assert.equal(meta.fileName,`meeting-${audioId}.ogg`);
+    const response=await fetch(`${base}/${audioId}/recording/download`);
+    assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/audio\/ogg/);
+    assert.match(response.headers.get('content-disposition'),/\.ogg/);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+  });
+  await t.test('configured batch audio directory supports metadata and partial download',async()=>{
+    const id='separate-audio-qc',bytes=Buffer.from('synthetic-batch-audio-fixture');
+    writeFileSync(join(batchDir,`meeting-${id}.ogg`),bytes);
+    assert.equal((await (await fetch(`${base}/${id}/recording`)).json()).hasRecording,true);
+    const response=await fetch(`${base}/${id}/recording/download`,{headers:{Range:'bytes=0-4'}});
+    assert.equal(response.status,206);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes.subarray(0,5));
+  });
+  await t.test('recording lookup cannot escape the recordings directory',async()=>{
+    writeFileSync(join(directory,'outside.mp4'),Buffer.from('outside recording scope'));
+    const response=await fetch(`${base}/${encodeURIComponent('../outside')}/recording/download`);
+    assert.equal(response.status,404);
+  });
 
   // 4. Download recording for meeting without recording -> 404
   const noDlRes = await fetch(`${base}/${meetingNoRecId}/recording/download`);

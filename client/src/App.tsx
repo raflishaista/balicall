@@ -1,3 +1,6 @@
+import {recordingDownloadName} from './recordingDownload';
+import {usePostMeetingBatch} from './usePostMeetingBatch';
+import type {PostMeetingBatchJob} from './usePostMeetingBatch';
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
@@ -678,6 +681,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
+  const applyPostMeetingBatch = useCallback((job: PostMeetingBatchJob) => {
+    if (!summaryMeetingId || !validSummary(job.summary) || !job.transcripts?.length) return;
+    summaryGeneration.current++;
+    setSummary(job.summary);
+    setTranscripts(job.transcripts);
+    setIsSummarizing(false);
+    setSummaryError(null);
+    setSummaryHasRecording(true);
+    const previous = readSummaryHistory().find(record => record.meetingId === summaryMeetingId);
+    const record: SummaryRecord = {...previous, meetingId:summaryMeetingId, roomName:summaryRoomName, hasRecording:true,
+      summary:job.summary, transcripts:job.transcripts, savedAt:job.summary.generatedAt || new Date().toISOString()};
+    const next = upsertSummary(readSummaryHistory(), record);
+    setSummaryHistory(next); saveSummaryHistory(next);
+    removeInProgressSummary(summaryMeetingId);
+    setInProgressList(readInProgressSummaries());
+  }, [summaryMeetingId, summaryRoomName, readSummaryHistory, saveSummaryHistory, removeInProgressSummary, readInProgressSummaries]);
+  const postMeetingBatchState = usePostMeetingBatch({meetingId:summaryMeetingId, token:summaryToken,
+    enabled:view === 'summary', onResult:applyPostMeetingBatch});
+
   const handleCancelSchedule = async (id: string) => {
     await apiRequest<{ success: boolean }>(`/schedules/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -1021,23 +1043,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setBatchDiarizing(true);
     setSummaryError(null);
     try {
-      const data = await apiRequest<{
-        success: boolean;
-        transcripts: TranscriptEntry[];
-        speakerCount?: number;
-        speakers?: string[];
-      }>(
-        meetingPath(targetMeetingId, 'batch-diarize'),
-        {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        180000
-      );
-      if (data?.transcripts?.length) {
-        setTranscripts(data.transcripts);
-        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, data.transcripts);
+      const generation = joinGeneration.current;
+      type BatchJob = { status: string; error?: string; transcripts?: TranscriptEntry[] };
+      const path = meetingPath(targetMeetingId, 'post-meeting-batch');
+      const headers = { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' };
+      let { job } = await apiRequest<{ job: BatchJob }>(path, {
+        method: 'POST', headers, body: JSON.stringify({ language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
+      });
+      const deadline = Date.now() + 4 * 60 * 60 * 1000;
+      while (job.status !== 'done') {
+        if (generation !== joinGeneration.current) return;
+        if (job.status === 'failed') throw new Error(job.error || 'Batch gagal. Transkrip live tetap tersedia.');
+        if (Date.now() > deadline) throw new Error('Pemrosesan masih berlangsung. Buka kembali hasil rapat untuk memeriksa status.');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        ({ job } = await apiRequest<{ job: BatchJob }>(path, { headers }));
+        if (!job) throw new Error('Status batch tidak ditemukan.');
+      }
+      if (generation === joinGeneration.current && job.transcripts?.length) {
+        setTranscripts(job.transcripts);
+        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, job.transcripts);
       }
     } catch (err) {
       setSummaryError(err instanceof Error ? err.message : 'Gagal melakukan batch diarization.');
@@ -1219,7 +1243,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
     }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
-  const handleToggleRecording = async (enabled: boolean) => {
+  const handleToggleRecording = async (enabled: boolean, postMeetingBatch = false) => {
     if (!meetingId || !token || recordingPending) return;
     const generation = joinGeneration.current;
     setRecordingPending(true); setRecordingError(null);
@@ -1228,7 +1252,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       const data = await apiRequest<{ success: boolean; recording?: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ postMeetingBatch, language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
       }, 15000);
       if (generation === joinGeneration.current) {
         setIsRecording(data?.recording?.status === 'active');
@@ -1482,8 +1506,17 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           />
         )}
 
+        {view === 'summary' && postMeetingBatchState && <p role="status" className="settings-notice">
+          {postMeetingBatchState.status === 'done' ? 'Batch audio Qwen + Nemotron selesai. Transkrip dan notulen batch tersimpan.'
+            : postMeetingBatchState.status === 'waiting' ? 'Batch audio menunggu seluruh peserta keluar dan rekaman Egress selesai.'
+            : postMeetingBatchState.status === 'failed' || postMeetingBatchState.status === 'timeout' ? `Batch audio belum berhasil: ${postMeetingBatchState.error || 'Coba kembali setelah layanan siap.'} Transkrip live tetap tersedia.`
+            : postMeetingBatchState.status === 'reconnecting' ? 'Koneksi status batch terputus. Mencoba kembali; proses server tetap berjalan.'
+            : postMeetingBatchState.status === 'summarizing' ? 'Qwen selesai mentranskripsi. AI sedang menyusun notulen batch audio.'
+            : 'Qwen + Nemotron sedang memproses rekaman audio seluruh peserta.'}
+        </p>}
+
         {view === 'in-call' && token && (
-          <InCallView callDuration={callDuration}
+          <InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
             meetingHostId={meetingHostId}
@@ -1630,7 +1663,7 @@ function InCallView({ callDuration,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
-  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
+  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync, qwenBatchConfigured,
   sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
   microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
   onRequestToSpeak,
@@ -1684,6 +1717,7 @@ function InCallView({ callDuration,
         qwenDiarizationReady={qwenDiarizationReady} onSttModelChanged={onSttModelChanged}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
+        qwenBatchConfigured={qwenBatchConfigured}
         recordingPending={recordingPending}
         recordingError={recordingError}
         isRecording={isRecording}
@@ -1730,6 +1764,7 @@ function RoomContent({
   onToggleLiveDiarization,
   onToggleBatchDiarization,
   recordingPending,
+  qwenBatchConfigured,
   recordingError,
   isRecording,
   onToggleRecording,
@@ -1935,6 +1970,7 @@ function RoomContent({
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         transcripts={transcripts}
+        qwenBatchConfigured={qwenBatchConfigured}
         recordingPending={recordingPending}
         recordingError={recordingError}
         isRecording={isRecording}
@@ -2048,7 +2084,7 @@ function SummaryView({
     setDownloadingRecording(true);
     setRecordingDownloadError(null);
     const cleanId = meetingId.replace(/^meeting-/, '');
-    const url = `${API_BASE}/meetings/${cleanId}/recording/download${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const url = `${API_BASE}/meetings/${encodeURIComponent(cleanId)}/recording/download`;
     try {
       const res = await fetch(url, {
         method: 'GET',
@@ -2069,7 +2105,7 @@ function SummaryView({
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `balicall-recording-${cleanId}.mp4`;
+      a.download = recordingDownloadName(res, cleanId);
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -2379,10 +2415,10 @@ function SummaryView({
                 className="button-secondary"
                 onClick={onBatchDiarize}
                 disabled={batchDiarizing || isSummarizing}
-                title="Jalankan ulang batch diarization untuk seluruh rekaman audio rapat ini"
+                title="Qwen + Nemotron memproses satu rekaman LiveKit seluruh peserta. Rekam sejak awal dan tunggu semua peserta keluar."
               >
                 {batchDiarizing ? <Loader2 className="ui-spinner" size={15} /> : <Sparkles size={15} />}
-                <span>{batchDiarizing ? 'Memproses Diarisasi...' : 'Diarisasi Ulang (Batch)'}</span>
+                <span>{batchDiarizing ? 'Memproses batch Qwen…' : 'Batch Qwen + Nemotron'}</span>
               </button>
             )}
             <button className="button-secondary" onClick={onCopy}>
@@ -2406,10 +2442,10 @@ function SummaryView({
                 className="button-secondary"
                 onClick={downloadRecording}
                 disabled={downloadingRecording}
-                title="Unduh rekaman video MP4 rapat ini"
+                title="Unduh rekaman rapat dalam format aslinya (MP4 video atau OGG audio)"
               >
                 {downloadingRecording ? <Loader2 className="ui-spinner" size={15} /> : <Video size={15} />}
-                <span>{downloadingRecording ? 'Menyiapkan Rekaman...' : 'Unduh Rekaman (MP4)'}</span>
+                <span>{downloadingRecording ? 'Menyiapkan Rekaman...' : 'Unduh Rekaman'}</span>
               </button>
             )}
 
