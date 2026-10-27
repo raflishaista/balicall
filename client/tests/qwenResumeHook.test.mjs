@@ -72,18 +72,18 @@ test('device change and meeting end explicitly finalize a previously paused cont
  await act(async()=>f.state.finishTranscription());
  assert.equal(f.finishes.length,count+1);assert.equal(f.finishes.at(-1),undefined);
 });
-test('retrying a session-expiry warning keeps transcription enabled',async t=>{
+test('session-expiry warning stays separate from errors and does not prevent pausing',async t=>{
  const f=await fixture(t);
  await act(async()=>f.runs[0].onSession({sessionId:'expired-session-replacement',resumed:false}));
- assert.match(f.state.speechError,/sesi baru/i);
+ assert.match(f.state.speechWarning,/sesi baru/i);assert.equal(f.state.speechError,null);
  await act(async()=>f.state.toggleSpeechRecognition());
- assert.equal(f.state.speechEnabled,true);
+ assert.equal(f.state.speechEnabled,false);
 });
 test('expired speaker state is visible and automatic reconnect stops after three attempts',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});
  const f=await fixture(t);
  await act(async()=>f.runs[0].onSession({sessionId:'new-speaker-session',resumed:false}));
- assert.match(f.state.speechError,/sesi baru/i);
+ assert.match(f.state.speechWarning,/sesi baru/i);assert.equal(f.state.speechError,null);
  for(const wait of [1000,2000,4000]){
   await act(async()=>f.runs.at(-1).onError('Network unavailable'));
   await act(async()=>t.mock.timers.tick(wait));

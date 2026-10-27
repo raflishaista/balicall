@@ -1,3 +1,5 @@
+import { TranscriptionStatus } from './TranscriptionFeedback';
+import { transcriptionStatus } from './transcriptionStatus';
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
@@ -85,6 +87,8 @@ interface MeetingRoomProps {
   isSummarizing: boolean;
   finishError: string | null;
   speechError: string | null;
+  speechWarning?: string | null;
+  pendingSaves?: number;
   interimText: string;
   isListening: boolean;
   speechEnabled: boolean;
@@ -180,6 +184,8 @@ export function MeetingRoom({
   isSummarizing,
   finishError,
   speechError,
+  speechWarning,
+  pendingSaves = 0,
   interimText,
   isListening,
   speechEnabled,
@@ -460,19 +466,8 @@ export function MeetingRoom({
     setConfirmLeaveOpen(false);
   };
 
-  const transcriptStatus = !connected
-    ? 'Menunggu koneksi'
-    : isMuted
-      ? 'Mikrofon nonaktif'
-      : saveBlocked
-        ? 'Penyimpanan tertunda'
-        : speechError
-          ? 'Transkripsi bermasalah'
-          : isListening
-            ? 'Mendengarkan'
-            : speechEnabled
-              ? 'Memulai transkripsi'
-              : 'Transkripsi dihentikan';
+  const transcriptionState = { connected, isMuted, saveBlocked, speechError, isListening, speechEnabled, interimText, pendingSaves };
+  const currentTranscriptionStatus = transcriptionStatus(transcriptionState);
 
   const handleParticipantAction = async (
     participantId: string,
@@ -555,7 +550,7 @@ export function MeetingRoom({
             <span className={recording ? 'recording-active' : ''} role="status">
               {recording ? '● Merekam' : 'Tidak merekam'}
             </span>
-            <span role="status">Transkripsi · {transcriptStatus}</span>
+            <span role="status">Transkripsi · {currentTranscriptionStatus.label}</span>
             {callPreferences?.showSecurityBadge !== false && (
               <span role="status" title="Koneksi media WebRTC diamankan dengan enkripsi DTLS-SRTP">
                 <ShieldCheck size={12} style={{ verticalAlign: '-1px', marginRight: '4px' }} />
@@ -808,15 +803,9 @@ export function MeetingRoom({
               <summary className="transcription-bar-header" aria-label="Opsi transkripsi">
                 <div className="transcription-status" role="status">
                   <i
-                    className={
-                      isListening
-                        ? 'status-dot online'
-                        : speechError
-                          ? 'status-dot offline'
-                          : 'status-dot'
-                    }
+                    className={currentTranscriptionStatus.tone === 'error' ? 'status-dot offline' : currentTranscriptionStatus.tone === 'active' ? 'status-dot online' : 'status-dot'}
                   />
-                  <span>{transcriptStatus}</span>
+                  <span>{currentTranscriptionStatus.label}</span>
                 </div>
                 <span className="transcription-options-btn">
                   <SlidersHorizontal size={12} />
@@ -905,6 +894,8 @@ export function MeetingRoom({
             </details>
           </div>
 
+          <TranscriptionStatus state={transcriptionState} warning={speechWarning} />
+
           {speechError && (
             <div className="transcription-error" role="alert">
               <p>{speechError}</p>
@@ -968,6 +959,7 @@ export function MeetingRoom({
                             {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s
                           </span>
                         </div>
+                        <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
                         <p>{segment.text}</p>
                       </div>
                     </article>
@@ -993,6 +985,7 @@ export function MeetingRoom({
                     </span>
                     <div>
                       <strong>{entry.speakerName}</strong>
+                      <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
                       <p>{entry.text}</p>
                     </div>
                   </article>,
@@ -1014,7 +1007,7 @@ export function MeetingRoom({
           {interimText && (
             <div className="interim-transcript">
               <AudioLines size={16} />
-              <p>{interimText}</p>
+              <div><strong className="transcript-phase provisional">Sementara · dapat berubah</strong><p>{interimText}</p></div>
             </div>
           )}
 
@@ -1077,15 +1070,7 @@ export function MeetingRoom({
               )}
             </div>
             <span>
-              {!connected
-                ? 'Menunggu koneksi'
-                : isMuted
-                  ? 'Mikrofon mati'
-                  : isVoiceActive
-                    ? 'Suara terdeteksi'
-                    : isListening
-                      ? 'Mendengarkan...'
-                      : 'Transkripsi siaga'}
+              {currentTranscriptionStatus.label}
             </span>
           </div>
         </div>

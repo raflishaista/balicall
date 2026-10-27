@@ -1546,6 +1546,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             sttConfigured={backendHealth?.sttConfigured || false}
             sttModels={backendHealth?.sttModels || []}
             defaultSttModel={backendHealth?.sttModel || ''}
+            pendingSaves={pendingSaves}
             saveBlocked={Boolean(transcriptSaveError)}
             onAddAudio={handleAddAudio} onCreateLiveSession={handleCreateLiveSession}
             onPresence={handlePresence}
@@ -1667,7 +1668,7 @@ function InCallView({ callDuration,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
   recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync, qwenBatchConfigured,
-  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+  sttProvider, setSttProvider, sttConfigured, saveBlocked, pendingSaves, onAddAudio, onPresence,
   microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
   onRequestToSpeak,
   token,
@@ -1730,6 +1731,7 @@ function InCallView({ callDuration,
         onToggleLiveDiarization={onToggleLiveDiarization}
         onToggleBatchDiarization={onToggleBatchDiarization}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
+        pendingSaves={pendingSaves}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
         employeeId={employeeId}
@@ -1775,6 +1777,7 @@ function RoomContent({
   setSttProvider,
   sttConfigured,
   saveBlocked,
+  pendingSaves,
   onAddAudio,
   onPresence,
   roomName,
@@ -1950,6 +1953,8 @@ function RoomContent({
         isSummarizing={isSummarizing}
         finishError={finishError}
         speechError={speechError}
+        speechWarning={sttProvider === 'server' ? serverSpeech.speechWarning : null}
+        pendingSaves={pendingSaves}
         interimText={interimText}
         isListening={isListeningSpeechApi}
         speechEnabled={speechEnabled}

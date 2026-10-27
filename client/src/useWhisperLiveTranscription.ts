@@ -95,11 +95,11 @@ export function useWhisperLiveTranscription(options: {
   const resumeTrackChange = useCallback(() => { setChangingTrack(false); setAttempt(value => value + 1); }, []);
   return {
     isListeningSpeechApi: listening && !options.muted && !error,
-    speechEnabled: enabled, speechError: error || warning, interimText: interim,
+    speechEnabled: enabled, speechError: error, speechWarning: warning, interimText: interim,
     prepareTrackChange, resumeTrackChange,
     async finishTranscription() { ending.current=true; await flush(); setEnabled(false); },
     toggleSpeechRecognition() {
-      if (error || warning || !enabled) { ending.current=false; retries.current=0; setError(null); setWarning(null); setEnabled(true); setAttempt(value => value + 1); }
+      if (error || !enabled) { ending.current=false; retries.current=0; setError(null); setWarning(null); setEnabled(true); setAttempt(value => value + 1); }
       else setEnabled(false);
     },
   };

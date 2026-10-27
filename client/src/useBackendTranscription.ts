@@ -56,7 +56,7 @@ export function useBackendTranscription(options: {
   }, []);
   return {
     isListeningSpeechApi: enabled && !options.muted && !changingTrack && Boolean(options.track) && options.track?.readyState !== 'ended' && !error && !capabilityError,
-    interimText: '', speechError: error || (!options.muted && enabled ? capabilityError : null), speechEnabled: enabled,
+    speechWarning: null, interimText: '', speechError: error || (!options.muted && enabled ? capabilityError : null), speechEnabled: enabled,
     toggleSpeechRecognition() {
       if (error || !enabled) { setError(null); setEnabled(true); setAttempt(value => value + 1); }
       else setEnabled(false);
