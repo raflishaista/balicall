@@ -70,6 +70,17 @@ export function loadConfig(env = process.env) {
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
     attendanceGraceMs: Number(env.ATTENDANCE_FINALIZE_GRACE_MS ?? 10000),
+    itprojectMcpUrl: env.ITPROJECT_MCP_URL || '',
+    itprojectMcpToken: env.ITPROJECT_MCP_TOKEN || '',
+    itprojectProjectId: env.ITPROJECT_PROJECT_ID || '',
+    itprojectTaskTypeId: env.ITPROJECT_TASK_TYPE_ID || '',
+    itprojectTaskCategoryId: env.ITPROJECT_TASK_CATEGORY_ID || '',
+    itprojectTaskStatusName: env.ITPROJECT_TASK_STATUS_NAME || 'To Do',
+    itprojectOAuthClientId: env.ITPROJECT_OAUTH_CLIENT_ID || '',
+    itprojectOAuthRedirectUri: env.ITPROJECT_OAUTH_REDIRECT_URI || '',
+    itprojectProjectCreationTestEnabled:
+      env.ITPROJECT_PROJECT_CREATION_TEST_ENABLED === 'true' &&
+      env.NODE_ENV !== 'production',
     // DISABLED EMPLOYEE ID CHECK (saved for future re-enabling):
     // To re-enable strict verification, set VERIFY_EMPLOYEE_ID=true in .env
     /*

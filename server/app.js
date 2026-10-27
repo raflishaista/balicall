@@ -5,7 +5,7 @@ import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID, randomBytes, createHmac } from 'node:crypto';
+import { randomUUID, randomBytes, createHmac, createHash } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
 import { createAttendanceFinalizer } from './attendanceFinalizer.js';
@@ -17,6 +17,7 @@ import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAud
 import { attachRecordingUploads } from './recordingUploads.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady } from './qwenCapabilities.js';
+import { createItProjectClient } from './itproject.js';
 import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
 import {
   isDbConnected,
@@ -70,6 +71,149 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   const inFlightSummarize = new Map();
   const meetingAudios = new Map();
   const webhookLogs = [];
+  const itProject = createItProjectClient(config);
+  const itprojectOAuthPending = new Map();
+  const escapeHtml = value =>
+    String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    })[char]);
+
+  async function syncActionItemsToItProject(meeting, summary) {
+    if (!itProject.enabled || !summary.actionItems?.length) return;
+
+    const optionsResult = await itProject.taskOptions(itProject.projectId);
+    const options = optionsResult.data?.data;
+
+    if (!options?.taskStatuses || !options.taskPriorities ||
+        !options.taskTypes || !options.assignableUsers) {
+      throw new Error('Opsi task IT Project tidak lengkap.');
+    }
+
+    const status = options.taskStatuses.find(
+      option => option.name?.trim().toLowerCase() ===
+        itProject.taskStatusName.trim().toLowerCase()
+    );
+    const type = options.taskTypes.find(
+      option => option.id === itProject.taskTypeId
+    );
+
+    if (!status || !type) {
+      throw new Error('ID status atau tipe task tidak cocok dengan opsi project.');
+    }
+
+    for (const item of summary.actionItems) {
+      const title = String(item.task || '').trim();
+      if (!title) continue;
+
+      const key = createHash('sha256')
+        .update([
+          meeting.id,
+          title.toLowerCase(),
+          String(item.assignee || '').trim().toLowerCase(),
+          String(item.deadline || '').trim().toLowerCase(),
+        ].join('|'))
+        .digest('hex');
+
+      // Jangan kirim ulang item yang pernah dicoba agar tidak membuat duplikat
+      // jika respons server hilang setelah task sebenarnya berhasil dibuat.
+      if (store.get(meeting.id)?.itProjectTaskDispatch?.[key]) continue;
+
+      const priorityName = String(item.priority || '').trim().toLowerCase();
+      const priority = options.taskPriorities.find(
+        option => option.name?.trim().toLowerCase() === priorityName
+      );
+
+      if (!priority) {
+        store.transact(() => {
+          const current = store.get(meeting.id);
+          current.itProjectTaskDispatch ||= {};
+          current.itProjectTaskDispatch[key] = {
+            status: 'failed',
+            title,
+            error: `Prioritas '${item.priority}' tidak tersedia di project.`,
+          };
+        });
+        continue;
+      }
+
+      const assigneeName = String(item.assignee || '').trim();
+      const matches = assigneeName
+        ? options.assignableUsers.filter(user =>
+            user.name?.trim().toLowerCase() === assigneeName.toLowerCase() ||
+            user.email?.trim().toLowerCase() === assigneeName.toLowerCase())
+        : [];
+      const owner = matches.length === 1 ? matches[0] : null;
+
+      const description = [
+        `<p>Sumber: rapat ${escapeHtml(meeting.roomName)} (${escapeHtml(meeting.id)})</p>`,
+        assigneeName
+          ? `<p>PIC dari notulen: ${escapeHtml(assigneeName)}${owner ? '' : ' (belum cocok dengan anggota project)'}</p>`
+          : '',
+        item.deadline
+          ? `<p>Tenggat dari notulen: ${escapeHtml(item.deadline)}</p>`
+          : '',
+      ].filter(Boolean).join('');
+
+      store.transact(() => {
+        const current = store.get(meeting.id);
+        current.itProjectTaskDispatch ||= {};
+        current.itProjectTaskDispatch[key] = {
+          status: 'creating',
+          title,
+          startedAt: new Date().toISOString(),
+        };
+      });
+
+      try {
+        const result = await itProject.createTask({
+          project: itProject.projectId,
+          title,
+          status_id: status.id,
+          priority_id: priority.id,
+          type_id: type.id,
+          task_category_id: itProject.taskCategoryId,
+          assign_users: [],
+          description,
+          ...(owner ? { owned_id: owner.id } : {}),
+        });
+
+        const task = result.data?.data;
+        if (!task?.id) {
+          throw new Error(
+            result.data?.instructions || 'Respons create-task tidak berisi ID task.'
+          );
+        }
+
+        store.transact(() => {
+          const current = store.get(meeting.id);
+          current.itProjectTaskDispatch[key] = {
+            status: 'created',
+            title,
+            taskId: task.id,
+            createdAt: new Date().toISOString(),
+          };
+        });
+      } catch (error) {
+        store.transact(() => {
+          const current = store.get(meeting.id);
+          current.itProjectTaskDispatch[key] = {
+            status: 'failed',
+            title,
+            error: error.message,
+            failedAt: new Date().toISOString(),
+          };
+        });
+        console.warn('[ITPROJECT] Task gagal dibuat:', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+      }
+    }
+  }
 
   app.use('/api', (req,res,next)=>{
     req.requestId=randomUUID();
@@ -102,6 +246,73 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
+  app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const result = await itProject.projectOptions();
+    res.set('Cache-Control', 'no-store').json(result.data);
+  }));
+
+  app.post('/api/itproject/projects', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const {
+      title,
+      description,
+      emoji,
+      start_date: startDate,
+      due_date: dueDate,
+      status_id: statusId,
+      priority_id: priorityId,
+    } = req.body || {};
+
+    const validDate = value => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.valueOf()) &&
+        parsed.toISOString().slice(0, 10) === value;
+    };
+
+    if (!nonEmpty(title, 160) || !nonEmpty(description, 8000) ||
+        !nonEmpty(emoji, 16) || !validDate(startDate) ||
+        !nonEmpty(statusId, 128) || !nonEmpty(priorityId, 128)) {
+      return res.status(400).json({
+        error: 'Isi title, description, emoji, start_date, status_id, dan priority_id dengan benar.',
+      });
+    }
+
+    if (dueDate && (!validDate(dueDate) || dueDate < startDate)) {
+      return res.status(400).json({
+        error: 'due_date harus berformat YYYY-MM-DD dan tidak boleh sebelum start_date.',
+      });
+    }
+
+    const result = await itProject.createProject({
+      title: title.trim(),
+      description,
+      emoji,
+      start_date: startDate,
+      ...(dueDate ? { due_date: dueDate } : {}),
+      status_id: statusId,
+      priority_id: priorityId,
+    });
+
+    res.status(201).set('Cache-Control', 'no-store').json({
+      success: true,
+      result: result.data,
+    });
+  }));
+
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
     try {
@@ -114,6 +325,150 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       console.warn('[OUTBOUND WEBHOOK] Dispatch note:', err.message);
     }
   }
+
+  app.get('/api/itproject/task-options', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const project = typeof req.query.project === 'string'
+      ? req.query.project
+      : '';
+
+    if (!nonEmpty(project, 128)) {
+      return res.status(400).json({ error: 'Isi project dengan ID project ter-encode.' });
+    }
+
+    const result = await itProject.taskOptions(project);
+    res.set('Cache-Control', 'no-store').json(result.data);
+  }));
+
+  app.post('/api/itproject/tasks', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const {
+      project,
+      title,
+      status_id: statusId,
+      priority_id: priorityId,
+      type_id: typeId,
+      task_category_id: taskCategoryId,
+      description = '',
+    } = req.body || {};
+
+    if (!nonEmpty(project, 128) || !nonEmpty(title, 160) ||
+        !nonEmpty(statusId, 128) || !nonEmpty(priorityId, 128) ||
+        !nonEmpty(typeId, 128) ||
+        (taskCategoryId && !nonEmpty(taskCategoryId, 128)) ||
+        typeof description !== 'string' || description.length > 8000) {
+      return res.status(400).json({
+        error: 'Isi project, title, status_id, priority_id, dan type_id dengan benar.',
+      });
+    }
+
+    const result = await itProject.createTask({
+      project,
+      title: title.trim(),
+      status_id: statusId,
+      priority_id: priorityId,
+      type_id: typeId,
+      ...(taskCategoryId ? { task_category_id: taskCategoryId } : {}),
+      assign_users: [],
+      description,
+    });
+
+    res.status(201).set('Cache-Control', 'no-store').json({
+      success: true,
+      result: result.data,
+    });
+  }));
+
+  app.get('/api/itproject/oauth/start', (req, res) => {
+  if (!config.itprojectOAuthClientId || !config.itprojectOAuthRedirectUri) {
+    return res.status(503).send('Konfigurasi OAuth IT Project belum lengkap.');
+  }
+
+  const now = Date.now();
+  for (const [state, pending] of itprojectOAuthPending) {
+    if (pending.expiresAt <= now) itprojectOAuthPending.delete(state);
+  }
+
+  const state = randomBytes(32).toString('base64url');
+  const verifier = randomBytes(32).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+  itprojectOAuthPending.set(state, {
+    verifier,
+    expiresAt: now + 10 * 60 * 1000,
+  });
+
+  const authorizeUrl = new URL(
+    'https://devitproject.balitower.co.id/oauth/authorize'
+  );
+  authorizeUrl.searchParams.set('response_type', 'code');
+  authorizeUrl.searchParams.set('client_id', config.itprojectOAuthClientId);
+  authorizeUrl.searchParams.set('redirect_uri', config.itprojectOAuthRedirectUri);
+  authorizeUrl.searchParams.set('scope', 'mcp:use');
+  authorizeUrl.searchParams.set('resource', 'https://devitproject.balitower.co.id/mcp');
+  authorizeUrl.searchParams.set('state', state);
+  authorizeUrl.searchParams.set('code_challenge', challenge);
+  authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+  res.set('Cache-Control', 'no-store').redirect(authorizeUrl.toString());
+});
+
+  app.get('/oauth/callback', asyncRoute(async (req, res) => {
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const pending = itprojectOAuthPending.get(state);
+
+    itprojectOAuthPending.delete(state);
+
+    if (!pending || pending.expiresAt <= Date.now() || !code) {
+      return res.status(400).send('Callback OAuth tidak valid atau sudah kedaluwarsa.');
+    }
+
+    const form = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: config.itprojectOAuthClientId,
+      code,
+      redirect_uri: config.itprojectOAuthRedirectUri,
+      code_verifier: pending.verifier,
+      resource: 'https://devitproject.balitower.co.id/mcp',
+    });
+
+    const response = await fetchImpl('https://devitproject.balitower.co.id/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form,
+    });
+
+    if (!response.ok) {
+      return res.status(502).send('IT Project gagal menerbitkan token OAuth.');
+    }
+
+    const tokens = await response.json();
+    if (!tokens.access_token) {
+      return res.status(502).send('Respons OAuth tidak berisi access token.');
+    }
+
+    config.itprojectMcpToken = tokens.access_token;
+    config.itprojectOAuthRefreshToken = tokens.refresh_token || '';
+    config.itprojectOAuthExpiresAt =
+      Date.now() + (Number(tokens.expires_in) || 3600) * 1000;
+
+    res.set('Cache-Control', 'no-store').send(
+      'Login OAuth IT Project berhasil. Token tersimpan sementara di memori backend.'
+    );
+  }));
 
   // 1. Health check & provider/database info
   app.get('/api/health', asyncRoute(async (_req, res) => {
@@ -1135,6 +1490,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           if (dbSummary) summary.dbSummaryId = dbSummary.id;
         } catch (dbErr) {
           console.warn('[DB] Could not persist meeting to database:', dbErr.message);
+        }
+        try {
+          await syncActionItemsToItProject(snapshot, summary);
+        } catch (error) {
+          // Jangan gagalkan ringkasan rapat jika IT Project sedang tidak tersedia.
+          console.warn('[ITPROJECT] Sinkronisasi action items dilewati:', {
+            meetingId: snapshot.id,
+            message: error.message,
+          });
         }
 
         // Trigger outbound webhook if configured
