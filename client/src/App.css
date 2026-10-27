@@ -220,8 +220,20 @@ input::placeholder { color: #a1b1c6; }
 .screen-share-header svg { color: #4da6ff; flex-shrink: 0; }
 .screen-share-header label { display: flex; align-items: center; gap: 8px; }
 .screen-share-header select { max-width: 180px; min-width: 0; padding: 5px 8px; color: #e5f1fc; border: 1px solid #365972; border-radius: 5px; background: #17344a; }
-.screen-share-content { display: flex; flex: 1; align-items: center; justify-content: center; position: relative; min-height: 120px; }
-.screen-share-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: none; }
+.screen-share-content { display: flex; flex: 1; align-items: center; justify-content: center; position: relative; min-height: 120px; overflow: hidden; }
+.screen-share-content.is-zoomed { cursor: grab; }
+.screen-share-content.is-panning { cursor: grabbing; }
+.screen-share-transform-wrapper { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; overflow: hidden !important; touch-action: none; }
+.screen-share-transform-content { position: relative !important; width: 100% !important; height: 100% !important; display: flex !important; align-items: center !important; justify-content: center !important; }
+.screen-share-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: none; pointer-events: none; user-select: none; -webkit-user-drag: none; }
+.screen-share-zoom-bar { position: absolute; bottom: 14px; right: 14px; display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: rgba(7, 26, 43, 0.88); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid #29465c; border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45); z-index: 10; opacity: 0.9; transition: opacity 0.2s ease; user-select: none; }
+.screen-share-zoom-bar:hover { opacity: 1; }
+.screen-share-zoom-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid #345874; border-radius: 6px; background: #12344e; color: #e5f2ff; cursor: pointer; padding: 0; transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; }
+.screen-share-zoom-btn:hover:not(:disabled) { background: #1c4b72; border-color: #4da6ff; }
+.screen-share-zoom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.screen-share-zoom-badge { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 52px; height: 30px; padding: 0 8px; border: 1px solid #345874; border-radius: 6px; background: #12344e; color: #c6d8e8; font-size: 11px; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+.screen-share-zoom-badge:hover { background: #1c4b72; border-color: #4da6ff; color: #fff; }
+.screen-share-zoom-badge .reset-icon { color: #4da6ff; }
 .screen-share-content p { padding: 20px; text-align: center; color: #c6d8e8; font-size: 12px; }
 .screen-share-hint { padding: 0 22px 12px; color: #aac2d6; font-size: 11px; }
 .device-dialog { width: min(760px,calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; margin: auto; padding: 26px; overflow-y: auto; color: #102d4a; border: 1px solid #d8e5f2; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px #03172855; }
