@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Circle, Square, Loader2, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText, Sparkles } from 'lucide-react';
+import { AudioLines, Circle, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText, Sparkles } from 'lucide-react';
 
 export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
@@ -106,7 +106,10 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       </div>
     </div>
     <div className="leave-controls">
-      <button type="button" className="leave-simple" disabled={busy} onClick={() => onFinish(false)}>Keluar</button>
+      <button type="button" className="leave-simple" disabled={busy} onClick={() => onFinish(false)} aria-label="Keluar dari rapat">
+        <LogOut size={18} />
+        <span>Keluar</span>
+      </button>
       {canManageMeeting && <button type="button" className="leave-button" disabled={busy} onClick={() => onFinish(true)} aria-busy={busy}>{busy && <Loader2 className="ui-spinner" size={16} aria-hidden="true" />}{busy ? finishLabel : <><PhoneOff size={18} />Selesai &amp; notulen</>}</button>}
     </div>
   </footer>;

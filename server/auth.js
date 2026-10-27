@@ -43,6 +43,27 @@ function csrfValid(req,token) {
   const supplied=req.get('X-CSRF-Token')||'', expected=csrfFor(token);
   return /^[a-f0-9]{64}$/.test(supplied) && timingSafeEqual(Buffer.from(supplied),Buffer.from(expected));
 }
+const PRIVATE_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/;
+
+export function isOriginAllowed(origin, config, req) {
+  if (!origin) return req ? req.get('Sec-Fetch-Site') !== 'cross-site' : true;
+  const cleanOrigin = origin.replace(/\/+$/, '');
+  if (config?.corsOrigins?.includes(cleanOrigin) || config?.corsOrigins?.includes(origin)) return true;
+  if (req) {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol;
+    if (host && (cleanOrigin === `${proto}://${host}` || origin === `${proto}://${host}`)) return true;
+  }
+  try {
+    const url = new URL(origin);
+    const allowedPorts = new Set(['5187', '5173', String(config?.port || 3001), '80', '443', '']);
+    if (allowedPorts.has(url.port) && PRIVATE_HOST_RE.test(url.hostname)) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 export function attachAuth(app,config,injectedStore,guestAccess) {
   const store=injectedStore||new PgAuthStore();
   const enabled=config.authEnabled;
@@ -50,11 +71,7 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
   const clearOptions={httpOnly:true,sameSite:'lax',secure:config.authCookieSecure,path:'/'};
   const guestCookie='balicall_guest';
   const guestLimits=new Map();
-  const originAllowed=req=>{
-    const origin=req.get('Origin');
-    if(!origin) return req.get('Sec-Fetch-Site')!=='cross-site';
-    return config.corsOrigins.includes(origin) || origin===req.protocol+'://'+req.get('host');
-  };
+  const originAllowed = req => isOriginAllowed(req.get('Origin'), config, req);
   const router=Router();
   router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   router.get('/session',wrap(async(req,res)=>{

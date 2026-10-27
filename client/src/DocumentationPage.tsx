@@ -84,7 +84,7 @@ export function DocumentationPage() {
 
     <section className="documentation-section" aria-labelledby="docs-upload">
       <div className="documentation-section-heading"><h2 id="docs-upload">5. Proses rekaman yang sudah ada</h2><span>Terpisah dari rapat live</span></div>
-      <p>Jika rapat sudah direkam sebagai MP4, buka <strong>Notulen rapat → Unggah Rekaman</strong> bila tersedia untuk akunmu. Proses ini membuat transkrip dan notulen dari file, bukan mikrofon live. Tombol <strong>Unggah Audio (Batch)</strong> di halaman riwayat menerima file audio; itu berbeda dari rancangan diarization pasca-rapat otomatis untuk seluruh peserta.</p>
+      <p>Jika rapat sudah direkam sebagai MP4, buka <strong>Notulen rapat → Unggah Rekaman</strong> bila tersedia untuk akunmu. Proses ini membuat transkrip dan notulen dari file, bukan mikrofon live. Tombol <strong>Unggah Audio (Batch)</strong> di halaman riwayat menerima file audio; itu berbeda dari batch audio pasca-rapat otomatis untuk seluruh peserta.</p>
       <ol className="documentation-steps">
         <li>Pilih file <strong>.mp4</strong> sesuai batas ukuran pada formulir.</li>
         <li>Isi judul, pilih bahasa Indonesia atau English, lalu pilih model jika menunya muncul.</li>
@@ -117,9 +117,9 @@ export function DocumentationPage() {
       <p>Browser memakai Express API untuk akses dan data rapat. LiveKit membawa audio/video antarperangkat; worker STT mengubah audio menjadi teks, PostgreSQL menyimpan data, dan LLM menyusun notulen dari transkrip final.</p>
       <figure className="documentation-figure"><img src={asset + 'architecture.svg'} alt="Diagram arsitektur BaliCall: browser, Express API, LiveKit, Egress, PostgreSQL, worker STT, dan LLM." /><figcaption>Alur komponen BaliCall.</figcaption></figure>
       <div className="documentation-planned-box">
-        <h3>Diarisasi batch seluruh peserta dengan Qwen <span>Rancangan · belum tersedia</span></h3>
-        <p>Pilihan batch untuk beberapa model non-live dan unggah file audio sudah ada, tetapi belum menggabungkan rekaman semua perangkat dengan Qwen. Rancangan ini menargetkan rekaman lengkap seluruh peserta: Nemotron menyelaraskan giliran bicara pada satu timeline, lalu Qwen3-ASR-0.6B membuat teks untuk notulen. Pada Qwen Live dan SEA Live, kotak pilihan batch di preview dinonaktifkan.</p>
-        <figure className="documentation-figure"><img src={asset + 'batch-flow.svg'} alt="Rancangan rekaman seluruh peserta, Nemotron, Qwen ASR, transkrip batch, dan notulen." /><figcaption>Alur usulan; transkrip live tetap menjadi hasil yang tersedia saat ini.</figcaption></figure>
+        <h3>Diarisasi batch seluruh peserta dengan Qwen <span>Perlu konfigurasi server</span></h3>
+        <p>Jika layanan Egress dan worker batch sudah dikonfigurasi, penyelenggara membuka Transkrip → Opsi lalu memilih Rekam audio untuk batch Qwen sebelum percakapan dimulai. Sistem merekam suara seluruh perangkat sebagai satu file OGG; kamera tidak direkam. Setelah seluruh peserta keluar dan Egress selesai menulis file, Nemotron menentukan giliran pembicara dan Qwen3-ASR-0.6B membuat transkrip. Halaman notulen menampilkan status proses dan memuat hasil batch otomatis. Transkrip live tetap disimpan terpisah. Label Pembicara 1/2 berlaku untuk satu rekaman, bukan verifikasi identitas orang; suara bertumpuk ditandai dan hasil perlu ditinjau. Kotak batch lama di preview berbeda dari alur rekaman audio ini.</p>
+        <figure className="documentation-figure"><img src={asset + 'batch-flow.svg'} alt="Alur rekaman audio seluruh peserta, Nemotron, Qwen ASR, transkrip batch, dan notulen." /><figcaption>Batch audio berjalan di server setelah rapat; kesiapan tombol bergantung pada konfigurasi server. Buka kembali hasil rapat untuk melihat status dan hasilnya.</figcaption></figure>
       </div>
       <p className="documentation-caption"><Mic2 size={15} /> Kesiapan server deploy perlu diuji pada lingkungan rapat; panduan ini bukan sertifikasi produksi.</p>
     </section>

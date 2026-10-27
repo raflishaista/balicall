@@ -338,6 +338,32 @@
   font-weight: 650;
 }
 
+.history-recording-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.recording-download-btn {
+  color: #b91c1c !important;
+  border-color: #fecaca !important;
+  background: #fff5f5 !important;
+}
+
+.recording-download-btn:hover:not(:disabled) {
+  background: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #991b1b !important;
+}
+
 .history-dept-badge {
   display: inline-flex;
   align-items: center;

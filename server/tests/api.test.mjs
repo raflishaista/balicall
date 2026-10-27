@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp } from '../app.js';
@@ -78,6 +78,7 @@ async function fixture(t, overrides = {}, dependencies = {}) {
   await new Promise(resolve => server.once('listening', resolve));
   let base = `http://127.0.0.1:${server.address().port}/api`;
   t.after(async () => {
+    context.close();
     await new Promise(resolve => server.close(resolve));
     const absolute = resolve(directory);
     assert.ok(absolute.startsWith(resolve(tmpdir()) + '\\') || absolute.startsWith(resolve(tmpdir()) + '/'));
@@ -744,4 +745,57 @@ test('SEA acoustic mode keeps unknown/overlap, persists labels and permits owner
  assert.equal((await f.request('/health',undefined,null,'GET')).data.seaLiveDiarizationReady,false);
  assert.equal((await a.post('live-session',{model,language:'id',diarize:true})).status,503);
  assert.equal((await a.post('live-session',{model,language:'id',diarize:false})).status,200);
+});
+
+
+test('batch records audio only and automatically processes only after the last participant leaves and Egress completes', async t => {
+  const dir=mkdtempSync(join(tmpdir(),'balicall-audio-batch-'));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  let captured,complete=false,submissions=0,stops=0;
+  t.mock.method(EgressClient.prototype,'startRoomCompositeEgress',async(...args)=>{captured=args;return {egressId:'EG-audio-batch'};});
+  t.mock.method(EgressClient.prototype,'stopEgress',async()=>{stops++;return {};});
+  t.mock.method(EgressClient.prototype,'listEgress',async()=>[{egressId:'EG-audio-batch',roomName:captured?.[0],status:complete?3:2}]);
+  const f=await fixture(t,{qwenBatchEnabled:true,qwenBatchRecordingsDir:dir,qwenSttBaseUrl:'http://batch-worker/v1',recordingPollMs:10},{fetchImpl:async(url,options)=>{
+    if(String(url).endsWith('/health')) return Response.json({ready:true,model:'qwen3-asr-0.6b',batchDiarization:true});
+    if(options.method==='POST') {
+      submissions++; assert.equal(options.body.get('file').type,'audio/ogg');
+      assert.equal(options.body.get('diarizer'),'nemotron');
+      return Response.json({job_id:'audio-qc-job'});
+    }
+    return Response.json({status:'done',result:{model:'qwen3-asr-0.6b',diarizer:'nemotron',speaker_scope:'recording',duration:2,
+      segments:[{text:'Kalimat peserta pertama',speaker:'Pembicara 1',start:0,end:1},{text:'Kalimat peserta kedua',speaker:'Pembicara 2',start:1,end:2}]}});
+  }});
+  const host=await f.joinRoom('audio-host'), guest=await f.joinRoom('audio-guest');
+  assert.equal((await guest.post('recording/start',{postMeetingBatch:true})).status,403);
+  const started=await host.post('recording/start',{postMeetingBatch:true,language:'id'});
+  assert.equal(started.status,200,JSON.stringify(started.data));
+  assert.equal(captured[2].audioOnly,true);
+  assert.equal(captured[2].layout,'grid');
+  assert.equal(captured[1].file.fileType,2);
+  assert.match(captured[1].file.filepath,/\.ogg$/);
+  assert.equal(started.data.recording.audioOnly,true);
+  writeFileSync(join(dir,captured[1].file.filepath.split('/').pop()),'synthetic-audio-container-fixture');
+  assert.equal((await host.post('leave')).data.status,'active');
+  assert.equal(stops,0); assert.equal(submissions,0);
+  assert.equal((await guest.post('leave')).data.status,'ended');
+  assert.equal(stops,1);
+  await new Promise(resolve=>setTimeout(resolve,35));
+  assert.equal(submissions,0,'Egress acknowledgement is not a completed recording');
+  complete=true;
+  let job;
+  for(let i=0;i<100;i++) {
+    job=(await host.get('post-meeting-batch')).data.job;
+    if(job?.status==='done'||job?.status==='failed') break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.equal(job?.status,'done',job?.error);
+  assert.equal(submissions,1);
+  assert.equal(job.transcripts.length,2);
+  const saved=JSON.parse(readFileSync(f.config.dataFile,'utf8')).meetings.find(m=>m.id===host.meetingId);
+  assert.equal(saved.postMeetingBatch.status,'done');
+  assert.equal(saved.postMeetingBatch.summary.transcriptSource,'qwen-post-meeting');
+  assert.equal(saved.transcripts.length,0,'Batch keeps the live transcript separate');
+  await f.restart();
+  assert.equal((await host.get('post-meeting-batch')).data.job.status,'done');
+  assert.equal(submissions,1,'Restart must not upload the same recording again');
 });

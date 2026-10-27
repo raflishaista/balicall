@@ -1,3 +1,6 @@
+import {recordingDownloadName} from './recordingDownload';
+import {usePostMeetingBatch} from './usePostMeetingBatch';
+import type {PostMeetingBatchJob} from './usePostMeetingBatch';
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
@@ -68,6 +71,7 @@ import {
   isTrackReference,
 } from '@livekit/components-react';
 import {
+  LogOut,
   Copy,
   Check,
   ArrowRight,
@@ -78,6 +82,7 @@ import {
   ChevronLeft,
   Home,
   Sparkles,
+  Video,
 } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
@@ -133,7 +138,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'documentation' | 'recordings'>(() => {
+  const [view, setView] = useState<AppView>(() => {
     if (isGuest) return 'lobby';
     if (initialSummaryState.savedActiveView === 'summary') return 'summary';
     if (initialSummaryState.session) return 'summary';
@@ -205,6 +210,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.meetingId || initialSummaryState.session?.meetingId || null);
   const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
   const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || routeSummaryRecord?.roomName || '');
+  const [summaryHasRecording, setSummaryHasRecording] = useState<boolean>(Boolean(initialSummaryState.selected?.hasRecording || routeSummaryRecord?.hasRecording));
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -230,6 +236,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     const syncMeetingRole = async () => {
       try {
         const data = await apiRequest<{
+          status?: string;
           currentRole?: MeetingRole;
           hostId?: string;
           coHostIds?: string[];
@@ -246,6 +253,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         });
 
         if (cancelled) return;
+
+        if (data.status === 'ended' && !endingMeeting.current) {
+          void handleEndMeetingRef.current?.(true);
+          return;
+        }
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
@@ -536,6 +548,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setTranscripts(record.transcripts);
     setSummaryMeetingId(record.meetingId);
     setSummaryRoomName(record.roomName);
+    setSummaryHasRecording(Boolean(record.hasRecording));
     const savedToken = summaryTokenFor(record.meetingId);
     setSummaryToken(savedToken);
     saveSummarySession({
@@ -551,10 +564,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
     // If record lacks transcripts, load from DB
     if (!record.transcripts || record.transcripts.length === 0) {
-      apiRequest<{ success: boolean; transcripts: TranscriptEntry[] }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
+      apiRequest<{ success: boolean; transcripts: TranscriptEntry[]; hasRecording?: boolean }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
         .then(details => {
           if (details?.transcripts && details.transcripts.length > 0) {
             setTranscripts(details.transcripts);
+          }
+          if (details?.hasRecording) {
+            setSummaryHasRecording(true);
           }
         })
         .catch(() => {});
@@ -666,6 +682,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
+  const applyPostMeetingBatch = useCallback((job: PostMeetingBatchJob) => {
+    if (!summaryMeetingId || !validSummary(job.summary) || !job.transcripts?.length) return;
+    summaryGeneration.current++;
+    setSummary(job.summary);
+    setTranscripts(job.transcripts);
+    setIsSummarizing(false);
+    setSummaryError(null);
+    setSummaryHasRecording(true);
+    const previous = readSummaryHistory().find(record => record.meetingId === summaryMeetingId);
+    const record: SummaryRecord = {...previous, meetingId:summaryMeetingId, roomName:summaryRoomName, hasRecording:true,
+      summary:job.summary, transcripts:job.transcripts, savedAt:job.summary.generatedAt || new Date().toISOString()};
+    const next = upsertSummary(readSummaryHistory(), record);
+    setSummaryHistory(next); saveSummaryHistory(next);
+    removeInProgressSummary(summaryMeetingId);
+    setInProgressList(readInProgressSummaries());
+  }, [summaryMeetingId, summaryRoomName, readSummaryHistory, saveSummaryHistory, removeInProgressSummary, readInProgressSummaries]);
+  const postMeetingBatchState = usePostMeetingBatch({meetingId:summaryMeetingId, token:summaryToken,
+    enabled:view === 'summary', onResult:applyPostMeetingBatch});
+
   const handleCancelSchedule = async (id: string) => {
     await apiRequest<{ success: boolean }>(`/schedules/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -732,6 +767,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
       summaryGeneration.current++;
+      // Old summary work must not pause ASR or lock controls in the new room.
+      setIsSummarizing(false);
+      setBatchDiarizing(false);
       setCallPreferences({
         ...userPreferences.preferences,
         sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
@@ -800,6 +838,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setSummary(completedSummary);
       removeInProgressSummary(targetMeetingId);
       setInProgressList(readInProgressSummaries());
+      const hadRecording = Boolean((data as any).hasRecording || isRecording);
+      setSummaryHasRecording(hadRecording);
       const record: SummaryRecord = {
         meetingId: targetMeetingId,
         roomName: targetRoomName,
@@ -809,6 +849,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         hostId: employeeId,
         hostName: employeeName,
         department,
+        hasRecording: hadRecording,
+        ...((data as any).recordingSize ? { recordingSize: (data as any).recordingSize } : {}),
       };
       if (callPreferences.saveSummaryOffline !== false) {
         const next = upsertSummary(readSummaryHistory(), record);
@@ -825,16 +867,17 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     } catch (error) {
       if (generation !== summaryGeneration.current) return;
-      setSummaryError(
-        error instanceof Error ? error.message : 'Gagal membuat notulen AI. Silakan coba lagi.'
-      );
+      const rawMessage = error instanceof Error ? error.message : '';
+      const message = rawMessage.includes('No saved speech to summarize')
+        ? 'Belum ada rekaman percakapan untuk dibuat notulen. Silakan berbicara terlebih dahulu saat rapat.'
+        : rawMessage || 'Gagal membuat notulen AI. Silakan coba lagi.';
+      setSummaryError(message);
     } finally {
       if (generation === summaryGeneration.current) setIsSummarizing(false);
     }
   };
 
   const handleEndMeeting = async (generate = true) => {
-    handleEndMeetingRef.current = handleEndMeeting;
     if (isGuest) generate = false;
     if (!meetingId || !token || endingMeeting.current) return;
     endingMeeting.current = true;
@@ -858,7 +901,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
       void (async () => {
         try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
-        await apiRequest(meetingPath(currentMeetingId, 'leave'), {
+        const leaveData = await apiRequest<{ status?: string }>(meetingPath(currentMeetingId, 'leave'), {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
           body: '{}',
@@ -867,6 +910,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           return { status: 'ended' };
         });
         endingMeeting.current = false;
+        if (!isGuest && leaveData?.status === 'ended' && currentRouteRef.current.view === 'home') {
+          openInProgressSummary({
+            meetingId: currentMeetingId,
+            roomName: currentRoomName,
+            token: currentToken,
+            transcripts: capturedTranscripts,
+            startedAt: new Date().toISOString(),
+            hostId: employeeId,
+            hostName: employeeName,
+            department,
+          });
+        }
       })();
       return;
     }
@@ -970,6 +1025,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     })();
   };
 
+  useEffect(() => {
+    handleEndMeetingRef.current = handleEndMeeting;
+  });
+
   const handleRetrySummarize = () => {
     if (summaryMeetingId && summaryToken) {
       void triggerSummarize(summaryMeetingId, summaryToken, summaryRoomName || roomName, transcripts);
@@ -985,23 +1044,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setBatchDiarizing(true);
     setSummaryError(null);
     try {
-      const data = await apiRequest<{
-        success: boolean;
-        transcripts: TranscriptEntry[];
-        speakerCount?: number;
-        speakers?: string[];
-      }>(
-        meetingPath(targetMeetingId, 'batch-diarize'),
-        {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        180000
-      );
-      if (data?.transcripts?.length) {
-        setTranscripts(data.transcripts);
-        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, data.transcripts);
+      const generation = joinGeneration.current;
+      type BatchJob = { status: string; error?: string; transcripts?: TranscriptEntry[] };
+      const path = meetingPath(targetMeetingId, 'post-meeting-batch');
+      const headers = { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' };
+      let { job } = await apiRequest<{ job: BatchJob }>(path, {
+        method: 'POST', headers, body: JSON.stringify({ language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
+      });
+      const deadline = Date.now() + 4 * 60 * 60 * 1000;
+      while (job.status !== 'done') {
+        if (generation !== joinGeneration.current) return;
+        if (job.status === 'failed') throw new Error(job.error || 'Batch gagal. Transkrip live tetap tersedia.');
+        if (Date.now() > deadline) throw new Error('Pemrosesan masih berlangsung. Buka kembali hasil rapat untuk memeriksa status.');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        ({ job } = await apiRequest<{ job: BatchJob }>(path, { headers }));
+        if (!job) throw new Error('Status batch tidak ditemukan.');
+      }
+      if (generation === joinGeneration.current && job.transcripts?.length) {
+        setTranscripts(job.transcripts);
+        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, job.transcripts);
       }
     } catch (err) {
       setSummaryError(err instanceof Error ? err.message : 'Gagal melakukan batch diarization.');
@@ -1183,7 +1244,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
     }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
-  const handleToggleRecording = async (enabled: boolean) => {
+  const handleToggleRecording = async (enabled: boolean, postMeetingBatch = false) => {
     if (!meetingId || !token || recordingPending) return;
     const generation = joinGeneration.current;
     setRecordingPending(true); setRecordingError(null);
@@ -1192,7 +1253,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       const data = await apiRequest<{ success: boolean; recording?: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ postMeetingBatch, language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
       }, 15000);
       if (generation === joinGeneration.current) {
         setIsRecording(data?.recording?.status === 'active');
@@ -1273,7 +1334,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          onLogout={onLogout} logoutPending={logoutPending}
           hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => {
             saveActiveView('home');
@@ -1287,9 +1347,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             navigateTo({ view: 'settings', section: 'overview' });
           }}
           onDocumentation={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('documentation');
-            setView('documentation');
+            navigateTo({ view: 'documentation' });
           }}
           onSummary={() => {
             saveActiveView('summary');
@@ -1333,6 +1392,9 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               )}
             </div>
           )}
+          {view !== 'in-call' && <button type="button" className="header-account-logout" disabled={logoutPending || !onLogout} onClick={() => void onLogout?.()} title={!onLogout ? 'Mode tanpa login: tidak ada sesi akun untuk dikeluarkan' : 'Keluar dari akun BaliCall'} aria-label="Keluar akun" aria-busy={logoutPending}>
+            {logoutPending ? <Loader2 className="ui-spinner" size={17} aria-hidden="true" /> : <LogOut size={17} aria-hidden="true" />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span>
+          </button>}
           <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span>
         </div>
       </header>
@@ -1447,8 +1509,17 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           />
         )}
 
+        {view === 'summary' && postMeetingBatchState && <p role="status" className="settings-notice">
+          {postMeetingBatchState.status === 'done' ? 'Batch audio Qwen + Nemotron selesai. Transkrip dan notulen batch tersimpan.'
+            : postMeetingBatchState.status === 'waiting' ? 'Batch audio menunggu seluruh peserta keluar dan rekaman Egress selesai.'
+            : postMeetingBatchState.status === 'failed' || postMeetingBatchState.status === 'timeout' ? `Batch audio belum berhasil: ${postMeetingBatchState.error || 'Coba kembali setelah layanan siap.'} Transkrip live tetap tersedia.`
+            : postMeetingBatchState.status === 'reconnecting' ? 'Koneksi status batch terputus. Mencoba kembali; proses server tetap berjalan.'
+            : postMeetingBatchState.status === 'summarizing' ? 'Qwen selesai mentranskripsi. AI sedang menyusun notulen batch audio.'
+            : 'Qwen + Nemotron sedang memproses rekaman audio seluruh peserta.'}
+        </p>}
+
         {view === 'in-call' && token && (
-          <InCallView callDuration={callDuration}
+          <InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
             meetingHostId={meetingHostId}
@@ -1475,6 +1546,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             sttConfigured={backendHealth?.sttConfigured || false}
             sttModels={backendHealth?.sttModels || []}
             defaultSttModel={backendHealth?.sttModel || ''}
+            pendingSaves={pendingSaves}
             saveBlocked={Boolean(transcriptSaveError)}
             onAddAudio={handleAddAudio} onCreateLiveSession={handleCreateLiveSession}
             onPresence={handlePresence}
@@ -1548,6 +1620,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             copied={copied}
             onCopy={copyMarkdownSummary}
             isSummarizing={isSummarizing}
+            hasRecording={summaryHasRecording}
             batchDiarizing={batchDiarizing}
             onBatchDiarize={handleBatchDiarize}
             pendingSaves={pendingSaves}
@@ -1594,8 +1667,8 @@ function InCallView({ callDuration,
   meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
   sttModels, defaultSttModel, onCreateLiveSession,
   joinMedia, callPreferences,
-  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
-  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
+  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync, qwenBatchConfigured,
+  sttProvider, setSttProvider, sttConfigured, saveBlocked, pendingSaves, onAddAudio, onPresence,
   microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
   onRequestToSpeak,
   token,
@@ -1648,6 +1721,7 @@ function InCallView({ callDuration,
         qwenDiarizationReady={qwenDiarizationReady} onSttModelChanged={onSttModelChanged}
         sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
         startWithCamera={joinMedia.cameraEnabled}
+        qwenBatchConfigured={qwenBatchConfigured}
         recordingPending={recordingPending}
         recordingError={recordingError}
         isRecording={isRecording}
@@ -1657,6 +1731,7 @@ function InCallView({ callDuration,
         onToggleLiveDiarization={onToggleLiveDiarization}
         onToggleBatchDiarization={onToggleBatchDiarization}
         sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
+        pendingSaves={pendingSaves}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
         employeeId={employeeId}
@@ -1694,6 +1769,7 @@ function RoomContent({
   onToggleLiveDiarization,
   onToggleBatchDiarization,
   recordingPending,
+  qwenBatchConfigured,
   recordingError,
   isRecording,
   onToggleRecording,
@@ -1701,6 +1777,7 @@ function RoomContent({
   setSttProvider,
   sttConfigured,
   saveBlocked,
+  pendingSaves,
   onAddAudio,
   onPresence,
   roomName,
@@ -1812,7 +1889,12 @@ function RoomContent({
     if (finishRequest.current) return;
     finishRequest.current = true;
     setFinishing(true); setFinishError(null);
-    try { await finishTranscription(); await onEndMeeting(generate); }
+    try {
+      const isLastUser = participants.length <= 1 || participants.filter((p: any) => !p.isLocal).length === 0;
+      const shouldGenerate = (generate || isLastUser) && !employeeId.startsWith('GUEST-');
+      await finishTranscription();
+      await onEndMeeting(shouldGenerate);
+    }
     catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
     finally { finishRequest.current = false; setFinishing(false); }
   };
@@ -1871,6 +1953,8 @@ function RoomContent({
         isSummarizing={isSummarizing}
         finishError={finishError}
         speechError={speechError}
+        speechWarning={sttProvider === 'server' ? serverSpeech.speechWarning : null}
+        pendingSaves={pendingSaves}
         interimText={interimText}
         isListening={isListeningSpeechApi}
         speechEnabled={speechEnabled}
@@ -1894,6 +1978,7 @@ function RoomContent({
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         transcripts={transcripts}
+        qwenBatchConfigured={qwenBatchConfigured}
         recordingPending={recordingPending}
         recordingError={recordingError}
         isRecording={isRecording}
@@ -1959,6 +2044,7 @@ function SummaryView({
   onRetry,
   onBackToHistory,
   onBatchDiarize,
+  hasRecording = false,
 }: {
   summary: MeetingSummary | null;
   roomName: string;
@@ -1975,12 +2061,69 @@ function SummaryView({
   onRetry?: () => void;
   onBackToHistory?: () => void;
   onBatchDiarize?: () => void;
+  hasRecording?: boolean;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [hasRec, setHasRec] = useState<boolean>(Boolean(hasRecording));
+  const [downloadingRecording, setDownloadingRecording] = useState(false);
+  const [recordingDownloadError, setRecordingDownloadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (hasRecording) {
+      setHasRec(true);
+      return;
+    }
+    if (meetingId) {
+      const cleanId = meetingId.replace(/^meeting-/, '');
+      fetch(`${API_BASE}/meetings/${cleanId}/recording`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.hasRecording) setHasRec(true);
+        })
+        .catch(() => {});
+    }
+  }, [meetingId, hasRecording]);
+
+  const downloadRecording = async () => {
+    setDownloadingRecording(true);
+    setRecordingDownloadError(null);
+    const cleanId = meetingId.replace(/^meeting-/, '');
+    const url = `${API_BASE}/meetings/${encodeURIComponent(cleanId)}/recording/download`;
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        let msg = 'Gagal mengunduh rekaman rapat.';
+        try {
+          const errData = await res.json();
+          if (errData?.error) msg = errData.error;
+        } catch { /* ignore non-JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = recordingDownloadName(res, cleanId);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      setRecordingDownloadError(err?.message || 'Gagal mengunduh rekaman rapat.');
+    } finally {
+      setDownloadingRecording(false);
+    }
+  };
 
   const downloadExport = async (format: 'pdf' | 'json') => {
     setExporting(format);
@@ -2280,10 +2423,10 @@ function SummaryView({
                 className="button-secondary"
                 onClick={onBatchDiarize}
                 disabled={batchDiarizing || isSummarizing}
-                title="Jalankan ulang batch diarization untuk seluruh rekaman audio rapat ini"
+                title="Qwen + Nemotron memproses satu rekaman LiveKit seluruh peserta. Rekam sejak awal dan tunggu semua peserta keluar."
               >
                 {batchDiarizing ? <Loader2 className="ui-spinner" size={15} /> : <Sparkles size={15} />}
-                <span>{batchDiarizing ? 'Memproses Diarisasi...' : 'Diarisasi Ulang (Batch)'}</span>
+                <span>{batchDiarizing ? 'Memproses batch Qwen…' : 'Batch Qwen + Nemotron'}</span>
               </button>
             )}
             <button className="button-secondary" onClick={onCopy}>
@@ -2301,6 +2444,19 @@ function SummaryView({
               {exporting === 'pdf' ? 'Menyiapkan PDF...' : 'Export PDF'}
             </button>
 
+            {hasRec && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={downloadRecording}
+                disabled={downloadingRecording}
+                title="Unduh rekaman rapat dalam format aslinya (MP4 video atau OGG audio)"
+              >
+                {downloadingRecording ? <Loader2 className="ui-spinner" size={15} /> : <Video size={15} />}
+                <span>{downloadingRecording ? 'Menyiapkan Rekaman...' : 'Unduh Rekaman'}</span>
+              </button>
+            )}
+
             <button className="button-primary" onClick={onNewCall}> Rapat baru <ArrowRight size={15} /></button>
           </div>
         </header>
@@ -2312,6 +2468,13 @@ function SummaryView({
           <div className="summary-note" role="alert">
             <AlertCircle size={16} />
             {exportError}
+          </div>
+        )}
+
+        {recordingDownloadError && (
+          <div className="summary-note" role="alert">
+            <AlertCircle size={16} />
+            {recordingDownloadError}
           </div>
         )}
         <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist" onKeyDown={event => {

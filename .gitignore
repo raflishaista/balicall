@@ -12,7 +12,9 @@ client/.env
 server/data/
 
 # LiveKit Egress recordings
-infrastructure/livekit/recordings/
+infrastructure/livekit/recordings/*
+!infrastructure/livekit/recordings/.gitkeep
+*.mp4
 
 # Temporary Egress test credentials
 test/egress/egress-test-token
@@ -67,3 +69,7 @@ Thumbs.db
 # Python cache
 __pycache__/
 *.py[cod]
+
+# Editor swap files
+*.swp
+*.swo

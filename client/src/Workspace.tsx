@@ -21,8 +21,8 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, onLogout, logoutPending, isGuest = false, authUser }: {
-  authUser?: AuthUser|null; onLogout?: () => Promise<void>; logoutPending?: boolean; isGuest?: boolean;
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, isGuest = false, authUser }: {
+  authUser?: AuthUser|null; isGuest?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
   onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void; onDocumentation: () => void;
 }) {
@@ -43,7 +43,6 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       <button type="button" className={view === 'documentation' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'documentation' ? 'page' : undefined} onClick={onDocumentation}><BookOpen size={19} /><span>Dokumentasi</span></button>
     </nav>
     <div className="sidebar-bottom">
-      {onLogout && <button type="button" className="sidebar-link sidebar-account-logout" disabled={logoutPending} onClick={() => void onLogout()} aria-label="Keluar akun">{logoutPending ? <Loader2 className="ui-spinner" size={18} /> : <LogIn size={18} />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span></button>}
       <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
       <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
     </div>

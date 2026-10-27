@@ -5,7 +5,9 @@ import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createApp } from '../server/app.js';
+// Set before dynamic import: db.js loads .env and may otherwise create a real pool.
+process.env.DATABASE_URL = '';
+const { createApp } = await import('../server/app.js');
 import { loadConfig } from '../server/config.js';
 
 const [configPath, wavPath, outputPath] = process.argv.slice(2);
@@ -88,7 +90,7 @@ try {
   const forged = await request(route('transcript'), { sttModel: 'qwen3-asr-0.6b-live', final: { ...finals[0], sourceId: 'forged' } });
   assert.equal(forged.status, 400);
   await request(route('leave'), {});
-  const report = { passed: true, fixture: 'Fresh synthetic A-B-A voices', via: 'API ticket → Vite websocket proxy → GPU workers → isolated API persistence',
+  const report = { passed: true, fixture: 'Synthetic WAV input; voice count is not inferred by this check', via: 'API ticket → Vite websocket proxy → GPU workers → isolated API persistence',
     firstInterimSeconds: Number(firstInterim.toFixed(3)), finals: finals.length, stored: stored.data.transcripts.length,
     retryDeduplicated: true, forgedSourceRejected: true, speakers: [...new Set(finals.map(final => final.speakerLabel))] };
   writeFileSync(outputPath, JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));

@@ -162,3 +162,8 @@ test('syncBrowserHistory updates pushState and replaceState appropriately', () =
   assert.equal(calls[1].url, '#/schedule');
 });
 
+
+test('documentation participates in browser history', () => {
+  assert.equal(routeToHash({view:'documentation'}), '#/documentation');
+  assert.deepEqual(hashToRoute('#/documentation'), {view:'documentation'});
+});

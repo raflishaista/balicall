@@ -106,6 +106,12 @@ export async function initDb(customUrl) {
         );
       `);
 
+      // Batch artifacts stay separate from the original live transcript.
+      await client.query(`CREATE TABLE IF NOT EXISTS balicall_post_meeting_batches (
+        meeting_id VARCHAR(64) PRIMARY KEY REFERENCES balicall_meetings(id) ON DELETE CASCADE,
+        result JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+
       // 4. Create balicall_attendees table (attendance roster)
       await client.query(`
         CREATE TABLE IF NOT EXISTS balicall_attendees (
@@ -420,7 +426,10 @@ export async function getMeetingSummaries(limit = 20) {
 
   try {
     const res = await activePool.query(query, [limit]);
-    return res.rows;
+    if (!res.rows.length) return res.rows;
+    const batches = await activePool.query('SELECT meeting_id,result FROM balicall_post_meeting_batches WHERE meeting_id = ANY($1::varchar[])', [[...new Set(res.rows.map(row => row.meeting_id))]]);
+    const byId = new Map(batches.rows.filter(row => row.result?.status === 'done').map(row => [row.meeting_id, row.result]));
+    return res.rows.map(row => byId.has(row.meeting_id) ? batchSummaryRow(byId.get(row.meeting_id).summary, row) : row);
   } catch (err) {
     console.error('[DB] ❌ Failed to fetch meeting summaries:', err.message);
     return [];
@@ -441,17 +450,35 @@ export async function getMeetingDetails(meetingId) {
     const summaryRes = await activePool.query('SELECT * FROM balicall_summaries WHERE meeting_id = $1 ORDER BY created_at DESC LIMIT 1', [meetingId]);
     const transcriptsRes = await activePool.query('SELECT * FROM balicall_transcripts WHERE meeting_id = $1 ORDER BY timestamp ASC', [meetingId]);
     const attendeesRes = await activePool.query('SELECT * FROM balicall_attendees WHERE meeting_id = $1 ORDER BY joined_at ASC', [meetingId]);
+    const batchRes = await activePool.query('SELECT result FROM balicall_post_meeting_batches WHERE meeting_id = $1', [meetingId]);
+    const batch = batchRes.rows[0]?.result;
 
     return {
       meeting: meetingRes.rows[0],
-      summary: summaryRes.rows[0] || null,
-      transcripts: transcriptsRes.rows,
+      summary: batch?.status === 'done' ? batchSummaryRow(batch.summary, summaryRes.rows[0] || {}) : summaryRes.rows[0] || null,
+      transcripts: batch?.status === 'done' ? batch.transcripts.map(t => ({ id:t.id, speaker_id:t.speakerId, speaker_name:t.segments?.[0]?.speaker || t.speakerName, text:t.text, timestamp:t.timestamp })) : transcriptsRes.rows,
+      ...(batch?.status === 'done' ? { postMeetingBatch: batch, liveTranscripts: transcriptsRes.rows } : {}),
       attendees: attendeesRes.rows,
     };
   } catch (err) {
     console.error(`[DB] ❌ Failed to fetch meeting details for ${meetingId}:`, err.message);
     return null;
   }
+}
+
+export async function savePostMeetingBatch(meeting, result) {
+  const activePool = getPool();
+  if (!activePool || !isConnected) throw new Error('Database batch belum tersedia');
+  await saveMeeting(meeting);
+  await activePool.query(`INSERT INTO balicall_post_meeting_batches (meeting_id,result) VALUES ($1,$2::jsonb)
+    ON CONFLICT (meeting_id) DO UPDATE SET result=EXCLUDED.result,updated_at=NOW()`, [meeting.id, JSON.stringify(result)]);
+}
+
+function batchSummaryRow(summary, row) {
+  return { ...row, title: summary.title, executive_summary: summary.executiveSummary,
+    key_discussion_points: summary.keyDiscussionPoints, decisions: summary.decisions,
+    action_items: summary.actionItems, attendance_summary: summary.attendanceSummary,
+    provider: summary.provider, created_at: summary.generatedAt, transcript_source: 'qwen-post-meeting' };
 }
 
 /**

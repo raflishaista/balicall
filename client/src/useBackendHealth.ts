@@ -7,7 +7,7 @@ export interface BackendHealth {
   hasLlmKey?: boolean; livekitStatus?: string;
   sttProvider?: 'browser' | 'server'; sttConfigured?: boolean;
   sttModel?: string; sttModels?: string[]; sttDiarization?: boolean;
-  qwenDiarizationReady?: boolean;
+  qwenDiarizationReady?: boolean; qwenBatchConfigured?: boolean; qwenBatchWorkerReady?: boolean;
   qwenLiveReady?: boolean; qwenLiveDiarizationReady?: boolean;
   seaLivePilotReady?: boolean; seaLiveDiarizationReady?: boolean;
   database?: { connected: boolean; configured: boolean };
