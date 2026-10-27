@@ -318,6 +318,41 @@ export function MeetingRoom({
 
   const transcriptTab = useRef<HTMLButtonElement>(null);
   const attendanceTab = useRef<HTMLButtonElement>(null);
+  const transcriptListRef = useRef<HTMLDivElement>(null);
+  const isScrolledToBottomRef = useRef(true);
+  const hasInitialScrolledRef = useRef(false);
+
+  const handleTranscriptScroll = () => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    isScrolledToBottomRef.current = atBottom;
+  };
+
+  useEffect(() => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    if (isScrolledToBottomRef.current) {
+      const behavior = hasInitialScrolledRef.current ? 'smooth' : 'auto';
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior,
+      });
+      if (transcripts.length > 0) {
+        hasInitialScrolledRef.current = true;
+      }
+    }
+  }, [transcripts, interimText]);
+
+  useEffect(() => {
+    if (panelVisible && activeTab === 'transcript') {
+      const el = transcriptListRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+        isScrolledToBottomRef.current = true;
+      }
+    }
+  }, [panelVisible, activeTab]);
 
   const activateTab = (tab: 'transcript' | 'attendance') => {
     setActiveTab(tab);
@@ -883,6 +918,8 @@ export function MeetingRoom({
           )}
 
           <div
+            ref={transcriptListRef}
+            onScroll={handleTranscriptScroll}
             className="live-transcript-list"
             role="log"
             aria-label="Transkrip langsung"
@@ -981,36 +1018,43 @@ export function MeetingRoom({
             </div>
           )}
 
-          {import.meta.env.DEV && (
-            <details className="manual-transcript">
-              <summary>Tambahkan ucapan manual <ChevronDown size={14} /></summary>
-              <form
-                onSubmit={event => {
-                  event.preventDefault();
-                  if (manualText.trim()) {
-                    onAddSpeechLine(manualText.trim());
-                    setManualText('');
-                  }
-                }}
+          <div className="meeting-chat-bar">
+            <form
+              className="meeting-chat-form"
+              onSubmit={event => {
+                event.preventDefault();
+                if (manualText.trim()) {
+                  onAddSpeechLine(manualText.trim());
+                  setManualText('');
+                  isScrolledToBottomRef.current = true;
+                  requestAnimationFrame(() => {
+                    if (transcriptListRef.current) {
+                      transcriptListRef.current.scrollTo({
+                        top: transcriptListRef.current.scrollHeight,
+                        behavior: 'smooth',
+                      });
+                    }
+                  });
+                }
+              }}
+            >
+              <input
+                aria-label="Pesan chat"
+                value={manualText}
+                disabled={busy || saveBlocked}
+                onChange={event => setManualText(event.target.value)}
+                placeholder="Ketik pesan chat…"
+              />
+              <button
+                type="submit"
+                aria-label="Kirim pesan"
+                title="Kirim pesan"
+                disabled={busy || saveBlocked || !manualText.trim()}
               >
-                <input
-                  aria-label="Ucapan manual"
-                  value={manualText}
-                  disabled={busy || saveBlocked}
-                  onChange={event => setManualText(event.target.value)}
-                  placeholder="Ketik ucapan untuk pengujian"
-                  required
-                />
-                <button
-                  type="submit"
-                  aria-label="Simpan ucapan manual"
-                  disabled={busy || saveBlocked}
-                >
-                  <Send size={16} />
-                </button>
-              </form>
-            </details>
-          )}
+                <Send size={16} />
+              </button>
+            </form>
+          </div>
 
           <div
             className={`listening-footer ${isListening ? 'listening' : ''} ${

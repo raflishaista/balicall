@@ -1,6 +1,6 @@
 import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLiveConfig.js';
 import express from 'express';
-import { attachAuth } from './auth.js';
+import { attachAuth, isOriginAllowed } from './auth.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync, statSync, realpathSync } from 'node:fs';
@@ -88,14 +88,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     next();
   });
   app.use(cors({ credentials: true, exposedHeaders:['X-Request-ID'], origin(origin, callback) {
-    if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
-    try {
-      const url = new URL(origin);
-      if (url.port === '5187' && (/^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(url.hostname))) {
-        return callback(null, true);
-      }
-    } catch {}
-    callback(null, false);
+    callback(null, isOriginAllowed(origin, config));
   } }));
 
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
