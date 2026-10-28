@@ -26,6 +26,15 @@ export function parseSummary(text, input) {
 
   const strings = value =>
     Array.isArray(value) && value.every(item => typeof item === 'string');
+  
+  const validTaskStatuses = [
+    'To Do',
+    'Blocked',
+    'In Progress',
+    'Finished',
+    'In Review',
+    'Completed',
+  ];
 
   if (
     !result ||
@@ -46,6 +55,12 @@ export function parseSummary(text, input) {
           .includes(item.status)) &&
       (item.type === undefined || typeof item.type === 'string') &&
       (item.startDate === undefined || typeof item.startDate === 'string')
+    ) ||
+    !Array.isArray(result.taskUpdates) ||
+    !result.taskUpdates.every(item =>
+      item &&
+      typeof item.task === 'string' &&
+      validTaskStatuses.includes(item.status)
     )
   ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
@@ -57,6 +72,7 @@ export function parseSummary(text, input) {
     keyDiscussionPoints: result.keyDiscussionPoints,
     decisions: result.decisions,
     actionItems: result.actionItems,
+    taskUpdates: result.taskUpdates,
     attendanceSummary: result.attendanceSummary,
   };
 
