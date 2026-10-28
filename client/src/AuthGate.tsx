@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react';
-import App from './App';
 import { apiRequest, setAuthCsrfToken, AUTH_EXPIRED_EVENT } from './api';
 import { setAccountScope } from './accountScope';
-import devices from './assets/login/balicall-connected-devices.png';
-import logo from './assets/login/balitower-balicall-logo-white.png';
+import devices from './assets/login/balicall-connected-devices.webp';
+import logo from './assets/login/balitower-balicall-logo-white.webp';
 import './Login.css';
 import { disablePush } from './pushNotifications';
 import { clearSummarySession } from './summaryHistory';
+
+const App = lazy(() => import('./App'));
 
 export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
@@ -56,9 +57,9 @@ export function AuthGate() {
     }
   };
   if (!checking && session && (!session.enabled || session.user)) {
-    return <><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
+    return <><Suspense fallback={<main className="login-page"><p role="status">Memuat ruang kerja…</p></main>}><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
       onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)}
-      onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} />
+      onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} /></Suspense>
       {error && <div className="login-session-error" role="alert">{error}</div>}</>;
   }
   return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking}
@@ -96,9 +97,9 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
   const disabled=checking||pending||unavailable;
   return <main className="login-page">
     <section className="login-story" aria-label="BaliCall">
-      <img className="login-logo" src={logo} alt="BaliTower BaliCall" />
+      <img className="login-logo" src={logo} width={768} height={288} decoding="async" alt="BaliTower BaliCall" />
       <div className="login-story-copy"><h1>Rapat terhubung,<br />catatan tersusun.</h1><p>Satu ruang untuk berdiskusi, berbagi layar, dan mencatat hasil rapat.</p></div>
-      <img className="login-devices" src={devices} alt="" />
+      <img className="login-devices" src={devices} width={1536} height={1024} decoding="async" alt="" />
       <span className="login-story-footer">Bali Tower Sentra</span>
     </section>
     <section className="login-form-panel">

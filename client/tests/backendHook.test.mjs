@@ -6,6 +6,36 @@ import { useBackendTranscription } from '../src/useBackendTranscription.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+test('voice detection reads the current audio sample even when the UI volume is stale', async t => {
+  const oldRecorder = globalThis.MediaRecorder, oldStream = globalThis.MediaStream;
+  let state, root, current = 0;
+  const blobs = [];
+  globalThis.MediaStream = class {};
+  globalThis.MediaRecorder = class {
+    state = 'inactive'; mimeType = 'audio/webm';
+    static isTypeSupported() { return true; }
+    start() { this.state = 'recording'; }
+    stop() {
+      this.state = 'inactive';
+      queueMicrotask(() => { this.ondataavailable?.({ data: new Blob(['voice']) }); this.onstop?.(new Event('stop')); });
+    }
+  };
+  t.after(async () => {
+    await act(async () => root?.unmount());
+    globalThis.MediaRecorder = oldRecorder; globalThis.MediaStream = oldStream;
+  });
+  function Harness() {
+    state = useBackendTranscription({ track: { readyState: 'live' }, muted: false,
+      language: 'id-ID', volume: 0, readVolume: () => current, onAudio: blob => blobs.push(blob) });
+    return null;
+  }
+  await act(async () => { root = create(React.createElement(Harness)); });
+  // No UI rerender: a hidden tab must still pass speech to the recorder.
+  current = 0.2;
+  await act(async () => state.finishTranscription());
+  assert.equal(blobs.length, 1); assert.equal(await blobs[0].text(), 'voice');
+});
+
 test('backend recording survives volume/callback rerenders and flushes the existing microphone track', async t => {
   const previousRecorder = globalThis.MediaRecorder, previousStream = globalThis.MediaStream;
   t.after(() => { globalThis.MediaRecorder = previousRecorder; globalThis.MediaStream = previousStream; });

@@ -30,3 +30,19 @@ test('retired batch Qwen is absent while native Qwen Live stays selectable',asyn
  try{await act(async()=>{root=create(React.createElement(Harness));});assert.deepEqual(state.health.sttModels,['small','qwen3-asr-0.6b-live']);assert.equal(state.health.sttModel,'small');assert.equal(state.health.qwenLiveReady,true);}
  finally{await act(async()=>root?.unmount());}
 });
+
+
+test('background tabs skip health polling and refresh when visible again',async t=>{
+ const previous=globalThis.document;let poll,listener,calls=0,removed=false,root;
+ globalThis.document={visibilityState:'visible',addEventListener:(_event,callback)=>{listener=callback;},removeEventListener:(_event,callback)=>{removed=callback===listener;}};
+ t.mock.method(globalThis,'setInterval',callback=>{poll=callback;return 1;});
+ t.mock.method(globalThis,'clearInterval',()=>{});
+ const {useBackendHealth}=load(async()=>{calls++;return{status:'ok'};});
+ function Harness(){useBackendHealth();return null;}
+ try{
+  await act(async()=>{root=create(React.createElement(Harness));});assert.equal(calls,1);
+  document.visibilityState='hidden';await act(async()=>poll());assert.equal(calls,1);
+  document.visibilityState='visible';await act(async()=>listener());assert.equal(calls,2);
+  await act(async()=>root.unmount());root=null;assert.equal(removed,true);
+ }finally{await act(async()=>root?.unmount());globalThis.document=previous;}
+});
