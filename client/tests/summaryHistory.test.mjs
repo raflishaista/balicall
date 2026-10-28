@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HISTORY_KEY, HISTORY_LIMIT, SESSION_KEY, readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor, upsertSummary } from '../src/summaryHistory.ts';
+import { normalizeDbSummary, HISTORY_KEY, HISTORY_LIMIT, SESSION_KEY, readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor, upsertSummary } from '../src/summaryHistory.ts';
 function storage() {
   const data = new Map();
   return { getItem: key => data.get(key) ?? null, removeItem: key => data.delete(key), setItem: (key, value) => data.set(key, value) };
@@ -83,4 +83,11 @@ test('logout clears this account session tokens while preserving archives and ot
     assert.equal(readSummarySession(),null);assert.equal(summaryTokenFor('meeting-1'),'');assert.equal(readSummaryHistory().length,1);
     setAccountScope('account-b');assert.equal(summaryTokenFor('meeting-2'),'account-b-token');
   }finally{setAccountScope(null);}
+});
+
+test('source evidence roundtrips through browser archive and database normalization',()=>{
+ fixture();const item=record();item.summary.sourceEvidence={version:1,transcriptDigest:'a'.repeat(64),utteranceCount:1,checkedFields:['decisions','actionItems'],items:[{field:'decisions',index:0,sources:[{utteranceId:'U0001',speaker:'QC',quote:'Disepakati 13 juta.'}]}]};
+ saveSummaryHistory([item]);assert.deepEqual(readSummaryHistory()[0].summary.sourceEvidence,item.summary.sourceEvidence);
+ const normalized=normalizeDbSummary({meeting_id:'qc',title:'QC',executive_summary:'QC',key_discussion_points:[],decisions:[],action_items:[],attendance_summary:[],source_evidence:item.summary.sourceEvidence});
+ assert.deepEqual(normalized.summary.sourceEvidence,item.summary.sourceEvidence);
 });

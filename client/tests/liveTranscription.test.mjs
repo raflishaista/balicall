@@ -24,7 +24,7 @@ function environment(t) {
   const keys = ['WebSocket', 'AudioContext', 'AudioWorkletNode', 'MediaStream', 'window'];
   const saved = keys.map(key => globalThis[key]);
   t.after(() => keys.forEach((key, i) => { globalThis[key] = saved[i]; }));
-  const sockets = [], contexts = [], tracks = [];
+  const sockets = [], contexts = [], tracks = [], worklets = [];
   globalThis.window = { location: { href: 'http://localhost:5187/' } };
   globalThis.WebSocket = class {
     static OPEN = 1; readyState = 1; bufferedAmount = 0; sent = [];
@@ -43,11 +43,12 @@ function environment(t) {
     async resume() {} async close() { this.state = 'closed'; }
   };
   globalThis.AudioWorkletNode = class {
+    constructor() { worklets.push(this); }
     port = { postMessage: () => queueMicrotask(() => this.port.onmessage({ data: 'flushed' })) };
     connect() {} disconnect() {}
   };
   globalThis.MediaStream = class { constructor(tracks) { this.tracks = tracks; } };
-  return { sockets, contexts, tracks };
+  return { sockets, contexts, tracks, worklets };
 }
 
 test('stream finish waits for final text and ready_to_stop without stopping the LiveKit track', async t => {
@@ -111,4 +112,55 @@ test('resumable Qwen pause flushes capture and requests pause rather than closin
  assert.equal(env.sockets[1].url.searchParams.get('end'),'1');
  env.sockets[1].message({type:'ready_to_stop'});await end;
  assert.equal(env.contexts.length,1);
+});
+
+test('finish immediately after pause must upgrade to a permanent stop before acknowledging completion',async t=>{
+ const env=environment(t);let ready;const listening=new Promise(resolve=>{ready=resolve;});
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/sea-live-stt/asr'}),onFinal(){},onInterim(){},onError(){},onReady:value=>{if(value)ready();}});
+ await listening;env.sockets[0].message({type:'config',resumeGraceSeconds:45});
+ const pause=live.finish({pause:true});const finish=live.finish();
+ await new Promise(resolve=>setImmediate(resolve));
+ const control=env.sockets[0].sent.at(-1);
+ env.sockets[0].message({type:'ready_to_stop'});await Promise.all([pause,finish]);
+ assert.ok(control instanceof ArrayBuffer,'permanent finish must not silently remain a retained pause');
+});
+
+test('worker capacity rejection identifies the microphone as not transcribing',async t=>{
+ const env=environment(t),errors=[];
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/sea-live-stt/asr'}),onFinal(){},onInterim(){},onError:value=>errors.push(value),onReady(){}});
+ await new Promise(resolve=>setImmediate(resolve));
+ env.sockets[0].readyState=3;env.sockets[0].onclose({code:4429});
+ await assert.rejects(live.finish(),/kapasitas|penuh/i);assert.match(errors[0],/belum.*transkrip/i);
+});
+
+test('busy browser waits for the final PCM acknowledgement instead of silently stopping after 500ms',async t=>{
+ const env=environment(t);let ready;const listening=new Promise(resolve=>{ready=resolve;});
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/sea-live-stt/asr'}),onFinal(){},onInterim(){},onError(){},onReady:value=>{if(value)ready();}});
+ await listening;t.mock.timers.enable({apis:['setTimeout']});
+ env.worklets[0].port.postMessage=()=>{};
+ const finish=live.finish();await new Promise(resolve=>setImmediate(resolve));
+ t.mock.timers.tick(600);await new Promise(resolve=>setImmediate(resolve));
+ const stoppedEarly=env.sockets[0].sent.some(value=>value instanceof ArrayBuffer&&value.byteLength===0);
+ env.worklets[0].port.onmessage({data:new Int16Array([1,2,3]).buffer});env.worklets[0].port.onmessage({data:'flushed'});
+ await new Promise(resolve=>setImmediate(resolve));env.sockets[0].message({type:'ready_to_stop'});await finish;
+ assert.equal(stoppedEarly,false,'last PCM packet must be sent before stop');
+ assert.equal(env.sockets[0].sent[0].byteLength,6);
+});
+
+test('capacity error frame before config never starts microphone streaming',async t=>{
+ const env=environment(t),errors=[];
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/sea-live-stt/asr'}),onFinal(){},onInterim(){},onError:value=>errors.push(value),onReady(){}});
+ await Promise.resolve();await Promise.resolve();
+ env.sockets[0].message({type:'error',code:'capacity_exceeded',error:'Kapasitas transkripsi penuh (2 sesi mikrofon). Suara mikrofon ini belum ditranskripsi.'});
+ await assert.rejects(live.finish(),/kapasitas/i);
+ assert.equal(env.contexts.length,0);assert.match(errors[0],/belum ditranskripsi/);
+});
+
+test('missing PCM flush acknowledgement rejects finish without sending end-of-stream',async t=>{
+ const env=environment(t);let ready;const listening=new Promise(resolve=>{ready=resolve;});
+ const live=startLiveTranscription({track:{},createSession:async()=>({url:'/qwen-live-stt/asr'}),onFinal(){},onInterim(){},onError(){},onReady:value=>{if(value)ready();}});
+ await listening;t.mock.timers.enable({apis:['setTimeout']});env.worklets[0].port.postMessage=()=>{};
+ const rejected=assert.rejects(live.finish(),/paket suara terakhir/i);
+ await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(4000);await rejected;
+ assert.equal(env.sockets[0].sent.length,0);assert.equal(env.contexts[0].state,'closed');
 });

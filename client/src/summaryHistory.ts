@@ -3,11 +3,22 @@ export interface TranscriptEntry {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string; revision?: number;
   segments?: { text: string; speaker: string; start: number; end: number; sourceId?: string; sessionId?: string; attribution?: string; speakerName?: string }[];
 }
+export interface SummarySourceEvidence {
+  version: number; transcriptDigest: string; utteranceCount: number;
+  items: {field: 'decisions' | 'actionItems'; index: number; sources: {utteranceId: string; speaker: string; quote: string; timestamp?: string | null}[]}[];
+}
+export function validSourceEvidence(value: unknown): value is SummarySourceEvidence {
+  if (!object(value) || value.version !== 1 || typeof value.transcriptDigest !== 'string' || !Number.isInteger(value.utteranceCount) || !Array.isArray(value.items)) return false;
+  return value.items.every(item => object(item) && ['decisions','actionItems'].includes(String(item.field)) && Number.isInteger(item.index) && Number(item.index) >= 0
+    && Array.isArray(item.sources) && item.sources.length > 0 && item.sources.every(source => object(source) && ['utteranceId','speaker','quote'].every(key => typeof source[key] === 'string')
+      && (source.timestamp === undefined || source.timestamp === null || typeof source.timestamp === 'string')));
+}
 export interface MeetingSummary {
   title: string; executiveSummary: string; keyDiscussionPoints: string[]; decisions: string[];
   actionItems: { task: string; assignee: string; priority: 'High' | 'Medium' | 'Low'; deadline: string }[];
   attendanceSummary: string[]; transcriptCount?: number; provider?: string; note?: string;
   generatedAt?: string; dbSummaryId?: number;
+  sourceEvidence?: SummarySourceEvidence; summaryVersion?: string;
 }
 export interface SummaryRecord {
   meetingId: string; roomName: string; savedAt: string; summary: MeetingSummary; transcripts: TranscriptEntry[];
@@ -153,6 +164,7 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
       attendanceSummary: Array.isArray(s.attendance_summary || s.attendanceSummary)
         ? (s.attendance_summary || s.attendanceSummary).map(String) : [],
       provider: s.provider ? String(s.provider) : undefined,
+      sourceEvidence: validSourceEvidence(s.source_evidence || s.sourceEvidence) ? (s.source_evidence || s.sourceEvidence) : undefined,
       generatedAt: String(s.created_at || s.createdAt || s.generatedAt || new Date().toISOString()),
       dbSummaryId: typeof raw.id === 'number' ? raw.id : undefined,
     },

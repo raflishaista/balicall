@@ -1281,3 +1281,12 @@ input::placeholder { color: #a1b1c6; }
 .live-transcript-entry .transcript-phase { margin: 4px 0 0 5px; }
 .interim-transcript { border: 1px dashed #dfbd75; background: #fffaf0; color: #665020; }
 .interim-transcript p { margin-top: 5px; font-size: 12px; }
+
+.summary-evidence { margin: 16px 0; padding: 14px 16px; border: 1px solid #d8e4ef; border-radius: 10px; background: #f8fbff; color: #294766; }
+.summary-evidence > summary { cursor: pointer; font-weight: 600; font-size: 13px; line-height: 1.5; }
+.summary-evidence-help { color: #526d89; font-size: 12px; line-height: 1.65; margin: 12px 0; }
+.summary-evidence ol { margin: 12px 0 0; padding-left: 20px; }
+.summary-evidence li { margin: 14px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.summary-evidence figure { margin: 8px 0; padding: 10px 12px; border-left: 3px solid #91b5d7; background: #fff; }
+.summary-evidence blockquote { margin: 0; white-space: pre-wrap; }
+.summary-evidence figcaption { margin-top: 6px; color: #617487; font-size: 11px; }

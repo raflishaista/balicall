@@ -1,3 +1,4 @@
+import { SUMMARY_VERSION, SUMMARY_INSTRUCTIONS, buildSummaryInput, validateSummaryEvidence, SummaryGroundingError } from './summaryGrounding.js';
 import { GoogleGenAI } from '@google/genai';
 import { setTimeout as delay } from 'node:timers/promises';
 import { attributedSpeakerName } from './qwenLiveConfig.js';
@@ -6,28 +7,73 @@ export class ServiceError extends Error {
   constructor(message, status = 502, details = {}) { super(message); this.status = status; Object.assign(this, details); }
 }
 
-export function parseSummary(text) {
-  if (typeof text !== 'string') throw new ServiceError('The summary service returned invalid content');
-  let result;
-  try { result = JSON.parse(text); } catch {
-    const block = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    try { result = JSON.parse(block?.[1] || ''); } catch { throw new ServiceError('The summary service did not return valid JSON'); }
+export function parseSummary(text, input) {
+  if (typeof text !== 'string') {
+    throw new ServiceError('The summary service returned invalid content');
   }
-  const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
-  if (!result || typeof result.title !== 'string' || typeof result.executiveSummary !== 'string' ||
-      !['keyDiscussionPoints', 'decisions', 'attendanceSummary'].every(key => strings(result[key])) ||
-      !Array.isArray(result.actionItems) || !result.actionItems.every(item =>
-        item &&
-        ['task', 'assignee', 'deadline'].every(key => typeof item[key] === 'string') &&
-        ['High', 'Medium', 'Low'].includes(item.priority) &&
-        (item.type === undefined || typeof item.type === 'string')
-      )) { throw new ServiceError('The summary service returned an invalid summary schema');}
 
-  return {
-    title: result.title, executiveSummary: result.executiveSummary,
-    keyDiscussionPoints: result.keyDiscussionPoints, decisions: result.decisions,
-    actionItems: result.actionItems, attendanceSummary: result.attendanceSummary,
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch {
+    const block = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    try {
+      result = JSON.parse(block?.[1] || '');
+    } catch {
+      throw new ServiceError('The summary service did not return valid JSON');
+    }
+  }
+
+  const strings = value =>
+    Array.isArray(value) && value.every(item => typeof item === 'string');
+
+  if (
+    !result ||
+    typeof result.title !== 'string' ||
+    typeof result.executiveSummary !== 'string' ||
+    !['keyDiscussionPoints', 'decisions', 'attendanceSummary'].every(key =>
+      strings(result[key])
+    ) ||
+    !Array.isArray(result.actionItems) ||
+    !result.actionItems.every(item =>
+      item &&
+      ['task', 'assignee', 'deadline'].every(
+        key => typeof item[key] === 'string'
+      ) &&
+      ['High', 'Medium', 'Low'].includes(item.priority) &&
+      (item.type === undefined || typeof item.type === 'string') &&
+      (item.startDate === undefined || typeof item.startDate === 'string')
+    )
+  ) {
+    throw new ServiceError('The summary service returned an invalid summary schema');
+  }
+
+  const summary = {
+    title: result.title,
+    executiveSummary: result.executiveSummary,
+    keyDiscussionPoints: result.keyDiscussionPoints,
+    decisions: result.decisions,
+    actionItems: result.actionItems,
+    attendanceSummary: result.attendanceSummary,
   };
+
+  if (input) {
+    try {
+      summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
+    } catch (error) {
+      if (error instanceof SummaryGroundingError) {
+        throw new ServiceError(
+          'Notulen belum dapat diverifikasi: ' +
+            error.message +
+            ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
+          422
+        );
+      }
+      throw error;
+    }
+  }
+
+  return summary;
 }
 
 export async function fetchJson(url, options, timeoutMs, fetchImpl = fetch) {
@@ -76,21 +122,17 @@ async function fetchOfficeJson(url, options, config, fetchImpl) {
   }
 }
 
-const PHONETIC_CORRECTIONS = [
-  [/\bperlombongan\b/gi, 'permohonan'],
-  [/\bnestet(nya)?\b/gi, (_, nya) => (nya ? 'nested-nya' : 'nested')],
-  [/\bkondisionil\b/gi, 'kondisional'],
-  [/\bspiking\b/gi, 'speaking'],
+// Only orthographic brand/technical spelling; never infer names or semantic corrections.
+const ORTHOGRAPHIC_CORRECTIONS = [
   [/\b(bali\s*tower|balitower)\b/gi, 'Bali Tower'],
   [/\blive\s*kit\b/gi, 'LiveKit'],
-  [/\benok\b/gi, 'NOC'],
   [/\bwebrtc\b/gi, 'WebRTC'],
 ];
 
 export function normalizeTranscriptText(text) {
   if (typeof text !== 'string' || !text) return text;
   let result = text;
-  for (const [pattern, replacement] of PHONETIC_CORRECTIONS) {
+  for (const [pattern, replacement] of ORTHOGRAPHIC_CORRECTIONS) {
     result = result.replace(pattern, replacement);
   }
   return result;
@@ -103,33 +145,9 @@ export function effectiveLlm(config) {
 }
 
 export async function summarize(meeting, config, fetchImpl = fetch) {
-  const dialogue = meeting.transcripts.map(entry => {
-    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
-    const prefix = time ? `--- [${time}]` : '---';
-    if (entry.segments && entry.segments.length > 0) {
-        return entry.segments.map(seg => `${prefix} [${attributedSpeakerName(entry.speakerName,seg)}]: ${normalizeTranscriptText(seg.text)}`).join('\n');
-    }
-    return `${prefix} [${entry.speakerName}]: ${normalizeTranscriptText(entry.text)}`;
-  }).join('\n');
+  const input = buildSummaryInput(meeting);
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
-  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines, conditions or assignments. Use empty arrays if none were stated.
-
-ASR Speech-to-Text Interpretation & Normalization Guidelines:
-- The dialogue was transcribed by ASR. Resolve any minor phonetic mishearings or code-switching technical loanwords into their intended meaning based on context (e.g. "perlombongan" -> "permohonan", "nestet" -> "nested", "kondisionil" -> "kondisional", "spiking" -> "speaking").
-- Base all key discussion points, decisions, and action items on the intended contextual meaning, not on literal phonetic distortions.
-
-Guidelines for actionItems:
-- Extract all actionable tasks agreed upon in the meeting.
-- 'task': Clear, specific description of the task.
-- 'assignee': PIC / Penanggung Jawab. Attribute to the person assigned, commanded, or committed to do the task. If a speaker commands or delegates to a specific person (e.g. "Siti, tolong periksa log" or "Rian kamu handle vendor"), the assignee must be that named person (e.g. "Siti" or "Rian"), NOT the speaker who gave the command. If multiple diarized speakers appear under one participant without names, distinguish them as "\${Speaker} (person_0)".
-- 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
-- 'priority': "High", "Medium", or "Low".
-- 'type': pilih tepat satu tipe berdasarkan tugas: "Bug", "Feature", "Improvement", "Research", atau "Documentation". Gunakan "Documentation" untuk menulis atau memeriksa dokumen, "Bug" untuk memperbaiki kerusakan, "Feature" untuk membuat kemampuan baru, "Improvement" untuk menyempurnakan kemampuan yang ada, dan "Research" untuk penyelidikan. Jika tidak jelas, gunakan string kosong.
-- 'startDate': tanggal mulai hanya jika disebut secara eksplisit di rapat, dalam format YYYY-MM-DD. Jika tidak disebut, gunakan string kosong.
-
-Return only JSON with this exact shape:
-{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":[],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string","startDate":"string","type":"string"}],"attendanceSummary":["string"]}
-Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDialogue:\n${dialogue}`;
+  const payload = JSON.stringify({ ...input, connectedAttendees: attendance });
   const provider = effectiveLlm(config);
   if (provider === 'demo') {
     return {
@@ -141,7 +159,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
         return [`${entry.speakerName}: ${entry.text}`];
       }),
       decisions: [], actionItems: [], attendanceSummary: attendance,
-      provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
+      summaryVersion: SUMMARY_VERSION, provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
   }
   let content;
@@ -150,23 +168,26 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llmKey}` },
       body: JSON.stringify({
         model: config.llmModel,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: payload }],
         chat_template_kwargs: { enable_thinking: false },
-        temperature: 0.2,
-        max_tokens: 4096,
+        temperature: 0,
+        max_tokens: 8192,
       }),
     }, config, fetchImpl);
+    if (data.choices?.[0]?.finish_reason === 'length') throw new ServiceError('Hasil notulen terpotong oleh batas keluaran model. Transkrip tetap tersedia; coba kembali atau gunakan model dengan kapasitas lebih besar.');
     content = data.choices?.[0]?.message?.content;
   } else {
     try {
       const client = new GoogleGenAI({ apiKey: config.geminiKey });
-      const response = await client.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt, config: {
+      const response = await client.models.generateContent({ model: 'gemini-2.5-flash', contents: payload, config: {
+        systemInstruction: SUMMARY_INSTRUCTIONS, temperature: 0,
         responseMimeType: 'application/json', httpOptions: { timeout: config.llmTimeoutMs },
       } });
+      if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new ServiceError('Hasil notulen Gemini terpotong oleh batas keluaran model. Transkrip tetap tersedia.');
       content = response.text;
-    } catch { throw new ServiceError('Gemini is unavailable or timed out. Please retry.'); }
+    } catch (error) { if (error instanceof ServiceError) throw error; throw new ServiceError('Gemini is unavailable or timed out. Please retry.'); }
   }
-  return { ...parseSummary(content), attendanceSummary: attendance, provider: provider === 'office' ? `Office (${config.llmModel})` : 'Gemini 2.5 Flash' };
+  return { ...parseSummary(content, input), summaryVersion: SUMMARY_VERSION, attendanceSummary: attendance, provider: provider === 'office' ? `Office (${config.llmModel})` : 'Gemini 2.5 Flash' };
 }
 
 export async function transcribeAudio(audio, mimeType, language, config, fetchImpl = fetch) {

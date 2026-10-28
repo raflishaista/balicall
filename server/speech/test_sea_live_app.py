@@ -91,8 +91,10 @@ class AppTests(unittest.TestCase):
             for owner in ['a','b']:
                 with client.websocket_connect('/asr?ticket='+signed(nonce=owner,speakerId=owner)) as ws:
                     ws.receive_json();ws.send_json({'type':'pause'});ws.receive_json()
-            with self.assertRaises(WebSocketDisconnect):
-                with client.websocket_connect('/asr?ticket='+signed(nonce='third',speakerId='c')):pass
+            with client.websocket_connect('/asr?ticket='+signed(nonce='third',speakerId='c')) as ws:
+                message=ws.receive_json()
+                self.assertEqual(message['code'],'capacity_exceeded')
+                with self.assertRaises(WebSocketDisconnect):ws.receive_json()
             with client.websocket_connect('/asr?end=1&ticket='+signed(nonce='wrong-end',speakerId='c')) as ws:
                 ws.receive_json()
             self.assertEqual(len(app.state.sessions.slots),2)

@@ -26,15 +26,16 @@ async def connect_sea_diarizer():
     return await DiarizationClient.connect(os.getenv('SEA_DIAR_STREAM_URL','ws://127.0.0.1:8009/asr'),os.getenv('SEA_DIAR_STREAM_SECRET',''))
 
 
-def create_app(engine=None,secret=None,diarizer_factory=None):
+def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
     @asynccontextmanager
     async def lifespan(app):
         key=secret if secret is not None else os.getenv('SEA_LIVE_STT_SECRET','')
         if len(key)<32: raise RuntimeError('SEA_LIVE_STT_SECRET must contain at least 32 characters')
         app.state.verifier=TicketVerifier(key,MODEL)
+        limit=max_sessions if max_sessions is not None else int(os.getenv('SEA_LIVE_MAX_SESSIONS','2'))
+        app.state.sessions=RetainedSessions(limit=limit)
         app.state.engine=engine if engine is not None else SeaEngine()
         app.state.active=0
-        app.state.sessions=RetainedSessions()
         async def reap():
             while True:
                 await asyncio.sleep(5)
@@ -54,7 +55,7 @@ def create_app(engine=None,secret=None,diarizer_factory=None):
     @app.get('/health')
     def health():
         return dict(ready=hasattr(app.state,'engine'),streaming=True,native=False,languages=['id'],model=MODEL,
-            diarization=bool(diarizer_factory) or sea_diarization_ready(),activeSessions=app.state.active,maxSessions=2,
+            diarization=bool(diarizer_factory) or sea_diarization_ready(),activeSessions=app.state.active,maxSessions=app.state.sessions.limit,
             retainedSessions=len(app.state.sessions.slots)-app.state.sessions.active,resumeGraceSeconds=45)
 
     @app.websocket('/asr')
@@ -85,8 +86,12 @@ def create_app(engine=None,secret=None,diarizer_factory=None):
                     return SeaDiarizedSession(app.state.engine,ticket,diarizer,raw_ticket)
                 return SeaLiveSession(app.state.engine,ticket)
             try: slot,resumed=await app.state.sessions.acquire(ticket,create_session)
-            except ValueError:
-                await socket.close(code=4429); return
+            except ValueError as error:
+                capacity=str(error)=='Streaming capacity exceeded'
+                await socket.accept()
+                message=(f'Kapasitas transkripsi penuh ({app.state.sessions.limit} sesi mikrofon). Suara mikrofon ini belum ditranskripsi. Tunggu slot tersedia atau hubungi penyelenggara.' if capacity else 'Sesi mikrofon sebelumnya masih tersambung. Tunggu sesi lama selesai lalu coba kembali.')
+                await socket.send_json(dict(type='error',code='capacity_exceeded' if capacity else 'session_conflict',error=message))
+                await socket.close(code=4429 if capacity else 4409);return
             except (ConnectionError,OSError,TimeoutError):
                 await socket.close(code=4503); return
             session=slot.session
