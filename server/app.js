@@ -1291,7 +1291,6 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
     if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body?.sttModel)) {
-      if (!writable(req,res)) return;
       let final;
       try {
         final = validateLiveFinal(req.body.final,req.speakerId);
@@ -1303,7 +1302,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
       if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body.sttModel)) final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
       const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
-      const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,req.body.sttModel);
+      if (existing) return res.json({success:true,entry:existing});
+      if (!writable(req,res)) return;
+      const entry = store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,req.body.sttModel);
       return res.json({success:true,entry});
     }
     const { text, requestId = randomUUID() } = req.body || {};

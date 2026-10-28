@@ -799,3 +799,14 @@ test('batch records audio only and automatically processes only after the last p
   assert.equal((await host.get('post-meeting-batch')).data.job.status,'done');
   assert.equal(submissions,1,'Restart must not upload the same recording again');
 });
+
+test('replayed SEA/Qwen finals remain idempotent after leaving while new speech stays blocked',async t=>{
+ const f=await fixture(t),a=await f.joinRoom('live-owner');
+ const final={sourceId:'live-owner',sessionId:'lost-tail',segmentId:'lost-tail-1',text:'Ucapan yang sudah tersimpan.',speakerLabel:'Peserta',attribution:'unknown',start:0,end:1};
+ const body={sttModel:'qwen3-asr-0.6b-live',final};
+ const first=await a.post('transcript',body);assert.equal(first.status,200);
+ await a.post('leave');
+ const replay=await a.post('transcript',body);assert.equal(replay.status,200);assert.equal(replay.data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('transcript',{...body,final:{...final,segmentId:'lost-tail-2',text:'Ucapan baru tidak diizinkan.'}})).status,409);
+ assert.equal((await a.get('transcript')).data.transcripts.length,1);
+});
