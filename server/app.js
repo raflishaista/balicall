@@ -80,6 +80,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         await savePostMeetingBatch(meeting, publicBatch(result));
         await saveMeetingSummary(meeting.id, meeting.roomName, result.summary);
       }
+      try {
+        await syncActionItemsToItProject(meeting, result.summary);
+      } catch (error) {
+        console.warn('[ITPROJECT] Sinkronisasi action items dari batch gagal:', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+      }
     },
   });
   const webhookLogs = [];
@@ -181,16 +189,61 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (!status || !defaultType) {
       throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
     }
-
     const numericStatusId = numericIdByEncodedId.get(status.id);
 
     if (!numericStatusId) {
-      throw new Error('Status task belum punya pemetaan numerik.');
+      throw new Error('Status awal task belum punya pemetaan numerik.');
     }
+    const normalizeActionStatus = value => {
+    const key = String(value || '').trim().toLocaleLowerCase('id-ID');
+    const aliases = {
+      'to do': 'To Do',
+      todo: 'To Do',
+      blocked: 'Blocked',
+      terhambat: 'Blocked',
+      'in progress': 'In Progress',
+      'sedang dikerjakan': 'In Progress',
+      finished: 'Finished',
+      'selesai dikerjakan': 'Finished',
+      'in review': 'In Review',
+      'sedang ditinjau': 'In Review',
+      completed: 'Completed',
+      komplit: 'Completed',
+      tuntas: 'Completed',
+    };
+
+    return aliases[key] || '';
+  };
 
     for (const item of summary.actionItems) {
       const title = String(item.task || '').trim();
       if (!title) continue;
+      const explicitStatusMatch = title.match(
+        /\bstatus(?:nya)?\s+(to\s+do|blocked|in\s+progress|finished|in\s+review|completed|komplit|tuntas)\b/i
+      );
+
+      const statusFromTaskText = explicitStatusMatch
+        ? normalizeActionStatus(explicitStatusMatch[1])
+        : '';
+
+      const requestedStatusName =
+        statusFromTaskText ||
+        normalizeActionStatus(item.status) ||
+        status.name;
+
+      const selectedStatus = options.taskStatuses.find(
+        option => option.name?.trim().toLowerCase() ===
+          requestedStatusName.toLowerCase()
+      );
+
+      if (!selectedStatus) {
+        console.warn('[ITPROJECT] Status task tidak tersedia; task dilewati.', {
+          meetingId: meeting.id,
+          title,
+          requestedStatus: item.status || '',
+        });
+        continue;
+      }
       const requestedTypeName = String(item.type || '').trim().toLowerCase();
       const selectedType = requestedTypeName
         ? options.taskTypes.find(
@@ -354,9 +407,33 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           throw new Error('Respons create-task tidak berisi ID task.');
         }
 
+        let statusUpdate = 'unchanged';
+
+        if (selectedStatus.id !== status.id) {
+          const selectedStatusName = selectedStatus.name.trim().toLowerCase();
+          const statusNeedsDueDate =
+            !['to do', 'blocked'].includes(selectedStatusName);
+          const statusDueDate = dueDate || task.due_date || '';
+
+          if (statusNeedsDueDate && !statusDueDate) {
+            statusUpdate = 'skipped_missing_due_date';
+            console.warn('[ITPROJECT] Status task tidak diubah karena due date wajib belum tersedia.', {
+              meetingId: meeting.id,
+              taskId: task.id,
+              requestedStatus: selectedStatus.name,
+            });
+          } else {
+            await itProject.updateTaskStatus({
+              task: task.id,
+              status_id: selectedStatus.id,
+              ...(statusDueDate ? { due_date: statusDueDate } : {}),
+            });
+            statusUpdate = 'updated';
+          }
+        }
+
         let sprintAssignment = 'no_active_sprint';
 
-     
         if (activeSprint?.id) {
           try {
             await itProject.assignSprintTasks({
@@ -396,6 +473,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           deadlineFromSummary: item.deadline || null,
           sprintAssignment,
           sprintName: activeSprint?.name || null,
+          taskStatus: selectedStatus.name,
+          statusUpdate,
         });
       } catch (error) {
         store.transact(() => {

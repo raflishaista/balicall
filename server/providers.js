@@ -41,6 +41,9 @@ export function parseSummary(text, input) {
         key => typeof item[key] === 'string'
       ) &&
       ['High', 'Medium', 'Low'].includes(item.priority) &&
+      (item.status === undefined ||
+        ['To Do', 'Blocked', 'In Progress', 'Finished', 'In Review', 'Completed']
+          .includes(item.status)) &&
       (item.type === undefined || typeof item.type === 'string') &&
       (item.startDate === undefined || typeof item.startDate === 'string')
     )
@@ -147,7 +150,10 @@ export function effectiveLlm(config) {
 export async function summarize(meeting, config, fetchImpl = fetch) {
   const input = buildSummaryInput(meeting);
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
-  const payload = JSON.stringify({ ...input, connectedAttendees: attendance });
+  const payload = JSON.stringify({
+    ...input,
+    connectedAttendees: attendance,
+  });
   const provider = effectiveLlm(config);
   if (provider === 'demo') {
     return {

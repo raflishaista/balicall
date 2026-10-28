@@ -210,6 +210,10 @@ export function createItProjectClient(config) {
     createTask(arguments_) {
       return call('create-task', arguments_);
     },
+    
+    updateTaskStatus(arguments_) {
+      return call('update-task-status', arguments_);
+    },
 
     assignSprintTasks(arguments_) {
       return call('assign-sprint-tasks', arguments_);

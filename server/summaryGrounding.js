@@ -8,11 +8,19 @@ Preserve names, numbers, units, conditions, uncertainty, negation and the latest
 Review ALL utterances including the last ones. Keep proposals, tentative plans, questions, objections and unresolved topics in discussion points; do not turn them into decisions. A decision requires explicit agreement. A later rejection/correction overrides an earlier proposal; include the relevant context in its source quotes.
 Extract explicit tasks without losing conditions (such as no service interruption). The assignee is the explicitly named recipient of delegation, not the person giving the instruction. Copy the exact named recipient from the source quote. If no person is named, assignee must be ""; do not infer a person's identity from the account/microphone or an anonymous speaker label.
 Copy deadlines verbatim from the cited utterance. If none was spoken, deadline must be "". Keep relative dates such as "besok" as spoken; do not invent a calendar date. Put execution conditions in task, not deadline. Priority is High/Medium/Low; use Medium as a neutral default when priority is unstated.
+Status must be exactly one of "To Do", "Blocked", "In Progress", "Finished", "In Review", or "Completed". Normalize an explicitly spoken status as follows:
+- "To Do" or "baru dibuat" -> "To Do".
+- "Blocked" or "terhambat" -> "Blocked".
+- "In Progress" or "sedang dikerjakan" -> "In Progress".
+- "Finished" or "selesai dikerjakan" -> "Finished".
+- "In Review" or "sedang ditinjau" -> "In Review".
+- "Completed", "komplit", or "tuntas" -> "Completed".
+Use "To Do" when no status is explicitly stated. Do not infer status from the task description, priority, or task type.
 Use empty arrays for absent decisions or tasks. Do not fill gaps with recommendations. Unclear or overlapping speech must stay uncertain; mention important unresolved points in keyDiscussionPoints.
 Every decision and action item MUST have evidence with its zero-based index and one or more sources. Each source has utteranceId and a verbatim quote copied from that utterance (original language, no paraphrase). Include the exact assignee, deadline and all task/decision numbers in the quotes. Preserve numeric signs, separators, currencies, multipliers and units; never turn juta into miliar or -3 into 3. No unused or duplicate indexes. All utterance IDs are supplied in the JSON input.
 For a cited utterance containing negation, rejection, pending approval, proposals, uncertainty or corrections, do not paraphrase a fragment as a decision/task. Normally leave unresolved content in keyDiscussionPoints. If an explicit negative decision or restriction must be recorded, copy the COMPLETE cited utterance into the decision/task, with its full context and quote; for multiple cited utterances copy them in their original order. Preserve any "tanpa"/"without" condition verbatim. If this cannot be done faithfully, omit the decision/task rather than invent approval.
 Return ONLY JSON, using this shape:
-{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":[],"evidence":{"decisions":[{"index":0,"sources":[{"utteranceId":"U0001","quote":"verbatim text"}]}],"actionItems":[{"index":0,"sources":[{"utteranceId":"U0001","quote":"verbatim text"}]}]}}
+{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string","status":"To Do|Blocked|In Progress|Finished|In Review|Completed"}],"attendanceSummary":[],"evidence":{"decisions":[{"index":0,"sources":[{"utteranceId":"U0001","quote":"verbatim text"}]}],"actionItems":[{"index":0,"sources":[{"utteranceId":"U0001","quote":"verbatim text"}]}]}}
 When a corresponding array is empty its evidence array is empty too. attendanceSummary is supplied by the server; return [].`;
 
 export function buildSummaryInput(meeting) {
