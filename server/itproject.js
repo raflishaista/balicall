@@ -2,6 +2,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ServiceError } from './providers.js';
+import {
+  loadItProjectOAuthTokens,
+  saveItProjectOAuthTokens,
+} from './itprojectOAuthStore.js';
 
 const OAUTH_TOKEN_URL = 'https://devitproject.balitower.co.id/oauth/token';
 const MCP_RESOURCE = 'https://devitproject.balitower.co.id/mcp';
@@ -38,68 +42,83 @@ function parseResult(result) {
 }
 
 export function createItProjectClient(config) {
-  async function getAccessToken() {
-    if (!config.itprojectMcpToken) {
-      throw new Error('Login OAuth IT Project belum dilakukan.');
+    const persistedTokens = loadItProjectOAuthTokens(config.itprojectOAuthTokenFile);
+
+    if (!config.itprojectMcpToken && persistedTokens) {
+      config.itprojectMcpToken = persistedTokens.accessToken;
+      config.itprojectOAuthRefreshToken = persistedTokens.refreshToken;
+      config.itprojectOAuthExpiresAt = persistedTokens.expiresAt;
     }
 
-    // Token statis dari env tidak memiliki waktu kedaluwarsa yang diketahui.
-    if (!config.itprojectOAuthExpiresAt) {
+    function setOAuthTokens(tokens) {
+      if (!tokens.access_token) {
+        throw new Error('Respons OAuth tidak berisi access token.');
+      }
+
+      config.itprojectMcpToken = tokens.access_token;
+      config.itprojectOAuthRefreshToken =
+        tokens.refresh_token || config.itprojectOAuthRefreshToken || '';
+      config.itprojectOAuthExpiresAt =
+        Date.now() + (Number(tokens.expires_in) || 3600) * 1000;
+
+      saveItProjectOAuthTokens(config.itprojectOAuthTokenFile, {
+        accessToken: config.itprojectMcpToken,
+        refreshToken: config.itprojectOAuthRefreshToken,
+        expiresAt: config.itprojectOAuthExpiresAt,
+      });
+    }
+
+    async function refreshAccessToken() {
+      if (!config.itprojectOAuthRefreshToken) {
+        throw new Error(
+          config.itprojectMcpToken
+            ? 'Access token kedaluwarsa dan refresh token tidak tersedia. Login OAuth lagi.'
+            : 'Login OAuth IT Project belum dilakukan.'
+        );
+      }
+
+      const form = new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: config.itprojectOAuthClientId,
+        refresh_token: config.itprojectOAuthRefreshToken,
+        resource: MCP_RESOURCE,
+      });
+
+      const response = await fetch(OAUTH_TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form,
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Refresh token IT Project ditolak (HTTP ${response.status}). Login OAuth lagi jika token sudah dicabut atau kedaluwarsa.`
+        );
+      }
+
+      const tokens = await response.json();
+      setOAuthTokens(tokens);
       return config.itprojectMcpToken;
     }
 
-    // Perbarui token 60 detik sebelum kedaluwarsa.
-    if (Date.now() < config.itprojectOAuthExpiresAt - 60_000) {
+    async function getAccessToken() {
+      const hasAccessToken = Boolean(config.itprojectMcpToken);
+      const hasKnownExpiry = Boolean(config.itprojectOAuthExpiresAt);
+
+      // Token statis dari env tidak memiliki waktu kedaluwarsa yang diketahui.
+      if (hasAccessToken && !hasKnownExpiry) {
+        return config.itprojectMcpToken;
+      }
+
+      // Jika access token belum ada atau hampir kedaluwarsa, pakai refresh token.
+      if (!hasAccessToken || Date.now() >= config.itprojectOAuthExpiresAt - 60_000) {
+        return refreshAccessToken();
+      }
+
       return config.itprojectMcpToken;
     }
-
-    if (!config.itprojectOAuthRefreshToken) {
-      throw new Error(
-        'Access token kedaluwarsa dan refresh token tidak tersedia. Login OAuth lagi.'
-      );
-    }
-
-    const form = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: config.itprojectOAuthClientId,
-      refresh_token: config.itprojectOAuthRefreshToken,
-      resource: MCP_RESOURCE,
-    });
-
-    const response = await fetch(OAUTH_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: form,
-    });
-
-    if (!response.ok) {
-      config.itprojectMcpToken = '';
-      config.itprojectOAuthRefreshToken = '';
-      config.itprojectOAuthExpiresAt = 0;
-      throw new Error('Refresh token IT Project ditolak. Login OAuth lagi.');
-    }
-
-    const tokens = await response.json();
-
-    if (!tokens.access_token) {
-      throw new Error('Respons refresh OAuth tidak berisi access token.');
-    }
-
-    config.itprojectMcpToken = tokens.access_token;
-
-    // Beberapa server menerbitkan refresh token baru saat token diperbarui.
-    if (tokens.refresh_token) {
-      config.itprojectOAuthRefreshToken = tokens.refresh_token;
-    }
-
-    config.itprojectOAuthExpiresAt =
-      Date.now() + (Number(tokens.expires_in) || 3600) * 1000;
-
-    return config.itprojectMcpToken;
-  }
-
   async function call(name, args) {
     const client = new Client({
       name: 'balicall',
@@ -154,6 +173,7 @@ export function createItProjectClient(config) {
   }
 
   return {
+    setOAuthTokens,
     // Dipakai oleh endpoint uji project; tidak bergantung pada project ID lama.
     get authenticated() {
       return Boolean(
@@ -183,8 +203,16 @@ export function createItProjectClient(config) {
       return call('get-task-options', { project });
     },
 
+    projectTasks(project) {
+      return call('get-project-tasks', { project });
+    },
+
     createTask(arguments_) {
       return call('create-task', arguments_);
+    },
+
+    assignSprintTasks(arguments_) {
+      return call('assign-sprint-tasks', arguments_);
     },
 
     projectOptions() {

@@ -16,10 +16,13 @@ export function parseSummary(text) {
   const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
   if (!result || typeof result.title !== 'string' || typeof result.executiveSummary !== 'string' ||
       !['keyDiscussionPoints', 'decisions', 'attendanceSummary'].every(key => strings(result[key])) ||
-      !Array.isArray(result.actionItems) || !result.actionItems.every(item => item &&
-        ['task', 'assignee', 'deadline'].every(key => typeof item[key] === 'string') && ['High', 'Medium', 'Low'].includes(item.priority))) {
-    throw new ServiceError('The summary service returned an invalid summary schema');
-  }
+      !Array.isArray(result.actionItems) || !result.actionItems.every(item =>
+        item &&
+        ['task', 'assignee', 'deadline'].every(key => typeof item[key] === 'string') &&
+        ['High', 'Medium', 'Low'].includes(item.priority) &&
+        (item.type === undefined || typeof item.type === 'string')
+      )) { throw new ServiceError('The summary service returned an invalid summary schema');}
+
   return {
     title: result.title, executiveSummary: result.executiveSummary,
     keyDiscussionPoints: result.keyDiscussionPoints, decisions: result.decisions,
@@ -121,9 +124,11 @@ Guidelines for actionItems:
 - 'assignee': PIC / Penanggung Jawab. Attribute to the person assigned, commanded, or committed to do the task. If a speaker commands or delegates to a specific person (e.g. "Siti, tolong periksa log" or "Rian kamu handle vendor"), the assignee must be that named person (e.g. "Siti" or "Rian"), NOT the speaker who gave the command. If multiple diarized speakers appear under one participant without names, distinguish them as "\${Speaker} (person_0)".
 - 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
 - 'priority': "High", "Medium", or "Low".
+- 'type': pilih tepat satu tipe berdasarkan tugas: "Bug", "Feature", "Improvement", "Research", atau "Documentation". Gunakan "Documentation" untuk menulis atau memeriksa dokumen, "Bug" untuk memperbaiki kerusakan, "Feature" untuk membuat kemampuan baru, "Improvement" untuk menyempurnakan kemampuan yang ada, dan "Research" untuk penyelidikan. Jika tidak jelas, gunakan string kosong.
+- 'startDate': tanggal mulai hanya jika disebut secara eksplisit di rapat, dalam format YYYY-MM-DD. Jika tidak disebut, gunakan string kosong.
 
 Return only JSON with this exact shape:
-{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":["string"]}
+{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":[],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string","startDate":"string","type":"string"}],"attendanceSummary":["string"]}
 Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDialogue:\n${dialogue}`;
   const provider = effectiveLlm(config);
   if (provider === 'demo') {
