@@ -4,6 +4,16 @@ A private, enterprise PC video and voice calling platform designed for **Bali To
 
 Combines **real-time WebRTC audio/video calling**, camera & screen sharing, active speaker spotlighting, dual-engine speech-to-text (Browser Web Speech API & Backend STT), **PostgreSQL database persistence (`jds3_db`)** with strict employee ID verification, **Meeting Scheduling (Kalender Interaktif)**, **Docker-based Cloud Meeting Recording (LiveKit Egress)**, and an **embedded AI Meeting Secretary** powered by the internal office LLM (`qwen-35b` at `http://10.7.1.21/v1`), Google Gemini, or Smart Demo Engine.
 
+## 🎬 Video Showcase
+
+**Project Record Meeting — Motion V2** · 60 detik · 1080p · musik dan sound effect.
+
+Showcase alur rapat, rekaman, transkrip, keputusan, dan tindak lanjut dengan data simulasi.
+
+[![Preview video Project Record Meeting — Motion V2](docs/media/record-meeting-motion-v2-poster.jpg)](https://github.com/raflishaista/balicall/raw/refs/heads/main/docs/media/record-meeting-motion-v2.mp4)
+
+[Unduh video MP4 — 1080p](https://github.com/raflishaista/balicall/raw/refs/heads/main/docs/media/record-meeting-motion-v2.mp4) · [Lihat file video](docs/media/record-meeting-motion-v2.mp4)
+
 ---
 
 ## 🌟 Key Features & Architecture
