@@ -10,7 +10,7 @@ Combines **real-time WebRTC audio/video calling**, camera & screen sharing, acti
 
 Showcase alur rapat, rekaman, transkrip, keputusan, dan tindak lanjut dengan data simulasi.
 
-[![Preview video Project Record Meeting — Motion V2](docs/media/record-meeting-motion-v2-poster.jpg)](https://github.com/raflishaista/balicall/raw/refs/heads/main/docs/media/record-meeting-motion-v2.mp4)
+https://github.com/user-attachments/assets/7313a78a-000a-47db-8885-098504ca7fc2
 
 [Unduh video MP4 — 1080p](https://github.com/raflishaista/balicall/raw/refs/heads/main/docs/media/record-meeting-motion-v2.mp4) · [Lihat file video](docs/media/record-meeting-motion-v2.mp4)
 
