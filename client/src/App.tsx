@@ -1,3 +1,4 @@
+import { SummaryEvidence } from './SummaryEvidence';
 import { recordingDownloadName } from './recordingDownload';
 import { usePostMeetingBatch } from './usePostMeetingBatch';
 import type { PostMeetingBatchJob } from './usePostMeetingBatch';
@@ -2051,6 +2052,7 @@ function SummaryView({
           </div>
         </header>
 
+        <SummaryEvidence summary={summary} />
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
         {!token && <div className="summary-note">Hasil ini dibuka dari riwayat browser. Salin notulen atau unduh JSON; PDF server memerlukan sesi akses rapat yang masih berlaku.</div>}
 

@@ -1,3 +1,4 @@
+import { SUMMARY_VERSION, summaryTranscriptDigest } from './summaryGrounding.js';
 import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLiveConfig.js';
 import express from 'express';
 import { attachAuth, isOriginAllowed } from './auth.js';
@@ -1536,61 +1537,59 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   async function summarizeMeeting(id) {
     const meeting = store.get(id);
-    if (meeting.summary && meeting.summary.transcriptCount === meeting.transcripts.length) return meeting.summary;
+    if (meeting.summary?.summaryVersion === SUMMARY_VERSION && meeting.summary.transcriptCount === meeting.transcripts.length && meeting.summary.transcriptDigest === summaryTranscriptDigest(meeting)) return meeting.summary;
     if (!inFlightSummarize.has(id)) {
       const task = (async () => {
-        const snapshot = structuredClone(meeting);
-        for (const entry of snapshot.transcripts) {
-          entry.text = normalizeTranscriptText(entry.text);
-          if (entry.segments) {
-            for (const seg of entry.segments) {
-              seg.text = normalizeTranscriptText(seg.text);
-            }
+        for (let snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++) {
+          const snapshot = structuredClone(store.get(id));
+          const transcriptDigest = summaryTranscriptDigest(snapshot);
+          const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptDigest, transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
+          const current = store.get(id);
+          if (!current || summaryTranscriptDigest(current) !== transcriptDigest) {
+            if (current && snapshotAttempt === 0) continue;
+            throw new ServiceError('Transkrip masih berubah saat notulen dibuat. Tunggu ucapan terakhir selesai lalu coba kembali.', 409);
           }
-        }
-        const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
-        const current = store.get(id);
-        if (current && current.transcripts.length === snapshot.transcripts.length) {
-          store.transact(() => {
-            store.get(id).summary = summary;
-            store.get(id).transcripts = snapshot.transcripts;
-          });
-        }
+          if (current) {
+            store.transact(() => {
+              store.get(id).summary = summary;
+            });
+          }
 
-        // Persist to PostgreSQL database
-        try {
-          await saveMeeting(snapshot);
-          await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
-          await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
-          const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
-          if (dbSummary) summary.dbSummaryId = dbSummary.id;
-        } catch (dbErr) {
-          console.warn('[DB] Could not persist meeting to database:', dbErr.message);
-        }
-        try {
-          await syncActionItemsToItProject(snapshot, summary);
-        } catch (error) {
-          // Jangan gagalkan ringkasan rapat jika IT Project sedang tidak tersedia.
-          console.warn('[ITPROJECT] Sinkronisasi action items dilewati:', {
-            meetingId: snapshot.id,
-            message: error.message,
-          });
-        }
+          // Persist to PostgreSQL database
+          try {
+            await saveMeeting(snapshot);
+            await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
+            await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
+            const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
+            if (dbSummary) summary.dbSummaryId = dbSummary.id;
+          } catch (dbErr) {
+            console.warn('[DB] Could not persist meeting to database:', dbErr.message);
+          }
+          try {
+            await syncActionItemsToItProject(snapshot, summary);
+          } catch (error) {
+            // Jangan gagalkan ringkasan rapat jika IT Project sedang tidak tersedia.
+            console.warn('[ITPROJECT] Sinkronisasi action items dilewati:', {
+              meetingId: snapshot.id,
+              message: error.message,
+            });
+          }
 
-        // Trigger outbound webhook if configured
-        if (config.outboundWebhookUrl) {
-          dispatchOutboundWebhook(config.outboundWebhookUrl, {
-            event: 'meeting.summary.created',
-            meetingId: snapshot.id,
-            roomName: snapshot.roomName,
-            summary,
-            transcriptsCount: snapshot.transcripts.length,
-            attendees: [...snapshot.participants.values()].map(publicParticipant),
-            timestamp: new Date().toISOString(),
-          });
-        }
+          // Trigger outbound webhook if configured
+          if (config.outboundWebhookUrl) {
+            dispatchOutboundWebhook(config.outboundWebhookUrl, {
+              event: 'meeting.summary.created',
+              meetingId: snapshot.id,
+              roomName: snapshot.roomName,
+              summary,
+              transcriptsCount: snapshot.transcripts.length,
+              attendees: [...snapshot.participants.values()].map(publicParticipant),
+              timestamp: new Date().toISOString(),
+            });
+          }
 
-        return summary;
+          return summary;
+        }
       })();
       inFlightSummarize.set(id, task);
     }

@@ -156,7 +156,6 @@ test('SEA gates availability, binds resumable Indonesian tickets and deduplicate
  assert.equal((await a.post('batch-diarize',{})).status,409);
 });
 
-
 test('Qwen live tickets bind speaker and shared mode; structured finals persist once',async t=>{
  const workerTime=1700000000;
  const f=await fixture(t,{qwenLiveSttUrl:'/qwen-live-stt/asr',qwenLiveSttSecret:'q'.repeat(40)},{fetchImpl:async()=>new Response(JSON.stringify({ready:true,native:true,streaming:true,diarization:true,model:'qwen3-asr-0.6b-live'}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
@@ -568,13 +567,13 @@ test('a slow summary cannot overwrite newer dialogue with a stale cached result'
   const waitStarted = new Promise(resolve => { started = resolve; });
   const valid = { title: 'Summary', executiveSummary: 'Summary', keyDiscussionPoints: [], decisions: [], actionItems: [], attendanceSummary: [] };
   const f = await fixture(t, { llmProvider: 'office', llmKey: 'test' }, {
-    fetchImpl: async () => { started(); await new Promise(resolve => { release = resolve; }); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })); },
+    fetchImpl: async () => { if (!release) { started(); await new Promise(resolve => { release = resolve; }); } return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })); },
   });
   const a = await f.joinRoom(); await a.post('transcript', { text: 'first words' });
   const summarizing = a.post('summarize');
   await waitStarted; await a.post('transcript', { text: 'new words' }); release();
-  assert.equal((await summarizing).data.summary.transcriptCount, 1);
-  assert.equal((await a.get('transcript')).data.summary, null);
+  assert.equal((await summarizing).data.summary.transcriptCount, 2);
+  assert.equal((await a.get('transcript')).data.summary.transcriptCount, 2);
 });
 
 test('employee ID format validation rejects malformed text such as ns-12nsunauu with 400 Format ID Salah', async t => {
@@ -800,6 +799,41 @@ test('batch records audio only and automatically processes only after the last p
   assert.equal(submissions,1,'Restart must not upload the same recording again');
 });
 
+test('summarizing never rewrites stored utterances or diarization segments',async t=>{
+ const f=await fixture(t),a=await f.joinRoom();
+ const saved=await a.post('transcript',{text:'Ucapan awal',requestId:'original-source'});
+ const original='Enok ikut perlombongan, bukan permohonan. Angka 12, koreksi 13.';
+ f.store.transact(()=>{const entry=f.store.get(a.meetingId).transcripts[0];entry.text=original;entry.segments=[{speaker:'Pembicara 1',text:original,start:0,end:3}];});
+ const before=structuredClone(f.store.get(a.meetingId).transcripts);
+ assert.equal((await a.post('summarize')).status,200);
+ assert.deepEqual((await a.get('transcript')).data.transcripts,before);
+ assert.equal(saved.status,200);
+});
+
+test('uncited AI decision fails without saving a summary or changing the transcript',async t=>{
+ const invalid={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:['Rian wajib migrasi besok.'],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>Response.json({choices:[{message:{content:JSON.stringify(invalid)}}]})});
+ const a=await f.joinRoom();await a.post('transcript',{text:'Migrasi masih usulan, belum disepakati.'});
+ const result=await a.post('summarize');assert.equal(result.status,422);assert.match(result.data.error,/rujukan/i);
+ const after=await a.get('transcript');assert.equal(after.data.summary,null);assert.equal(after.data.transcripts.length,1);
+});
+
+test('summary cache is invalidated when source text changes without changing utterance count',async t=>{
+ let calls=0;const value={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic'},{fetchImpl:async()=>{calls++;return Response.json({choices:[{message:{content:JSON.stringify(value)}}]});}});
+ const a=await f.joinRoom();await a.post('transcript',{text:'Anggaran 12 juta.'});assert.equal((await a.post('summarize')).status,200);
+ f.store.transact(()=>{f.store.get(a.meetingId).transcripts[0].text='Koreksi anggaran 13 juta.';});
+ assert.equal((await a.post('summarize')).status,200);assert.equal(calls,2);
+});
+
+test('continuous transcript changes stop after one refreshed snapshot without saving stale minutes',async t=>{
+ let calls=0,session;const value={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>{calls++;f.store.transact(()=>{f.store.get(session.meetingId).transcripts[0].text+=' pembaruan';});return Response.json({choices:[{message:{content:JSON.stringify(value)}}]});}});
+ session=await f.joinRoom();await session.post('transcript',{text:'Ucapan awal'});
+ const result=await session.post('summarize');assert.equal(result.status,409);assert.equal(calls,2);
+ assert.equal((await session.get('transcript')).data.summary,null);
+});
+
 test('replayed SEA/Qwen finals remain idempotent after leaving while new speech stays blocked',async t=>{
  const f=await fixture(t),a=await f.joinRoom('live-owner');
  const final={sourceId:'live-owner',sessionId:'lost-tail',segmentId:'lost-tail-1',text:'Ucapan yang sudah tersimpan.',speakerLabel:'Peserta',attribution:'unknown',start:0,end:1};
@@ -809,4 +843,18 @@ test('replayed SEA/Qwen finals remain idempotent after leaving while new speech 
  const replay=await a.post('transcript',body);assert.equal(replay.status,200);assert.equal(replay.data.entry.id,first.data.entry.id);
  assert.equal((await a.post('transcript',{...body,final:{...final,segmentId:'lost-tail-2',text:'Ucapan baru tidak diizinkan.'}})).status,409);
  assert.equal((await a.get('transcript')).data.transcripts.length,1);
+});
+
+
+for(const [name,source,decision] of [
+ ['unit','Disepakati anggaran 13 juta rupiah.','Disepakati anggaran 13 miliar rupiah.'],
+ ['sign','Disepakati perubahan -3 persen.','Disepakati perubahan 3 persen.'],
+ ['negation','Anggaran 13 juta belum disepakati; jangan mulai pembelian.','Disepakati anggaran 13 juta dan mulai pembelian.'],
+])test('unsupported summary '+name+' returns 422 without changing stored dialogue or saving minutes',async t=>{
+ const invalid={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[decision],actionItems:[],attendanceSummary:[],evidence:{decisions:[{index:0,sources:[{utteranceId:'U0001',quote:source}]}],actionItems:[]}};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]})});
+ const a=await f.joinRoom();await a.post('transcript',{text:source});
+ const before=(await a.get('transcript')).data.transcripts;
+ const result=await a.post('summarize');assert.equal(result.status,422);assert.match(result.data.error,/rujukan|konteks/i);
+ const after=await a.get('transcript');assert.equal(after.data.summary,null);assert.deepEqual(after.data.transcripts,before);
 });

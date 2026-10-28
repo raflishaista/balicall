@@ -35,7 +35,7 @@ test('summary dialogue keeps session-scoped anonymous speakers distinct in demo 
  assert.notEqual(demo.keyDiscussionPoints[0],demo.keyDiscussionPoints[1]);
  let prompt;
  await summarize(meeting,loadConfig({LLM_PROVIDER:'office',LLM_KEY:'synthetic',LLM_RETRY_COUNT:'0'}),async(_url,options)=>{
-  prompt=JSON.parse(options.body).messages[0].content;
+  prompt=JSON.parse(options.body).messages[1].content;
   return Response.json({choices:[{message:{content:JSON.stringify({title:'QA',executiveSummary:'QA',keyDiscussionPoints:[],decisions:[],attendanceSummary:[],actionItems:[]})}}]});
  });
  assert.ok(prompt.includes('sesi 11111111'));
