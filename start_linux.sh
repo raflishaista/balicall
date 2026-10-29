@@ -7,6 +7,9 @@
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
+# Enable job control so each service gets its own process group for clean shutdown
+set -m
+
 MODE="${1:-dev}"
 
 echo "========================================================"
@@ -17,10 +20,13 @@ echo ""
 # Helper: check if a TCP port is in use
 is_port_in_use() {
     local port="$1"
+    if (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+        return 0
+    fi
     if command -v ss >/dev/null 2>&1; then
-        ss -tuln 2>/dev/null | grep -q ":$port "
+        ss -tuln 2>/dev/null | grep -E -q ":$port\b"
     elif command -v netstat >/dev/null 2>&1; then
-        netstat -tuln 2>/dev/null | grep -q ":$port "
+        netstat -tuln 2>/dev/null | grep -E -q ":$port\b"
     elif command -v lsof >/dev/null 2>&1; then
         lsof -i ":$port" >/dev/null 2>&1
     else
@@ -41,6 +47,10 @@ if [ ! -d "server/node_modules" ] || [ ! -d "client/node_modules" ] || ([ ! -f "
 fi
 
 # Locate LiveKit server binary
+if [ -f "$PROJECT_ROOT/bin/livekit-server" ]; then
+    chmod +x "$PROJECT_ROOT/bin/livekit-server" 2>/dev/null || true
+fi
+
 if command -v livekit-server >/dev/null 2>&1; then
     LIVEKIT_CMD="livekit-server"
 elif [ -f "$PROJECT_ROOT/bin/livekit-server" ]; then

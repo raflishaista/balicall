@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "server": "npm run dev",
     "dev": "node --watch-path=app.js --watch-path=auth.js --watch-path=authStore.js --watch-path=config.js --watch-path=db.js --watch-path=guestAccess.js --watch-path=index.js --watch-path=meetingStore.js --watch-path=notifications.js --watch-path=providers.js --watch-path=recordingStore.js --watch-path=recordingUploads.js --watch-path=workspaceApi.js --watch-path=workspaceStore.js index.js",
     "test": "node --test tests/*.test.mjs",
     "auth:migrate": "node scripts/auth-admin.js --migrate-only",

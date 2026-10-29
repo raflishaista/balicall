@@ -123,8 +123,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ...flattenTaskTree(task.sub_task_recursive || []),
     ]);
   }
-
-  function normalizeTaskReference(value) {
+  
+    function normalizeTaskReference(value) {
     return String(value || '')
       .normalize('NFKC')
       .toLocaleLowerCase('id-ID')
@@ -134,7 +134,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }
 
   async function syncActionItemsToItProject(meeting, summary) {
-    const actionItems = Array.isArray(summary.actionItems)
+
+     const actionItems = Array.isArray(summary.actionItems)
       ? summary.actionItems
       : [];
     const taskUpdates = Array.isArray(summary.taskUpdates)
@@ -149,6 +150,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const projectUpdates = Array.isArray(summary.projectUpdates)
       ? summary.projectUpdates
       : [];
+
     if (
       !itProject.authenticated ||
       (
@@ -160,12 +162,17 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       console.warn('[ITPROJECT] Sync dilewati: autentikasi atau project tujuan tidak tersedia.', {
         meetingId: meeting.id,
         authenticated: itProject.authenticated,
+        hasUrl: Boolean(config.itprojectMcpUrl),
+        hasAccessToken: Boolean(config.itprojectMcpToken),
+        hasRefreshToken: Boolean(config.itprojectOAuthRefreshToken),
         hasConfiguredProject: Boolean(itProject.projectId),
+        hasTaskType: Boolean(itProject.taskTypeId),
         projectCreations: projectCreations.length,
+        projectUpdates: projectUpdates.length,
       });
       return;
     }
-
+    
     if (
       !actionItems.length &&
       !taskUpdates.length &&
@@ -367,7 +374,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       projectUpdates: projectUpdates.length,
     });
 
-    const optionsResult = await itProject.taskOptions(targetProjectId);
+    const optionsResult = await itProject.taskOptions(itProject.projectId);
     const options = optionsResult.data?.data;
 
     if (!options?.taskStatuses || !options.taskPriorities ||
@@ -375,19 +382,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       throw new Error('Opsi task IT Project tidak lengkap.');
     }
 
-    const existingTasks = taskUpdates.length || taskEdits.length
-      ? flattenTaskTree(
-          (await itProject.projectTasks(itProject.projectId)).data?.data || []
-        )
-      : [];
-
     const activeSprint = (options.sprints || []).find(
       sprint => sprint.status?.name?.trim().toLowerCase() === 'active'
     );
 
     if (!activeSprint) {
       console.warn('[ITPROJECT] Tidak ada sprint aktif; task akan tetap di backlog.', {
-        projectId: targetProjectId,
+        projectId: itProject.projectId,
       });
     }
 
@@ -438,7 +439,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return aliases[key] || '';
   };
 
-    for (const item of actionItems) {
+    for (const item of summary.actionItems) {
       const title = String(item.task || '').trim();
       if (!title) continue;
       const explicitStatusMatch = title.match(
@@ -611,7 +612,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
         if (!task) {
           const result = await itProject.createTask({
-            project: targetProjectId,
+            project: itProject.projectId,
             title,
             status_id: numericStatusId,
             priority_id: numericPriorityId,
@@ -1502,7 +1503,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     });
   }));
 
-  app.get('/api/itproject/oauth/start', (req, res) => {
+  app.get(['/api/itproject/oauth/start', '/oauth/start'], (req, res) => {
   if (!config.itprojectOAuthClientId || !config.itprojectOAuthRedirectUri) {
     return res.status(503).send('Konfigurasi OAuth IT Project belum lengkap.');
   }
@@ -1536,6 +1537,21 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   res.set('Cache-Control', 'no-store').redirect(authorizeUrl.toString());
 });
 
+  app.get(['/api/itproject/status', '/oauth/status'], (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({
+      authenticated: itProject.authenticated,
+      enabled: itProject.enabled,
+      mcpUrl: config.itprojectMcpUrl,
+      projectId: config.itprojectProjectId || null,
+      taskTypeId: config.itprojectTaskTypeId || null,
+      taskStatusName: config.itprojectTaskStatusName || 'To Do',
+      hasToken: Boolean(config.itprojectMcpToken),
+      tokenExpiresAt: config.itprojectOAuthExpiresAt
+        ? new Date(config.itprojectOAuthExpiresAt).toISOString()
+        : null,
+    });
+  });
+
   app.get('/oauth/callback', asyncRoute(async (req, res) => {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
@@ -1544,6 +1560,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     itprojectOAuthPending.delete(state);
 
     if (!pending || pending.expiresAt <= Date.now() || !code) {
+      if (itProject.authenticated) {
+        return res.set('Cache-Control', 'no-store').send(
+          'Login OAuth IT Project sudah aktif. Token telah tersimpan di server/data/itproject-oauth.json dan siap digunakan.'
+        );
+      }
       return res.status(400).send('Callback OAuth tidak valid atau sudah kedaluwarsa.');
     }
 
@@ -1581,7 +1602,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     }
 
     res.set('Cache-Control', 'no-store').send(
-      'Login OAuth IT Project berhasil. Token tersimpan sementara di memori backend.'
+      'Login OAuth IT Project berhasil! Token telah disimpan secara permanen di server/data/itproject-oauth.json dan siap digunakan.'
     );
   }));
 
