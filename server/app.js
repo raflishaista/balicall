@@ -123,7 +123,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ...flattenTaskTree(task.sub_task_recursive || []),
     ]);
   }
-  
+
     function normalizeTaskReference(value) {
     return String(value || '')
       .normalize('NFKC')
@@ -131,6 +131,82 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim()
       .replace(/\s+/gu, ' ');
+  }
+
+  function taskMatchesReference(candidate, reference) {
+    const candidateTitle = normalizeTaskReference(candidate.title);
+    const normalizedReference = normalizeTaskReference(reference);
+
+    // Abaikan perbedaan spasi, misalnya "balikol" dan "balik kol".
+    const compactTitle = candidateTitle.replace(/\s+/g, '');
+    const compactReference = normalizedReference.replace(/\s+/g, '');
+
+    if (compactTitle === compactReference) {
+      return true;
+    }
+
+    // Tetap izinkan frasa khas yang menjadi bagian dari judul lengkap.
+    if (
+      compactReference.length >= 12 &&
+      compactTitle.length >= 12 &&
+      (
+        compactTitle.includes(compactReference) ||
+        compactReference.includes(compactTitle)
+      )
+    ) {
+      return true;
+    }
+
+    // Toleransi maksimal 1–2 karakter salah transkripsi untuk referensi panjang.
+    if (compactReference.length < 18 || compactTitle.length < 18) {
+      return false;
+    }
+
+    const maxDistance = Math.min(
+      2,
+      Math.floor(Math.min(compactTitle.length, compactReference.length) * 0.08)
+    );
+
+    if (Math.abs(compactTitle.length - compactReference.length) > maxDistance) {
+      return false;
+    }
+
+    let previousRow = Array.from(
+      { length: compactReference.length + 1 },
+      (_, index) => index
+    );
+
+    for (let rowIndex = 1; rowIndex <= compactTitle.length; rowIndex++) {
+      const currentRow = [rowIndex];
+      let rowMinimum = rowIndex;
+
+      for (
+        let columnIndex = 1;
+        columnIndex <= compactReference.length;
+        columnIndex++
+      ) {
+        const substitutionCost =
+          compactTitle[rowIndex - 1] === compactReference[columnIndex - 1]
+            ? 0
+            : 1;
+
+        currentRow[columnIndex] = Math.min(
+          currentRow[columnIndex - 1] + 1,
+          previousRow[columnIndex] + 1,
+          previousRow[columnIndex - 1] + substitutionCost
+        );
+
+        rowMinimum = Math.min(rowMinimum, currentRow[columnIndex]);
+      }
+
+      if (rowMinimum > maxDistance) {
+        return false;
+      }
+
+      previousRow = currentRow;
+    }
+
+    return previousRow[compactReference.length] <= maxDistance;
   }
 
   async function syncActionItemsToItProject(meeting, summary) {
@@ -151,12 +227,116 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ? summary.projectUpdates
       : [];
 
+    let targetProjectId = itProject.projectId;
+    let existingTasks = [];
+
+    const existingTaskReferences = [
+      ...taskUpdates.map(update => update.task),
+      ...taskEdits.map(edit => edit.task),
+    ].map(reference => String(reference || '').trim());
+
+    // When there is no configured project ID, resolve task edits/status changes
+    // against projects previously created by BaliCall and stored in MeetingStore.
+    if (
+      !targetProjectId &&
+      !projectCreations.length &&
+      existingTaskReferences.length
+    ) {
+      const projectsById = new Map();
+      for (const sourceMeeting of store.meetings.values()) {
+        for (const dispatch of Object.values(
+          sourceMeeting.itProjectProjectDispatch || {}
+        )) {
+          if (dispatch.status === 'created' && dispatch.projectId) {
+            projectsById.set(dispatch.projectId, {
+              id: dispatch.projectId,
+              title: dispatch.title,
+              projectNo: dispatch.projectNo || null,
+            });
+          }
+        }
+      }
+
+      const projectTasksById = new Map();
+      let projectLookupFailed = false;
+
+      for (const project of projectsById.values()) {
+        try {
+          const result = await itProject.projectTasks(project.id);
+          projectTasksById.set(
+            project.id,
+            flattenTaskTree(result.data?.data || [])
+          );
+        } catch (error) {
+          projectLookupFailed = true;
+          console.warn('[ITPROJECT] Project lokal tidak dapat diperiksa untuk mencari task.', {
+            meetingId: meeting.id,
+            projectId: project.id,
+            title: project.title,
+            message: error.message,
+          });
+        }
+      }
+
+      if (projectLookupFailed) {
+        console.warn('[ITPROJECT] Sync edit task dilewati: pencarian project lokal tidak lengkap.', {
+          meetingId: meeting.id,
+        });
+        return;
+      }
+
+      const resolutions = existingTaskReferences.map(reference => {
+        const normalizedReference = normalizeTaskReference(reference);
+        const matches = [];
+
+        for (const [projectId, tasks] of projectTasksById) {
+          for (const task of tasks) {
+            if (taskMatchesReference(task, normalizedReference)) {
+              matches.push({ projectId, task });
+            }
+          }
+        }
+
+        return { reference, matches };
+      });
+
+      const matchedProjectIds = new Set(
+        resolutions.flatMap(resolution =>
+          resolution.matches.map(match => match.projectId)
+        )
+      );
+
+      if (
+        resolutions.some(resolution => resolution.matches.length !== 1) ||
+        matchedProjectIds.size !== 1
+      ) {
+        console.warn('[ITPROJECT] Sync edit task dilewati: referensi task tidak cocok unik ke satu project lokal.', {
+          meetingId: meeting.id,
+          taskReferences: resolutions.map(resolution => ({
+            task: resolution.reference,
+            matches: resolution.matches.length,
+          })),
+          matchingProjects: matchedProjectIds.size,
+        });
+        return;
+      }
+
+      targetProjectId = [...matchedProjectIds][0];
+      existingTasks = projectTasksById.get(targetProjectId) || [];
+
+      console.info('[ITPROJECT] Project task lama ditemukan secara dinamis.', {
+        meetingId: meeting.id,
+        projectId: targetProjectId,
+        taskReferences: existingTaskReferences,
+      });
+    }
+
     if (
       !itProject.authenticated ||
       (
         !projectCreations.length &&
         (actionItems.length || taskUpdates.length || taskEdits.length) &&
-        !itProject.projectId
+        !targetProjectId
       )
     ) {
       console.warn('[ITPROJECT] Sync dilewati: autentikasi atau project tujuan tidak tersedia.', {
@@ -185,8 +365,6 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       });
       return;
     }
-
-    let targetProjectId = itProject.projectId;
 
     if (projectCreations.length) {
       // Versi awal mendukung satu project per rapat.
@@ -374,21 +552,36 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       projectUpdates: projectUpdates.length,
     });
 
-    const optionsResult = await itProject.taskOptions(itProject.projectId);
-    const options = optionsResult.data?.data;
+    const hasTaskOperations =
+      actionItems.length || taskUpdates.length || taskEdits.length;
+    let options = {};
 
-    if (!options?.taskStatuses || !options.taskPriorities ||
-        !options.taskTypes || !options.assignableUsers) {
-      throw new Error('Opsi task IT Project tidak lengkap.');
+    if (hasTaskOperations) {
+      const optionsResult = await itProject.taskOptions(targetProjectId);
+      options = optionsResult.data?.data || {};
+
+      if (!options.taskStatuses || !options.taskPriorities ||
+          !options.taskTypes || !options.assignableUsers) {
+        throw new Error('Opsi task IT Project tidak lengkap.');
+      }
+    }
+
+    if (
+      targetProjectId &&
+      (taskUpdates.length || taskEdits.length) &&
+      !existingTasks.length
+    ) {
+      const existingResult = await itProject.projectTasks(targetProjectId);
+      existingTasks = flattenTaskTree(existingResult.data?.data || []);
     }
 
     const activeSprint = (options.sprints || []).find(
       sprint => sprint.status?.name?.trim().toLowerCase() === 'active'
     );
 
-    if (!activeSprint) {
+    if (actionItems.length && !activeSprint) {
       console.warn('[ITPROJECT] Tidak ada sprint aktif; task akan tetap di backlog.', {
-        projectId: itProject.projectId,
+        projectId: targetProjectId,
       });
     }
 
@@ -400,23 +593,29 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ['BGpapXmIwrE2LC6eY1VT', '5'],
     ]);
 
-    const status = options.taskStatuses.find(
-      option => option.name?.trim().toLowerCase() ===
-        itProject.taskStatusName.trim().toLowerCase()
-    );
+    let status = null;
+    let defaultType = null;
+    let numericStatusId = null;
 
+    if (actionItems.length) {
+      status = options.taskStatuses.find(
+        option => option.name?.trim().toLowerCase() ===
+          itProject.taskStatusName.trim().toLowerCase()
+      );
 
-    const defaultType = options.taskTypes.find(
-      option => option.id === itProject.taskTypeId
-    );
+      defaultType = options.taskTypes.find(
+        option => option.id === itProject.taskTypeId
+      );
 
-    if (!status || !defaultType) {
-      throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
-    }
-    const numericStatusId = numericIdByEncodedId.get(status.id);
+      if (!status || !defaultType) {
+        throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
+      }
 
-    if (!numericStatusId) {
-      throw new Error('Status awal task belum punya pemetaan numerik.');
+      numericStatusId = numericIdByEncodedId.get(status.id);
+
+      if (!numericStatusId) {
+        throw new Error('Status awal task belum punya pemetaan numerik.');
+      }
     }
     const normalizeActionStatus = value => {
     const key = String(value || '').trim().toLocaleLowerCase('id-ID');
@@ -439,7 +638,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return aliases[key] || '';
   };
 
-    for (const item of summary.actionItems) {
+    for (const item of actionItems) {
       const title = String(item.task || '').trim();
       if (!title) continue;
       const explicitStatusMatch = title.match(
@@ -599,7 +798,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         // Jika percobaan sebelumnya gagal setelah mulai mengirim create-task,
         // cari task yang mungkin sudah dibuat sebelum mengirim ulang.
         if (previousDispatch?.status === 'failed' && previousDispatch.startedAt) {
-          const existingResult = await itProject.projectTasks(itProject.projectId);
+          const existingResult = await itProject.projectTasks(targetProjectId);
           const existingTasks = flattenTaskTree(existingResult.data?.data || []);
           const previousStartedAt = Date.parse(previousDispatch.startedAt);
 
@@ -612,7 +811,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
         if (!task) {
           const result = await itProject.createTask({
-            project: itProject.projectId,
+            project: targetProjectId,
             title,
             status_id: numericStatusId,
             priority_id: numericPriorityId,
@@ -690,6 +889,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         console.info('[ITPROJECT] Task berhasil dibuat', {
           meetingId: meeting.id,
           taskId: task.id,
+          projectId: targetProjectId,
           title,
           taskType: type.name,
           startDate,
@@ -721,13 +921,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       for (const update of taskUpdates) {
         const reference = normalizeTaskReference(update.task);
 
-        const matches = existingTasks.filter(candidate => {
-          const candidateTitle = normalizeTaskReference(candidate.title);
-          return (
-            candidateTitle === reference ||
-            (reference.length >= 12 && candidateTitle.includes(reference))
-          );
-        });
+        const matches = existingTasks.filter(candidate =>
+          taskMatchesReference(candidate, reference)
+        );
 
         if (matches.length !== 1) {
           console.warn('[ITPROJECT] Update status task lama dilewati: referensi tidak unik.', {
@@ -841,8 +1037,27 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         // Jika tidak ada atau hasilnya ambigu, jangan menebak ID.
         const findUniqueOption = (list, name, fieldName) => {
           const normalizedName = normalizeTaskReference(name);
-          const found = (list || []).filter(option =>
-            normalizeTaskReference(option.name) === normalizedName
+
+          const aliases = {
+            prioritas: {},
+            'tipe task': {
+              dokumentasi: 'documentation',
+            },
+            kategori: {
+              isu: 'issue',
+            },
+            'parent task': {},
+            tag: {
+              tes: 'test',
+            },
+          };
+
+          const canonicalName =
+            aliases[fieldName]?.[normalizedName] || normalizedName;
+
+          const found = (list || []).filter(
+            option =>
+              normalizeTaskReference(option.name) === canonicalName
           );
 
           if (found.length !== 1) {
@@ -856,9 +1071,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
         const findUniqueUser = name => {
           const normalizedName = normalizeTaskReference(name);
+
+          // Koreksi salah dengar STT untuk nama assignee.
+          const userAliases = {
+            saini: 'bima',
+          };
+
+          const canonicalName =
+            userAliases[normalizedName] || normalizedName;
+
           const found = (options.assignableUsers || []).filter(user =>
-            normalizeTaskReference(user.name) === normalizedName ||
-            normalizeTaskReference(user.email) === normalizedName
+            normalizeTaskReference(user.name) === canonicalName ||
+            normalizeTaskReference(user.email) === canonicalName
           );
 
           if (found.length !== 1) {
@@ -1022,20 +1246,28 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             changedFields.push('owner');
           }
 
-          if (Object.hasOwn(changes, 'assignUsers')) {
-            const users = changes.assignUsers.map(findUniqueUser);
-            if (users.length) {
-              updateArgs.assign_users = users.map(user => user.id);
-              changedFields.push('assignUsers');
-            }
+                    const usersToAssign = Object.hasOwn(changes, 'assignUsers')
+            ? changes.assignUsers.map(findUniqueUser)
+            : [];
+
+          const assignedUserIds = new Set(
+            usersToAssign.map(user => user.id)
+          );
+
+          const usersToUnassign = Object.hasOwn(changes, 'unassignUsers')
+            ? changes.unassignUsers
+                .map(findUniqueUser)
+                .filter(user => !assignedUserIds.has(user.id))
+            : [];
+
+          if (usersToAssign.length) {
+            updateArgs.assign_users = usersToAssign.map(user => user.id);
+            changedFields.push('assignUsers');
           }
 
-          if (Object.hasOwn(changes, 'unassignUsers')) {
-            const users = changes.unassignUsers.map(findUniqueUser);
-            if (users.length) {
-              updateArgs.unassign_users = users.map(user => user.id);
-              changedFields.push('unassignUsers');
-            }
+          if (usersToUnassign.length) {
+            updateArgs.unassign_users = usersToUnassign.map(user => user.id);
+            changedFields.push('unassignUsers');
           }
 
           if (Object.hasOwn(changes, 'tags')) {
