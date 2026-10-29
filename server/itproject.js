@@ -214,7 +214,7 @@ export function createItProjectClient(config) {
     updateTaskStatus(arguments_) {
       return call('update-task-status', arguments_);
     },
-    
+
     updateTask(arguments_) {
       return call('update-task', arguments_);
     },
@@ -227,6 +227,17 @@ export function createItProjectClient(config) {
       return call('get-project-options', {});
     },
 
+    userProjects() {
+      return call('get-user-projects', {});
+    },
+    
+    projectDetail(project) {
+      return call('get-project-detail', { project });
+    },
+
+    updateProject(arguments_) {
+      return call('update-project', arguments_);
+    },
     createProject(arguments_) {
       return call('create-project', arguments_);
     },

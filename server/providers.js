@@ -64,6 +64,42 @@ export function parseSummary(text, input) {
       validProjectStatuses.includes(project.status) &&
       validProjectPriorities.includes(project.priority)
     );
+  
+  const validProjectUpdateFields = [
+    'title',
+    'description',
+    'emoji',
+    'startDate',
+    'dueDate',
+    'status',
+    'priority',
+  ];
+
+  const validProjectUpdates =
+    Array.isArray(result?.projectUpdates) &&
+    result.projectUpdates.every(item =>
+      item &&
+      typeof item.project === 'string' &&
+      item.project.trim() &&
+      item.changes &&
+      typeof item.changes === 'object' &&
+      !Array.isArray(item.changes) &&
+      Object.keys(item.changes).length > 0 &&
+      Object.keys(item.changes).every(key =>
+        validProjectUpdateFields.includes(key)
+      ) &&
+      Object.values(item.changes).every(value =>
+        typeof value === 'string'
+      ) &&
+      (
+        item.changes.status === undefined ||
+        validProjectStatuses.includes(item.changes.status)
+      ) &&
+      (
+        item.changes.priority === undefined ||
+        validProjectPriorities.includes(item.changes.priority)
+      )
+    );
 
   if (
     !result ||
@@ -91,7 +127,8 @@ export function parseSummary(text, input) {
       typeof item.task === 'string' &&
       validTaskStatuses.includes(item.status)
     )||
-    !validProjectCreations
+    !validProjectCreations ||
+    !validProjectUpdates
   ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
   }
@@ -105,6 +142,7 @@ export function parseSummary(text, input) {
     taskUpdates: result.taskUpdates,
     taskEdits: result.taskEdits,
     projectCreations: result.projectCreations,
+    projectUpdates: result.projectUpdates,
     attendanceSummary: result.attendanceSummary,
   };
 
