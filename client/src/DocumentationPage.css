@@ -47,6 +47,7 @@
 .documentation-section .documentation-after-table { margin-top: 14px; }
 .documentation-planned-box { margin-top: 22px; padding: 18px; border: 1px solid #dbe6f3; border-radius: 11px; background: #f9fbfe; }
 .documentation-planned-box h3 { margin: 0 0 8px; color: #173f70; font-size: 16px; }
-.documentation-planned-box h3 span { display: inline-block; margin-left: 6px; padding: 3px 7px; border: 1px solid #ead8b0; border-radius: 6px; background: #fff8e8; color: #8a5f17; font-size: 11px; font-weight: 500; vertical-align: middle; }
 .documentation-planned-box > p { margin: 0; max-width: 78ch; color: #536d88; font-size: 13px; line-height: 1.7; }
+.documentation-planned-box > .documentation-steps { margin: 12px 0; max-width: 78ch; }
+.documentation-planned-box > p + p { margin-top: 10px; }
 @media (max-width:720px) { .documentation-toc { padding: 13px; } .documentation-toc a { padding: 6px 9px; } .documentation-planned-box { padding: 12px; } }

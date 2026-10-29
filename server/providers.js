@@ -26,6 +26,44 @@ export function parseSummary(text, input) {
 
   const strings = value =>
     Array.isArray(value) && value.every(item => typeof item === 'string');
+  
+  const validTaskStatuses = [
+    'To Do',
+    'Blocked',
+    'In Progress',
+    'Finished',
+    'In Review',
+    'Completed',
+  ];
+
+  const validProjectStatuses = [
+    'Not Started',
+    'In Progress',
+    'On Hold',
+    'Completed',
+    'Cancelled',
+  ];
+  
+  const validProjectPriorities = [
+    'Low',
+    'Medium',
+    'High',
+    'Critical',
+  ];
+
+  const validProjectCreations =
+    Array.isArray(result?.projectCreations) &&
+    result.projectCreations.length <= 1 &&
+    result.projectCreations.every(project =>
+      project &&
+      typeof project.title === 'string' &&
+      typeof project.description === 'string' &&
+      typeof project.emoji === 'string' &&
+      typeof project.startDate === 'string' &&
+      typeof project.dueDate === 'string' &&
+      validProjectStatuses.includes(project.status) &&
+      validProjectPriorities.includes(project.priority)
+    );
 
   if (
     !result ||
@@ -46,7 +84,14 @@ export function parseSummary(text, input) {
           .includes(item.status)) &&
       (item.type === undefined || typeof item.type === 'string') &&
       (item.startDate === undefined || typeof item.startDate === 'string')
-    )
+    ) ||
+    !Array.isArray(result.taskUpdates) ||
+    !result.taskUpdates.every(item =>
+      item &&
+      typeof item.task === 'string' &&
+      validTaskStatuses.includes(item.status)
+    )||
+    !validProjectCreations
   ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
   }
@@ -57,6 +102,9 @@ export function parseSummary(text, input) {
     keyDiscussionPoints: result.keyDiscussionPoints,
     decisions: result.decisions,
     actionItems: result.actionItems,
+    taskUpdates: result.taskUpdates,
+    taskEdits: result.taskEdits,
+    projectCreations: result.projectCreations,
     attendanceSummary: result.attendanceSummary,
   };
 
