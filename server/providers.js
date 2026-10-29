@@ -36,6 +36,35 @@ export function parseSummary(text, input) {
     'Completed',
   ];
 
+  const validProjectStatuses = [
+    'Not Started',
+    'In Progress',
+    'On Hold',
+    'Completed',
+    'Cancelled',
+  ];
+  
+  const validProjectPriorities = [
+    'Low',
+    'Medium',
+    'High',
+    'Critical',
+  ];
+
+  const validProjectCreations =
+    Array.isArray(result?.projectCreations) &&
+    result.projectCreations.length <= 1 &&
+    result.projectCreations.every(project =>
+      project &&
+      typeof project.title === 'string' &&
+      typeof project.description === 'string' &&
+      typeof project.emoji === 'string' &&
+      typeof project.startDate === 'string' &&
+      typeof project.dueDate === 'string' &&
+      validProjectStatuses.includes(project.status) &&
+      validProjectPriorities.includes(project.priority)
+    );
+
   if (
     !result ||
     typeof result.title !== 'string' ||
@@ -61,7 +90,8 @@ export function parseSummary(text, input) {
       item &&
       typeof item.task === 'string' &&
       validTaskStatuses.includes(item.status)
-    )
+    )||
+    !validProjectCreations
   ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
   }
@@ -73,6 +103,8 @@ export function parseSummary(text, input) {
     decisions: result.decisions,
     actionItems: result.actionItems,
     taskUpdates: result.taskUpdates,
+    taskEdits: result.taskEdits,
+    projectCreations: result.projectCreations,
     attendanceSummary: result.attendanceSummary,
   };
 
