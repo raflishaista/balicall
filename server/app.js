@@ -665,7 +665,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     });
   }));
 
-  app.get('/api/itproject/oauth/start', (req, res) => {
+  app.get(['/api/itproject/oauth/start', '/oauth/start'], (req, res) => {
   if (!config.itprojectOAuthClientId || !config.itprojectOAuthRedirectUri) {
     return res.status(503).send('Konfigurasi OAuth IT Project belum lengkap.');
   }
@@ -699,6 +699,21 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   res.set('Cache-Control', 'no-store').redirect(authorizeUrl.toString());
 });
 
+  app.get(['/api/itproject/status', '/oauth/status'], (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({
+      authenticated: itProject.authenticated,
+      enabled: itProject.enabled,
+      mcpUrl: config.itprojectMcpUrl,
+      projectId: config.itprojectProjectId || null,
+      taskTypeId: config.itprojectTaskTypeId || null,
+      taskStatusName: config.itprojectTaskStatusName || 'To Do',
+      hasToken: Boolean(config.itprojectMcpToken),
+      tokenExpiresAt: config.itprojectOAuthExpiresAt
+        ? new Date(config.itprojectOAuthExpiresAt).toISOString()
+        : null,
+    });
+  });
+
   app.get('/oauth/callback', asyncRoute(async (req, res) => {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
@@ -707,6 +722,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     itprojectOAuthPending.delete(state);
 
     if (!pending || pending.expiresAt <= Date.now() || !code) {
+      if (itProject.authenticated) {
+        return res.set('Cache-Control', 'no-store').send(
+          'Login OAuth IT Project sudah aktif. Token telah tersimpan di server/data/itproject-oauth.json dan siap digunakan.'
+        );
+      }
       return res.status(400).send('Callback OAuth tidak valid atau sudah kedaluwarsa.');
     }
 
@@ -744,7 +764,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     }
 
     res.set('Cache-Control', 'no-store').send(
-      'Login OAuth IT Project berhasil. Token tersimpan sementara di memori backend.'
+      'Login OAuth IT Project berhasil! Token telah disimpan secara permanen di server/data/itproject-oauth.json dan siap digunakan.'
     );
   }));
 

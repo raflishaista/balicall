@@ -146,7 +146,7 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
   app.use('/api/auth',router);
   app.use('/api',wrap(async(req,res,next)=>{
     if(!enabled)return next();
-    if(req.path==='/health'||(req.path==='/livekit/webhook'&&req.method==='POST'))return next();
+    if(req.path==='/health'||req.path==='/itproject/oauth/start'||req.path==='/itproject/status'||(config.itprojectProjectCreationTestEnabled&&req.path.startsWith('/itproject/'))||(req.path==='/livekit/webhook'&&req.method==='POST'))return next();
     res.set('Cache-Control','no-store');
     const employeeToken=cookieToken(req),employee=employeeToken?await store.session(hashToken(employeeToken)):null;
     const guestToken=cookieToken(req,guestCookie),guest=!employee?guestAccess?.session(guestToken):null;
