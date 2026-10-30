@@ -20,11 +20,15 @@ test/egress/egress-test-token
 # Dependencies
 node_modules/
 .venv/
-.venv-live/
+.venv*/
 __pycache__/
 *.pyc
 server/speech/models/
 */node_modules/
+
+# Backup and temp files
+*.bak
+*.bak-*
 
 # AI & Speech Models (NeMo, Whisper, PyTorch checkpoints, weights)
 models/*
