@@ -330,6 +330,100 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         taskReferences: existingTaskReferences,
       });
     }
+    
+    if (!projectCreations.length && actionItems.length && !itProject.projectId) {
+      const projectReferences = [
+        ...new Set(
+          actionItems
+            .map(item => normalizeTaskReference(item.project))
+            .filter(Boolean)
+        ),
+      ];
+
+      if (projectReferences.length !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: sebutkan satu project tujuan secara jelas.',
+          {
+            meetingId: meeting.id,
+            projectReferences,
+          }
+        );
+        return;
+      }
+
+      const reference = projectReferences[0];
+      const matches = new Map();
+
+      const addMatchingProject = project => {
+        if (!project?.id) return;
+
+        const title = normalizeTaskReference(project.title);
+        const projectNo = normalizeTaskReference(project.project_no);
+
+        if (title === reference || projectNo === reference) {
+          matches.set(project.id, project);
+        }
+      };
+
+      // Cari dahulu project yang pernah dibuat oleh BaliCall.
+      for (const sourceMeeting of store.meetings.values()) {
+        for (const dispatch of Object.values(
+          sourceMeeting.itProjectProjectDispatch || {}
+        )) {
+          if (dispatch.status === 'created') {
+            addMatchingProject({
+              id: dispatch.projectId,
+              title: dispatch.title,
+              project_no: dispatch.projectNo,
+            });
+          }
+        }
+      }
+
+      // Jika belum ditemukan secara lokal, cari di daftar project akun MCP.
+      if (matches.size === 0) {
+        try {
+          const result = await itProject.userProjects();
+          const projects = result.data?.data;
+
+          if (!Array.isArray(projects)) {
+            throw new Error('Respons daftar project tidak berisi array data.');
+          }
+
+          projects.forEach(addMatchingProject);
+        } catch (error) {
+          console.warn(
+            '[ITPROJECT] Task baru dilewati: daftar project tidak dapat dicari.',
+            {
+              meetingId: meeting.id,
+              projectReference: reference,
+              message: error.message,
+            }
+          );
+          return;
+        }
+      }
+
+      if (matches.size !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: project tujuan tidak ditemukan secara unik.',
+          {
+            meetingId: meeting.id,
+            projectReference: reference,
+            matches: matches.size,
+          }
+        );
+        return;
+      }
+
+      targetProjectId = [...matches.values()][0].id;
+
+      console.info('[ITPROJECT] Project task baru ditemukan secara dinamis.', {
+        meetingId: meeting.id,
+        projectId: targetProjectId,
+        projectReference: reference,
+      });
+    }
 
     if (
       !itProject.authenticated ||
@@ -638,7 +732,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return aliases[key] || '';
   };
 
-    for (const item of actionItems) {
+    const orderedActionItems = [
+      ...actionItems.filter(item => !String(item.parent || '').trim()),
+      ...actionItems.filter(item => String(item.parent || '').trim()),
+    ];
+    const createdTaskReferences = [];
+
+    for (const item of orderedActionItems) {
       const title = String(item.task || '').trim();
       if (!title) continue;
       const explicitStatusMatch = title.match(
@@ -700,10 +800,17 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const previousDispatch =
         store.get(meeting.id)?.itProjectTaskDispatch?.[key];
 
-      if (
-        previousDispatch?.status === 'created' ||
-        previousDispatch?.status === 'creating'
-      ) {
+      if (previousDispatch?.status === 'created') {
+        if (previousDispatch.taskId) {
+          createdTaskReferences.push({
+            id: previousDispatch.taskId,
+            title: previousDispatch.title || title,
+          });
+        }
+        continue;
+      }
+
+      if (previousDispatch?.status === 'creating') {
         continue;
       }
 
@@ -782,6 +889,50 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           ? `${dueDateMatch[3]}-${monthNumbers[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`
           : '';
           
+      const parentReference = String(item.parent || '').trim();
+      let parentId = '';
+
+      if (parentReference) {
+        const parentCandidates = new Map();
+
+        for (const candidate of createdTaskReferences) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        for (const candidate of options.taskParents || []) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        if (parentCandidates.size !== 1) {
+          console.warn('[ITPROJECT] Subtask dilewati: parent tidak ditemukan secara unik.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+            matches: parentCandidates.size,
+          });
+          continue;
+        }
+
+        const selectedCategory = (options.taskCategories || []).find(
+          category => category.id === itProject.taskCategoryId
+        );
+
+        if (selectedCategory?.name?.trim().toLowerCase() === 'epic') {
+          console.warn('[ITPROJECT] Subtask dilewati: task berkategori Epic tidak boleh menjadi subtask.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+          });
+          continue;
+        }
+
+        parentId = [...parentCandidates.keys()][0];
+      }
+
       store.transact(() => {
         const current = store.get(meeting.id);
         current.itProjectTaskDispatch ||= {};
@@ -794,9 +945,6 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
       try {
         let task = null;
-
-        // Jika percobaan sebelumnya gagal setelah mulai mengirim create-task,
-        // cari task yang mungkin sudah dibuat sebelum mengirim ulang.
         if (previousDispatch?.status === 'failed' && previousDispatch.startedAt) {
           const existingResult = await itProject.projectTasks(targetProjectId);
           const existingTasks = flattenTaskTree(existingResult.data?.data || []);
@@ -817,6 +965,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             priority_id: numericPriorityId,
             type_id: numericTypeId,
             task_category_id: itProject.taskCategoryId,
+            ...(parentId ? { parent_id: parentId } : {}),
             assign_users: owner ? [owner.id] : [],
             description,
             start_date: startDate,
@@ -829,6 +978,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         if (!task?.id) {
           throw new Error('Respons create-task tidak berisi ID task.');
         }
+
+        createdTaskReferences.push({
+          id: task.id,
+          title,
+        });
 
         let statusUpdate = 'unchanged';
 

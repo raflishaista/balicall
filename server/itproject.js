@@ -189,7 +189,6 @@ export function createItProjectClient(config) {
         config.itprojectMcpUrl &&
           (config.itprojectMcpToken ||
             config.itprojectOAuthRefreshToken) &&
-          config.itprojectProjectId &&
           config.itprojectTaskTypeId
       );
     },
@@ -230,7 +229,7 @@ export function createItProjectClient(config) {
     userProjects() {
       return call('get-user-projects', {});
     },
-    
+
     projectDetail(project) {
       return call('get-project-detail', { project });
     },

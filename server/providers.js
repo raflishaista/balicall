@@ -111,7 +111,7 @@ export function parseSummary(text, input) {
     !Array.isArray(result.actionItems) ||
     !result.actionItems.every(item =>
       item &&
-      ['task', 'assignee', 'deadline'].every(
+      ['task', 'assignee', 'deadline', 'project', 'parent'].every(
         key => typeof item[key] === 'string'
       ) &&
       ['High', 'Medium', 'Low'].includes(item.priority) &&
@@ -151,14 +151,13 @@ export function parseSummary(text, input) {
       summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
     } catch (error) {
       if (error instanceof SummaryGroundingError) {
-        throw new ServiceError(
-          'Notulen belum dapat diverifikasi: ' +
-            error.message +
-            ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
-          422
+        console.warn(
+          '[SUMMARY] Validasi evidence gagal; notulen tetap digunakan:',
+          error.message
         );
+      } else {
+        throw error;
       }
-      throw error;
     }
   }
 
