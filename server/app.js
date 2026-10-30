@@ -230,7 +230,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ? summary.projectUpdates
       : [];
 
-    let targetProjectId = reviewClient.projectId;
+    const sprintOperations = Array.isArray(summary.sprintOperations)
+      ? summary.sprintOperations
+      : [];
+
+    let targetProjectId = itProject.projectId;
     let existingTasks = [];
 
     const existingTaskReferences = [
@@ -334,11 +338,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       });
     }
     
-    if (!projectCreations.length && actionItems.length && !reviewClient.projectId) {
+    if (
+      !projectCreations.length &&
+      (actionItems.length || sprintOperations.length) &&
+      !itProject.projectId
+    ) {
       const projectReferences = [
         ...new Set(
-          actionItems
-            .map(item => normalizeTaskReference(item.project))
+          [
+            ...actionItems.map(item => item.project),
+            ...sprintOperations.map(operation => operation.project),
+          ]
+            .map(normalizeTaskReference)
             .filter(Boolean)
         ),
       ];
@@ -358,12 +369,24 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const matches = new Map();
 
       const addMatchingProject = project => {
-        if (!project?.id) return;
+        const cleanedReference = normalizeTaskReference(reference)
+          .replace(/^(project|proyek)\s+/u, '');
 
         const title = normalizeTaskReference(project.title);
         const projectNo = normalizeTaskReference(project.project_no);
 
-        if (title === reference || projectNo === reference) {
+        if (
+          title === cleanedReference ||
+          projectNo === cleanedReference ||
+          taskMatchesReference(
+            { title: project.title || '' },
+            cleanedReference
+          ) ||
+          taskMatchesReference(
+            { title: project.project_no || '' },
+            cleanedReference
+          )
+        ) {
           matches.set(project.id, project);
         }
       };
@@ -432,7 +455,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       !reviewClient.authenticated ||
       (
         !projectCreations.length &&
-        (actionItems.length || taskUpdates.length || taskEdits.length) &&
+        (
+          actionItems.length ||
+          taskUpdates.length ||
+          taskEdits.length ||
+          sprintOperations.length
+        ) &&
         !targetProjectId
       )
     ) {
@@ -454,6 +482,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       !actionItems.length &&
       !taskUpdates.length &&
       !taskEdits.length &&
+      !sprintOperations.length &&
       !projectCreations.length &&
       !projectUpdates.length
     ) {
@@ -647,6 +676,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       taskEdits: taskEdits.length,
       projectId: targetProjectId,
       projectUpdates: projectUpdates.length,
+      sprintOperations: sprintOperations.length,
     });
 
     const hasTaskOperations =
@@ -1716,6 +1746,316 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
               projectId: existingProject.id,
               title: existingProject.title,
               requestedFields: changedFields,
+              message: error.message,
+            });
+          }
+        }
+      }
+
+      if (sprintOperations.length) {
+        const sprintResult = await itProject.projectSprints(targetProjectId);
+        const sprintData = sprintResult.data?.data;
+
+        if (!Array.isArray(sprintData?.sprints)) {
+          throw new Error('Respons get-project-sprints tidak berisi daftar sprint.');
+        }
+
+        const sprints = sprintData.sprints;
+        const backlog = Array.isArray(sprintData.backlog)
+          ? sprintData.backlog
+          : [];
+
+        const needsTaskLookup = sprintOperations.some(
+          operation => operation.operation === 'assign_tasks'
+        );
+
+        const projectTaskResult = needsTaskLookup
+          ? await itProject.projectTasks(targetProjectId)
+          : null;
+
+        const projectTaskTree = flattenTaskTree(
+          projectTaskResult?.data?.data || []
+        );
+
+        const createdSprints = new Map();
+        const normalizeSprintReference = value =>
+          normalizeTaskReference(value).replace(
+            /\b(nol|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\b/g,
+            word =>
+              ({
+                nol: '0',
+                satu: '1',
+                dua: '2',
+                tiga: '3',
+                empat: '4',
+                lima: '5',
+                enam: '6',
+                tujuh: '7',
+                delapan: '8',
+                sembilan: '9',
+                sepuluh: '10',
+              })[word]
+          ).replace(/^sprint\s+/, '');
+        const findSprint = reference => {
+          const normalized = normalizeSprintReference(reference);
+          const created = createdSprints.get(normalized);
+
+          if (created) return [created];
+
+          return sprints.filter(sprint =>
+            taskMatchesReference(
+              { title: normalizeSprintReference(sprint.name || '') },
+              normalized
+            )
+          );
+        };
+
+        const findTasks = reference => {
+          const normalized = normalizeTaskReference(reference);
+          const candidates = [
+            ...backlog,
+            ...sprints.flatMap(sprint => sprint.tasks || []),
+            ...projectTaskTree,
+            ...createdTaskReferences,
+          ];
+          const matches = new Map();
+
+          for (const task of candidates) {
+            if (taskMatchesReference(task, normalized)) {
+              matches.set(task.id, task);
+            }
+          }
+
+          return [...matches.values()];
+        };
+
+        const sprintDate = value => {
+          const date = String(value || '').trim();
+          if (!date) return '';
+
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            throw new Error(
+              `Tanggal sprint '${date}' harus dalam format YYYY-MM-DD.`
+            );
+          }
+
+          return date;
+        };
+
+        for (const operation of sprintOperations) {
+          const details = {
+            meetingId: meeting.id,
+            operation: operation.operation,
+            projectId: targetProjectId,
+            sprint: operation.sprint || operation.name || null,
+            tasks: operation.tasks || [],
+          };
+
+          try {
+            const args = operation;
+
+            if (args.duration &&
+                !['1 week', '2 weeks', '3 weeks', '4 weeks', 'Custom']
+                  .includes(args.duration)) {
+              throw new Error(`Durasi sprint '${args.duration}' tidak valid.`);
+            }
+
+            const startDate = sprintDate(args.startDate);
+            const endDate = sprintDate(args.endDate);
+
+            if (startDate && endDate && endDate < startDate) {
+              throw new Error('Tanggal akhir sprint tidak boleh sebelum tanggal mulai.');
+            }
+
+            if (operation.operation === 'create') {
+              const result = await itProject.createSprint({
+                project: targetProjectId,
+                ...(args.name ? { name: args.name.trim() } : {}),
+                ...(args.goal ? { goal: args.goal } : {}),
+                ...(startDate ? { start_date: startDate } : {}),
+                ...(endDate ? { end_date: endDate } : {}),
+                ...(args.duration ? { duration: args.duration } : {}),
+              });
+
+              const createdSprint =
+                result.data?.data ||
+                result.data?.sprint ||
+                result.data;
+
+              if (!createdSprint?.id) {
+                throw new Error('Respons create-sprint tidak berisi ID sprint.');
+              }
+
+              const sprintName = createdSprint.name || args.name;
+              createdSprints.set(
+                normalizeSprintReference(sprintName),
+                createdSprint
+              );
+
+              console.info('[ITPROJECT] Sprint berhasil dibuat.', {
+                ...details,
+                sprintId: createdSprint.id,
+                sprintName,
+              });
+              continue;
+            }
+
+            const sprintMatches = findSprint(args.sprint);
+
+            if (sprintMatches.length !== 1) {
+              console.warn('[ITPROJECT] Operasi sprint dilewati: referensi sprint tidak unik.', {
+                ...details,
+                matches: sprintMatches.length,
+              });
+              continue;
+            }
+
+            const sprint = sprintMatches[0];
+
+            if (operation.operation === 'update') {
+              const updateArgs = { sprint: sprint.id };
+
+              if (args.name) updateArgs.name = args.name.trim();
+              if (args.goal) updateArgs.goal = args.goal;
+              if (startDate) updateArgs.start_date = startDate;
+              if (endDate) updateArgs.end_date = endDate;
+              if (args.duration) updateArgs.duration = args.duration;
+
+              if (Object.keys(updateArgs).length === 1) {
+                console.info('[ITPROJECT] Update sprint dilewati: tidak ada field perubahan.', details);
+                continue;
+              }
+
+              await itProject.updateSprint(updateArgs);
+              console.info('[ITPROJECT] Sprint berhasil diperbarui.', details);
+              continue;
+            }
+
+            if (operation.operation === 'start') {
+              await itProject.startSprint({
+                sprint: sprint.id,
+                ...(args.goal ? { goal: args.goal } : {}),
+                ...(startDate ? { start_date: startDate } : {}),
+                ...(endDate ? { end_date: endDate } : {}),
+                ...(args.duration ? { duration: args.duration } : {}),
+              });
+
+              console.info('[ITPROJECT] Sprint berhasil dimulai.', details);
+              continue;
+            }
+
+            if (operation.operation === 'complete') {
+              const completeArgs = { sprint: sprint.id };
+
+              if (args.retrospective) {
+                completeArgs.retrospective = args.retrospective;
+              }
+
+              const destination = normalizeTaskReference(args.moveIncompleteTo);
+
+              if (destination === 'backlog') {
+                completeArgs.move_incomplete_to = { other: 'backlog' };
+              } else if (destination === 'new sprint') {
+                completeArgs.move_incomplete_to = { other: 'new_sprint' };
+              } else if (destination) {
+                const destinationMatches = findSprint(args.moveIncompleteTo);
+
+                if (destinationMatches.length !== 1) {
+                  console.warn('[ITPROJECT] Complete sprint dilewati: sprint tujuan task belum cocok unik.', {
+                    ...details,
+                    destination: args.moveIncompleteTo,
+                    matches: destinationMatches.length,
+                  });
+                  continue;
+                }
+
+                completeArgs.move_incomplete_to = {
+                  existing_sprint: destinationMatches[0].id,
+                };
+              }
+
+              await itProject.completeSprint(completeArgs);
+              console.info('[ITPROJECT] Sprint berhasil diselesaikan.', details);
+              continue;
+            }
+
+            if (operation.operation === 'delete') {
+              if (sprint.status?.name?.trim().toLowerCase() === 'active') {
+                console.warn('[ITPROJECT] Sprint aktif tidak dihapus; selesaikan sprint terlebih dahulu.', details);
+                continue;
+              }
+
+              await itProject.deleteSprint({ sprint: sprint.id });
+              console.info('[ITPROJECT] Sprint berhasil dihapus.', details);
+              continue;
+            }
+
+            if (operation.operation === 'assign_tasks') {
+              const taskIds = new Set();
+
+              for (const reference of args.tasks) {
+                const matches = findTasks(reference);
+
+                if (matches.length !== 1) {
+                  throw new Error(
+                    `Task '${reference}' tidak ditemukan secara unik di project.`
+                  );
+                }
+
+                if (matches[0].category?.name?.trim().toLowerCase() === 'epic') {
+                  throw new Error(
+                    `Epic '${reference}' tidak bisa ditambahkan langsung ke sprint.`
+                  );
+                }
+
+                taskIds.add(matches[0].id);
+              }
+
+              if (!taskIds.size) {
+                console.info('[ITPROJECT] Assign sprint dilewati: tidak ada task yang disebut.', details);
+                continue;
+              }
+
+              await itProject.assignSprintTasks({
+                sprint: sprint.id,
+                task_ids: [...taskIds],
+              });
+
+              console.info('[ITPROJECT] Task berhasil ditambahkan ke sprint.', {
+                ...details,
+                taskIds: [...taskIds],
+              });
+              continue;
+            }
+
+            if (operation.operation === 'remove_task') {
+              const matches = (sprint.tasks || []).filter(task =>
+                taskMatchesReference(task, args.task)
+              );
+
+              if (matches.length !== 1) {
+                console.warn('[ITPROJECT] Remove task dari sprint dilewati: task tidak cocok unik.', {
+                  ...details,
+                  task: args.task,
+                  matches: matches.length,
+                });
+                continue;
+              }
+
+              await itProject.removeSprintTask({
+                sprint: sprint.id,
+                task: matches[0].id,
+              });
+
+              console.info('[ITPROJECT] Task berhasil dikembalikan ke backlog.', {
+                ...details,
+                taskId: matches[0].id,
+                title: matches[0].title,
+              });
+            }
+          } catch (error) {
+            console.warn('[ITPROJECT] Operasi sprint gagal atau dilewati.', {
+              ...details,
               message: error.message,
             });
           }

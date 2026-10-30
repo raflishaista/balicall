@@ -222,6 +222,34 @@ export function createItProjectClient(config) {
       return call('assign-sprint-tasks', arguments_);
     },
 
+    projectSprints(project) {
+      return call('get-project-sprints', { project });
+    },
+
+    createSprint(arguments_) {
+      return call('create-sprint', arguments_);
+    },
+
+    updateSprint(arguments_) {
+      return call('update-sprint', arguments_);
+    },
+
+    startSprint(arguments_) {
+      return call('start-sprint', arguments_);
+    },
+
+    completeSprint(arguments_) {
+      return call('complete-sprint', arguments_);
+    },
+
+    deleteSprint(arguments_) {
+      return call('delete-sprint', arguments_);
+    },
+
+    removeSprintTask(arguments_) {
+      return call('remove-sprint-task', arguments_);
+    },
+
     projectOptions() {
       return call('get-project-options', {});
     },

@@ -25,6 +25,9 @@ Copy requested text values such as title, description, and emoji from the uttera
 If the task reference matches multiple existing tasks, the server will skip the edit.
 Create a project only when the utterances explicitly ask to create a new project. Return at most one item in projectCreations. Its title and description must reflect the meeting. Copy startDate and dueDate as spoken; use an empty string when a date is not stated. Use Not Started as the default status and Medium as the default priority when they are not stated. Use a single emoji. Leave projectCreations empty when no project creation was requested. Action items from the same meeting belong to the newly created project.
 Extract edits to existing projects separately under projectUpdates. Only include a project when the meeting explicitly asks to change an existing project. Use the spoken project title or a distinctive project reference in project; never invent an encoded project id. Include only requested fields in changes. Supported fields are title, description, emoji, startDate, dueDate, status, and priority. Copy date phrases as spoken. Use the exact project option name for status and priority when spoken. Do not create a project from a projectUpdates item. Include evidence for the project reference and requested changes. If the project reference is unclear, omit the update.
+Extract explicit sprint requests into sprintOperations. Supported operation values are create, update, start, complete, delete, assign_tasks, and remove_task. Include the spoken project name or project number in project; use an empty string only when the meeting creates that project in projectCreations. For existing sprints, put the spoken sprint name in sprint. For create, put the requested new sprint name in name and leave sprint empty. For update, include only requested name, goal, startDate, endDate, and duration values. Normalize explicitly stated full dates to YYYY-MM-DD; leave dates empty when none were stated. Duration must be one of "1 week", "2 weeks", "3 weeks", "4 weeks", or "Custom". For complete, moveIncompleteTo may be "backlog", "new_sprint", or the exact name of another sprint; leave it empty if the speaker did not specify where incomplete tasks go. For assign_tasks, include the explicitly named task titles in tasks. For remove_task, include one explicitly named task title in task. Do not guess project, sprint, or task references. Include only explicitly requested sprint operations.
+When the utterance asks to move, assign, or add an already existing task to a sprint, create a sprintOperations entry with operation "assign_tasks". Put the sprint name in sprint and the existing task title in tasks. Do not create an actionItem for that existing task. Use actionItems only when the utterance explicitly asks to create a new task. If it is unclear whether the task is new or already exists, do not guess.
+When the utterance explicitly asks to create a new task and place it in a sprint, include the new task in actionItems AND add a sprintOperations entry with operation "assign_tasks", the named sprint in sprint, and the new task title in tasks. Do not treat the new task as an existing task. The task and sprint must belong to the same project.
 Use empty arrays for absent decisions, tasks, status updates, and task edits. Do not fill gaps with recommendations. Unclear or overlapping speech must stay uncertain; mention important unresolved points in keyDiscussionPoints.
 Every decision, action item, task update, and task edit MUST have evidence with its zero-based index and one or more sources. Each source has utteranceId and a verbatim quote copied from that utterance (original language, no paraphrase). Include the exact assignee, deadline, task reference, and requested changes in the quotes. Preserve numeric signs, separators, currencies, multipliers and units; never turn juta into miliar or -3 into 3. No unused or duplicate indexes. All utterance IDs are supplied in the JSON input.
 For a cited utterance containing negation, rejection, pending approval, proposals, uncertainty or corrections, do not paraphrase a fragment as a decision/task/update/edit. Normally leave unresolved content in keyDiscussionPoints. If an explicit negative decision, restriction, update, or edit must be recorded, copy the COMPLETE cited utterance into the corresponding claim, with its full context and quote; for multiple cited utterances copy them in their original order. Preserve any "tanpa"/"without" condition verbatim. If this cannot be done faithfully, omit the claim rather than invent approval.
@@ -42,7 +45,8 @@ Return ONLY JSON, using this shape:
       "priority": "High|Medium|Low",
       "deadline": "string",
       "status": "To Do|Blocked|In Progress|Finished|In Review|Completed",
-      "parent": "parent task title or reference, or empty string for a root task"
+      "parent": "parent task title or reference, or empty string for a root task",
+
     }
   ],
   "taskUpdates": [
@@ -97,6 +101,22 @@ Return ONLY JSON, using this shape:
       }
     }
   ],
+  "sprintOperations": [
+    {
+      "operation": "create|update|start|complete|delete|assign_tasks|remove_task",
+      "project": "project title or project number, or empty when created in this meeting",
+      "sprint": "existing sprint name, or empty for create",
+      "name": "new sprint name or empty",
+      "goal": "goal or empty",
+      "startDate": "YYYY-MM-DD or empty",
+      "endDate": "YYYY-MM-DD or empty",
+      "duration": "1 week|2 weeks|3 weeks|4 weeks|Custom, or empty",
+      "retrospective": "notes or empty",
+      "moveIncompleteTo": "backlog|new_sprint|existing sprint name, or empty",
+      "tasks": ["explicit task titles for assign_tasks"],
+      "task": "explicit task title for remove_task, or empty"
+    }
+  ],
   "attendanceSummary": [],
   "evidence": {
     "decisions": [
@@ -132,6 +152,14 @@ Return ONLY JSON, using this shape:
       }
     ],
     "projectCreations": [
+      {
+        "index": 0,
+        "sources": [
+          {"utteranceId": "U0001", "quote": "verbatim text"}
+        ]
+      }
+    ],
+    "sprintOperations": [
       {
         "index": 0,
         "sources": [
