@@ -20,6 +20,7 @@ import { createSaveQueue } from './saveQueue';
 import { createTranscriptDelivery } from './transcriptDelivery';
 import './App.css';
 import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, normalizeArchiveTranscripts, scopedSummaryStorage } from './summaryHistory';
+import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory } from './navigation';
@@ -2065,6 +2066,7 @@ function SummaryView({
           </div>
         </header>
 
+        <McpReviewPanel meetingId={meetingId} token={token} summaryVersion={`${summary.summaryVersion || ''}:${summary.generatedAt || ''}`} />
         <SummaryEvidence summary={summary} />
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
         {!token && <div className="summary-note">Hasil ini dibuka dari riwayat browser. Salin notulen atau unduh JSON; PDF server memerlukan sesi akses rapat yang masih berlaku.</div>}

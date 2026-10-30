@@ -1,0 +1,6 @@
+.mcp-review{margin:22px 0;padding:22px;border:1px solid #b9d4f4;border-radius:12px;background:#fbfdff;color:#173f70}
+.mcp-review header{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}.mcp-review h2{margin:0;font-size:19px}.mcp-review p{font-size:13px;line-height:1.6;margin:7px 0 12px}.mcp-review header>div{flex:1;min-width:200px}
+.mcp-review-status{padding:7px 11px;border-radius:20px;background:#fff0ce;color:#77530a;font-size:12px}.mcp-review-operations{padding:0;list-style:none}.mcp-review-operations li{padding:14px 16px;margin:9px 0;background:white;border:1px solid #dce7f4;border-radius:9px}.mcp-review pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:#354b66}.mcp-review details{font-size:13px;line-height:1.6}.mcp-review-buttons{display:flex;gap:12px;margin-top:15px}.mcp-review-buttons button{flex:1;justify-content:center}.mcp-review-error{color:#a12532;background:#fff1f2;padding:10px 12px;border-radius:7px}.mcp-review .mcp-review-help{font-size:12px;color:#637b98}.mcp-review summary{cursor:pointer}
+@media(max-width:680px){.mcp-review{padding:15px}.mcp-review-buttons{flex-direction:column}.mcp-review-status{max-width:100%}}
+
+.mcp-review blockquote{margin:10px 0;padding:10px 14px;background:#eef5ff;border-left:3px solid #4187d9}.mcp-review cite{display:block;color:#627995;font-size:12px;font-style:normal;margin-top:5px}
