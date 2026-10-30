@@ -54,4 +54,50 @@ class RetentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pool.slots),0)
 
 
+
+
+class JournalEndTests(unittest.IsolatedAsyncioTestCase):
+    async def test_signed_end_replays_unacknowledged_finals_before_new_tail(self):
+        class Tail(FakeSession):
+            async def finish(self): return [dict(type='transcript',interim='',final=[dict(segmentId='tail-2',text='Ucapan terakhir')])]
+        pool=RetainedSessions()
+        async def create(): return Tail()
+        ticket=dict(meetingId='m',speakerId='a',streamId='mic',language='id',diarize=False,nonce='n')
+        slot,_=await pool.acquire(ticket,create)
+        saved=dict(segmentId='tail-1',text='Ucapan sebelum koneksi putus')
+        slot.remember([dict(type='transcript',final=[saved])])
+        await pool.release(slot,True)
+        frames=await pool.end(ticket)
+        finals=[item for frame in frames for item in frame.get('final',[])]
+        self.assertEqual([item['segmentId'] for item in finals],['tail-1','tail-2'])
+        self.assertEqual(finals[0],saved)
+        self.assertTrue(slot.session.closed)
+        self.assertEqual(await pool.end(ticket),frames)
+
+
+
+
+class CompletedJournalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_end_retry_replays_identical_ids_without_retaining_model_capacity(self):
+        now=[10]
+        class Tail(FakeSession):
+            calls=0
+            async def finish(self):
+                self.calls+=1
+                return [dict(type='transcript',final=[dict(segmentId='final-1',text='Final sesudah reconnect')])]
+        pool=RetainedSessions(clock=lambda:now[0])
+        async def create(): return Tail()
+        ticket=dict(meetingId='m',speakerId='a',streamId='mic',language='id',nonce='n')
+        slot,_=await pool.acquire(ticket,create)
+        await pool.release(slot,True)
+        first=await pool.end(ticket)
+        second=await pool.end({**ticket,'nonce':'retry'})
+        self.assertEqual(second,first)
+        self.assertEqual(slot.session.calls,1)
+        self.assertEqual(len(pool.slots),0)
+        self.assertEqual(await pool.end({**ticket,'speakerId':'other'}),[])
+        now[0]+=46;await pool.expire()
+        self.assertEqual(await pool.end(ticket),[])
+
+
 if __name__=='__main__': unittest.main()

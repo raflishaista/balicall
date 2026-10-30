@@ -1,7 +1,11 @@
-import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
-import { useState, useEffect, useEffectEvent, useRef, useCallback, useId } from 'react';
+import { SummaryEvidence } from './SummaryEvidence';
+import { recordingDownloadName } from './recordingDownload';
+import { usePostMeetingBatch } from './usePostMeetingBatch';
+import type { PostMeetingBatchJob } from './usePostMeetingBatch';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useId } from 'react';
 import { apiRequest, meetingPath, API_BASE, featureError } from './api';
 import { SettingsPage } from './SettingsPage';
+import { DocumentationPage } from './DocumentationPage';
 import { useBackendHealth } from './useBackendHealth';
 import { UserAvatar } from './ProfileEditor';
 import { NotificationCenter } from './NotificationCenter';
@@ -12,65 +16,35 @@ import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
 import { mediaChoices, resolveTranscriptionPreferences, getRecommendedProvider } from './preferences';
 import type { MeetingPreferences } from './preferences';
-import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { createSaveQueue } from './saveQueue';
-import { TranscriptRealtimeBridge } from './TranscriptRealtimeBridge';
 import { createTranscriptDelivery } from './transcriptDelivery';
-import { useBackendTranscription } from './useBackendTranscription';
-import { useSpeechTranscription } from './useSpeechTranscription';
 import './App.css';
-import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage } from './summaryHistory';
+import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, normalizeArchiveTranscripts, scopedSummaryStorage } from './summaryHistory';
+import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
+import { routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory } from './navigation';
+import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
-import { MeetingRoom } from './MeetingRoom';
-import { cameraErrorMessage, useCameraControl } from './useCameraControl';
-import { useBackgroundBlur } from './useBackgroundBlur';
-import { useScreenShareControl } from './useScreenShareControl';
-import { useDeviceSettings } from './useDeviceSettings';
-import { DeviceSettingsDialog } from './DeviceSettingsDialog';
 import { supportsSharedMicrophone, qwenDiarizationForModel } from './preferences';
 import type { LiveFinal } from './liveTranscription';
+import { liveTranscriptBody, modelPreferencePatch } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
 import type { SpeakerNameChange } from './SpeakerNameEditor';
 import { mergeTranscripts } from './transcriptMerge';
-import { shouldMirrorCamera } from './backgroundEffects';
-import { useSpeakerSpotlight } from './useSpeakerSpotlight';
-import { useMicrophoneControl } from './useMicrophoneControl';
 import { usePreJoinMedia } from './usePreJoinMedia';
 import { usePageFocus } from './usePageFocus';
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { PreJoinPreview } from './PreJoinPreview';
-import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
-import {
-  LiveKitRoom,
-  RoomAudioRenderer,
-  useParticipants,
-  useLocalParticipant,
-  useTrackVolume,
-  useConnectionState,
-  useTracks,
-  useRoomContext,
-  isTrackReference,
-} from '@livekit/components-react';
-import {
-  Copy,
-  Check,
-  ArrowRight,
-  Clock,
-  AlertCircle,
-  Loader2,
-  Search,
-  ChevronLeft,
-  Home,
-  Sparkles,
-} from 'lucide-react';
+import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, ChevronLeft, Home, Sparkles, Video } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
+
+const InCallView = lazy(() => import('./InCallView').then(module => ({ default: module.InCallView })));
 
 const PRESET_PERSONAS = [
   { id: 'BT-10492', name: 'Rafli Aditya', dept: 'NOC & Core Network' },
@@ -100,17 +74,32 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       savedActiveView,
     };
   });
+
+  const [initialRoute] = useState<RouteState>(() => {
+    if (typeof window !== 'undefined' && window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/' && !window.location.hash.startsWith('#main-content')) {
+      const parsed = hashToRoute(window.location.hash);
+      return sanitizeRouteForGuest(parsed, isGuest);
+    }
+    if (isGuest) return { view: 'lobby', intent: 'join' };
+    if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
+    if (initialSummaryState.savedActiveView === 'summary') return { view: 'summary' };
+    return { view: 'home' };
+  });
+
+  const routeSummaryRecord = initialRoute.view === 'summary' && initialRoute.meetingId
+    ? initialSummaryState.history.find(item => item.meetingId === initialRoute.meetingId)
+    : undefined;
+  const initialSession = initialRoute.view === 'summary' && initialRoute.meetingId === initialSummaryState.session?.meetingId ? initialSummaryState.session : null;
+  const selectedInitialSummary = routeSummaryRecord || (initialSession ? initialSummaryState.selected : undefined);
+
   const [inProgressList, setInProgressList] = useState<InProgressRecord[]>(() => readInProgressSummaries());
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
-  const [view, setView] = useState<'home' | 'lobby' | 'in-call' | 'summary' | 'schedule' | 'settings' | 'recordings'>(() => {
-    if (isGuest) return 'lobby';
-    if (initialSummaryState.savedActiveView === 'summary') return 'summary';
-    if (initialSummaryState.session) return 'summary';
-    return 'home';
-  });
-  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(isGuest ? 'join' : 'create');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
+  const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
+  const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
+  const [view, setView] = useState<AppView>(initialRoute.view);
   const contentRef = useRef<HTMLElement>(null);
   usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
@@ -166,17 +155,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
   // Active call state
-  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(initialSummaryState.selected?.transcripts || initialSummaryState.session?.transcripts || []);
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(selectedInitialSummary?.transcripts || initialSession?.transcripts || []);
   const [activeTab, setActiveTab] = useState<'transcript' | 'attendance'>('transcript');
   const [callDuration, setCallDuration] = useState('00:00');
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
-  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected));
+  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialRoute.view === 'summary' && initialRoute.meetingId && !selectedInitialSummary));
   const [batchDiarizing, setBatchDiarizing] = useState(false);
-  const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || null);
+  const [summary, setSummary] = useState<MeetingSummary | null>(selectedInitialSummary?.summary || null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialSummaryState.session?.meetingId || null);
-  const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || null);
-  const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || '');
+  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.view === 'summary' ? initialRoute.meetingId || null : null);
+  const [summaryToken, setSummaryToken] = useState<string | null>(initialSession?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
+  const [summaryRoomName, setSummaryRoomName] = useState<string>(selectedInitialSummary?.roomName || initialSession?.roomName || '');
+  const [summaryHasRecording, setSummaryHasRecording] = useState<boolean>(Boolean(selectedInitialSummary?.hasRecording));
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -202,6 +192,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     const syncMeetingRole = async () => {
       try {
         const data = await apiRequest<{
+          status?: string;
           currentRole?: MeetingRole;
           hostId?: string;
           coHostIds?: string[];
@@ -218,6 +209,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         });
 
         if (cancelled) return;
+
+        if (data.status === 'ended' && !endingMeeting.current) {
+          void handleEndMeetingRef.current?.(true);
+          return;
+        }
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
@@ -244,6 +240,166 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     };
   }, [view, meetingId, token]);
 
+  const currentRouteRef = useRef<RouteState>({
+    view,
+    section: settingsSection,
+    meetingId: summaryMeetingId,
+    intent: meetingIntent,
+    recordingId,
+  });
+  currentRouteRef.current = {
+    view,
+    section: settingsSection,
+    meetingId: summaryMeetingId,
+    intent: meetingIntent,
+    recordingId,
+  };
+
+  const meetingIdRef = useRef<string | null>(meetingId);
+  meetingIdRef.current = meetingId;
+  const handleEndMeetingRef = useRef<((generate?: boolean) => Promise<void>) | undefined>(undefined);
+
+  const navigateTo = useCallback((next: RouteState, replace = false) => {
+    const sanitized = sanitizeRouteForGuest(next, isGuest);
+    const current = currentRouteRef.current;
+    if (isSameRoute(current, sanitized)) {
+      return;
+    }
+
+    if (current.view === 'lobby' && sanitized.view !== 'lobby') {
+      joinGeneration.current++;
+      joinPending.current = false;
+      setIsJoining(false);
+      preJoinMedia.stopAll();
+    }
+
+    syncBrowserHistory(sanitized, replace);
+
+    setView(sanitized.view);
+    if (sanitized.view === 'settings') {
+      setSettingsSection(sanitized.section || 'overview');
+    }
+    if (sanitized.view === 'summary') {
+      setSummaryMeetingId(sanitized.meetingId || null);
+      if (!sanitized.meetingId) {
+        setSummary(null);
+        setIsSummarizing(false);
+        setSummaryError(null);
+      }
+    }
+    if (sanitized.view === 'recordings') {
+      setRecordingId(sanitized.recordingId || null);
+    }
+    if (sanitized.view === 'lobby') {
+      setMeetingIntent(sanitized.intent || (isGuest ? 'join' : 'create'));
+    }
+  }, [isGuest, preJoinMedia]);
+
+  useEffect(() => {
+    syncBrowserHistory(initialRoute, true);
+  }, [initialRoute]);
+
+  useEffect(() => {
+    const id = initialRoute.meetingId;
+    if (initialRoute.view !== 'summary' || !id || initialSession || routeSummaryRecord?.transcripts.length) return;
+    const controller = new AbortController();
+    void apiRequest<any>(`/meetings/db-details/${encodeURIComponent(id)}`, {signal:controller.signal})
+      .then(details => {
+        if (controller.signal.aborted || currentRouteRef.current.view !== 'summary' || currentRouteRef.current.meetingId !== id) return;
+        if (!details.summary) throw new Error('Belum ada notulen untuk rapat ini.');
+        const record = normalizeDbSummary({...details,meeting_id:id,room_name:details.meeting?.room_name || routeSummaryRecord?.roomName});
+        setSummary(record.summary); setTranscripts(record.transcripts); setSummaryRoomName(record.roomName);
+        setSummaryHasRecording(Boolean(record.hasRecording)); setIsSummarizing(false);
+      }).catch(error => {
+        if (!controller.signal.aborted && currentRouteRef.current.view === 'summary' && currentRouteRef.current.meetingId === id) {
+          setIsSummarizing(false); setSummaryError(error instanceof Error ? error.message : 'Notulen belum dapat dimuat.');
+        }
+      });
+    return () => controller.abort();
+  }, [initialRoute, initialSession, routeSummaryRecord]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handlePopState = (event: PopStateEvent) => {
+      if (currentRouteRef.current.view === 'in-call') {
+        const confirmed = window.confirm('Apakah Anda yakin ingin meninggalkan rapat aktif? Percakapan yang sedang berlangsung akan dihentikan.');
+        if (!confirmed) {
+          const callRoute: RouteState = { view: 'in-call', meetingId: meetingIdRef.current };
+          window.history.pushState(callRoute, '', routeToHash(callRoute));
+          return;
+        }
+        void handleEndMeetingRef.current?.(false);
+      }
+
+      const rawRoute: RouteState = (event.state && typeof event.state.view === 'string')
+        ? event.state
+        : hashToRoute(window.location.hash, currentRouteRef.current);
+
+      const nextRoute = sanitizeRouteForGuest(rawRoute, isGuest);
+
+      if (currentRouteRef.current.view === 'lobby' && nextRoute.view !== 'lobby') {
+        joinGeneration.current++;
+        joinPending.current = false;
+        setIsJoining(false);
+        preJoinMedia.stopAll();
+      }
+
+      setView(nextRoute.view);
+      if (nextRoute.view === 'settings') {
+        setSettingsSection(nextRoute.section || 'overview');
+      }
+      if (nextRoute.view === 'summary') {
+        const targetMeetingId = nextRoute.meetingId || null;
+        setSummaryMeetingId(targetMeetingId);
+        if (!targetMeetingId) {
+          setSummary(null);
+          setIsSummarizing(false);
+          setSummaryError(null);
+          const session = readSummarySession();
+          if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+        } else {
+          const found = summaryHistory.find(item => item.meetingId === targetMeetingId);
+          if (found) {
+            setSummary(found.summary);
+            setTranscripts(found.transcripts);
+            setSummaryRoomName(found.roomName);
+            setSummaryToken(summaryTokenFor(found.meetingId));
+          } else {
+            apiRequest<{ success: boolean; summary?: MeetingSummary; transcripts?: TranscriptEntry[]; meeting?: { room_name?: string } }>(
+              `/meetings/db-details/${encodeURIComponent(targetMeetingId)}`
+            ).then(details => {
+              if (details?.summary) {
+                setSummary(details.summary);
+                if (details.transcripts) setTranscripts(normalizeArchiveTranscripts(details.transcripts));
+                if (details.meeting?.room_name) setSummaryRoomName(details.meeting.room_name);
+              }
+            }).catch(() => {});
+          }
+        }
+      }
+      if (nextRoute.view === 'recordings') {
+        setRecordingId(nextRoute.recordingId || null);
+      }
+      if (nextRoute.view === 'lobby') {
+        setMeetingIntent(nextRoute.intent || (isGuest ? 'join' : 'create'));
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isGuest, summaryHistory, readSummarySession, saveSummarySession, summaryTokenFor]);
+
+  useEffect(() => {
+    if (view !== 'in-call') return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [view]);
+
   useEffect(() => {
     if (view !== 'in-call' && view !== 'lobby') {
       saveActiveView(view);
@@ -254,7 +410,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   // Robust reload recovery: poll for in-progress summaries without immediately throwing errors
   useEffect(() => {
-    const session = initialSummaryState.session;
+    const session = initialSession;
     if (!session || initialSummaryState.selected || !session.meetingId) return;
     let cancelled = false;
     const controller = new AbortController();
@@ -356,7 +512,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       controller.abort();
       clearTimeout(pollTimer);
     };
-  }, [initialSummaryState, readSummaryHistory, removeInProgressSummary, saveSummaryHistory, readInProgressSummaries]);
+  }, [initialSession, initialSummaryState, readSummaryHistory, removeInProgressSummary, saveSummaryHistory, readInProgressSummaries]);
 
   const openSavedSummary = (record: SummaryRecord) => {
     summaryGeneration.current++;
@@ -364,28 +520,32 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setSummaryError(null);
     setCopied(false);
     setSummary(record.summary);
-    setTranscripts(record.transcripts);
+    setTranscripts(normalizeArchiveTranscripts(record.transcripts));
     setSummaryMeetingId(record.meetingId);
     setSummaryRoomName(record.roomName);
+    setSummaryHasRecording(Boolean(record.hasRecording));
     const savedToken = summaryTokenFor(record.meetingId);
     setSummaryToken(savedToken);
     saveSummarySession({
       meetingId: record.meetingId,
       roomName: record.roomName,
       token: savedToken,
-      transcripts: record.transcripts,
+      transcripts: normalizeArchiveTranscripts(record.transcripts),
       open: true,
       isSummarizing: false,
     });
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: record.meetingId });
 
     // If record lacks transcripts, load from DB
     if (!record.transcripts || record.transcripts.length === 0) {
-      apiRequest<{ success: boolean; transcripts: TranscriptEntry[] }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
+      apiRequest<{ success: boolean; transcripts: TranscriptEntry[]; hasRecording?: boolean }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
         .then(details => {
           if (details?.transcripts && details.transcripts.length > 0) {
-            setTranscripts(details.transcripts);
+            setTranscripts(normalizeArchiveTranscripts(details.transcripts));
+          }
+          if (details?.hasRecording) {
+            setSummaryHasRecording(true);
           }
         })
         .catch(() => {});
@@ -411,7 +571,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       isSummarizing: true,
     });
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: record.meetingId });
     void triggerSummarize(record.meetingId, savedToken, record.roomName, record.transcripts);
   };
 
@@ -437,10 +597,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (data?.summaries && Array.isArray(data.summaries)) {
         const dbRecords = data.summaries.map(normalizeDbSummary);
         setSummaryHistory(prev => {
-          let merged = [...prev];
-          for (const rec of dbRecords) {
-            merged = upsertSummary(merged, rec);
-          }
+          const merged = mergeSummaryRecords(prev, dbRecords);
           saveSummaryHistory(merged);
           return merged;
         });
@@ -469,7 +626,6 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     return () => clearInterval(interval);
   }, [view, meetingStartTime]);
 
-
   useEffect(() => {
     if (!pendingSaves) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -496,6 +652,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setSchedules(prev => [data.schedule, ...prev].sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart)));
     }
   };
+
+  const applyPostMeetingBatch = useCallback((job: PostMeetingBatchJob) => {
+    if (!summaryMeetingId || !validSummary(job.summary) || !job.transcripts?.length) return;
+    summaryGeneration.current++;
+    setSummary(job.summary);
+    setTranscripts(job.transcripts);
+    setIsSummarizing(false);
+    setSummaryError(null);
+    setSummaryHasRecording(true);
+    const previous = readSummaryHistory().find(record => record.meetingId === summaryMeetingId);
+    const record: SummaryRecord = {...previous, meetingId:summaryMeetingId, roomName:summaryRoomName, hasRecording:true,
+      summary:job.summary, transcripts:job.transcripts, savedAt:job.summary.generatedAt || new Date().toISOString()};
+    const next = upsertSummary(readSummaryHistory(), record);
+    setSummaryHistory(next); saveSummaryHistory(next);
+    removeInProgressSummary(summaryMeetingId);
+    setInProgressList(readInProgressSummaries());
+  }, [summaryMeetingId, summaryRoomName, readSummaryHistory, saveSummaryHistory, removeInProgressSummary, readInProgressSummaries]);
+  const postMeetingBatchState = usePostMeetingBatch({meetingId:summaryMeetingId, token:summaryToken,
+    enabled:view === 'summary', onResult:applyPostMeetingBatch});
 
   const handleCancelSchedule = async (id: string) => {
     await apiRequest<{ success: boolean }>(`/schedules/${encodeURIComponent(id)}`, {
@@ -529,7 +704,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const openSchedule = () => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
     saveActiveView('schedule');
-    setView('schedule');
+    navigateTo({ view: 'schedule' });
   };
 
   const handleJoin = async () => {
@@ -563,6 +738,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
       summaryGeneration.current++;
+      // Old summary work must not pause ASR or lock controls in the new room.
+      setIsSummarizing(false);
+      setBatchDiarizing(false);
       setCallPreferences({
         ...userPreferences.preferences,
         sharedRoomMic: mediaChoices.sharedRoomMic ?? userPreferences.preferences.sharedRoomMic ?? false,
@@ -577,7 +755,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
-      setView('in-call');
+      navigateTo({ view: 'in-call', meetingId: data.meetingId });
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
     finally { if (generation === joinGeneration.current) { joinPending.current = false; setIsJoining(false); } }
   };
@@ -631,6 +809,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setSummary(completedSummary);
       removeInProgressSummary(targetMeetingId);
       setInProgressList(readInProgressSummaries());
+      const hadRecording = Boolean((data as any).hasRecording || isRecording);
+      setSummaryHasRecording(hadRecording);
       const record: SummaryRecord = {
         meetingId: targetMeetingId,
         roomName: targetRoomName,
@@ -640,15 +820,29 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         hostId: employeeId,
         hostName: employeeName,
         department,
+        hasRecording: hadRecording,
+        ...((data as any).recordingSize ? { recordingSize: (data as any).recordingSize } : {}),
       };
-      const next = upsertSummary(readSummaryHistory(), record);
-      setSummaryHistory(next);
-      if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
+      if (callPreferences.saveSummaryOffline !== false) {
+        const next = upsertSummary(readSummaryHistory(), record);
+        setSummaryHistory(next);
+        if (!saveSummaryHistory(next)) setHistoryNotice('Riwayat belum tersimpan di browser. Unduh atau salin notulen sebelum menutup tab.');
+      }
+      if (callPreferences.autoCopySummary) {
+        try {
+          const md = `# Notulen BaliTower Sentra: ${completedSummary.title}\n**Tanggal:** ${new Date(completedSummary.generatedAt || Date.now()).toLocaleDateString('id-ID')} | **Ruang:** ${targetRoomName}\n**Peserta:** ${completedSummary.attendanceSummary?.join(', ') || 'Belum tercatat'}\n**Layanan ringkasan:** ${completedSummary.provider || 'Tidak diketahui'}\n\n---\n### Ringkasan\n${completedSummary.executiveSummary}\n\n### Poin Pembahasan\n${completedSummary.keyDiscussionPoints.map(p => `- ${p}`).join('\n')}\n\n### Keputusan\n${completedSummary.decisions.map(d => `- ${d}`).join('\n')}\n\n### Tindak Lanjut\n${completedSummary.actionItems.map(a => `- [${a.priority}] ${a.task} (@${a.assignee}) - Batas: ${a.deadline}`).join('\n')}`;
+          void navigator.clipboard?.writeText(md);
+        } catch {
+          // ignore clipboard write failure
+        }
+      }
     } catch (error) {
       if (generation !== summaryGeneration.current) return;
-      setSummaryError(
-        error instanceof Error ? error.message : 'Gagal membuat notulen AI. Silakan coba lagi.'
-      );
+      const rawMessage = error instanceof Error ? error.message : '';
+      const message = rawMessage.includes('No saved speech to summarize')
+        ? 'Belum ada rekaman percakapan untuk dibuat notulen. Silakan berbicara terlebih dahulu saat rapat.'
+        : rawMessage || 'Gagal membuat notulen AI. Silakan coba lagi.';
+      setSummaryError(message);
     } finally {
       if (generation === summaryGeneration.current) setIsSummarizing(false);
     }
@@ -675,10 +869,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setMeetingId(null);
       setTranscripts([]);
       saveActiveView('home');
-      setView(isGuest ? 'lobby' : 'home');
+      navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
       void (async () => {
         try { await saveQueue.flush(); } catch (err) { console.warn('Background flush note:', err); }
-        await apiRequest(meetingPath(currentMeetingId, 'leave'), {
+        const leaveData = await apiRequest<{ status?: string }>(meetingPath(currentMeetingId, 'leave'), {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
           body: '{}',
@@ -687,6 +881,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           return { status: 'ended' };
         });
         endingMeeting.current = false;
+        if (!isGuest && leaveData?.status === 'ended' && currentRouteRef.current.view === 'home') {
+          openInProgressSummary({
+            meetingId: currentMeetingId,
+            roomName: currentRoomName,
+            token: currentToken,
+            transcripts: capturedTranscripts,
+            startedAt: new Date().toISOString(),
+            hostId: employeeId,
+            hostName: employeeName,
+            department,
+          });
+        }
       })();
       return;
     }
@@ -716,7 +922,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setHistoryNotice('Browser memblokir penyimpanan sesi. Refresh belum dapat memulihkan halaman ini.');
     }
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary', meetingId: currentMeetingId });
     setIsSummarizing(true);
     setSummary(null);
     setSummaryError(null);
@@ -790,6 +996,10 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     })();
   };
 
+  useEffect(() => {
+    handleEndMeetingRef.current = handleEndMeeting;
+  });
+
   const handleRetrySummarize = () => {
     if (summaryMeetingId && summaryToken) {
       void triggerSummarize(summaryMeetingId, summaryToken, summaryRoomName || roomName, transcripts);
@@ -805,23 +1015,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setBatchDiarizing(true);
     setSummaryError(null);
     try {
-      const data = await apiRequest<{
-        success: boolean;
-        transcripts: TranscriptEntry[];
-        speakerCount?: number;
-        speakers?: string[];
-      }>(
-        meetingPath(targetMeetingId, 'batch-diarize'),
-        {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        180000
-      );
-      if (data?.transcripts?.length) {
-        setTranscripts(data.transcripts);
-        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, data.transcripts);
+      const generation = joinGeneration.current;
+      type BatchJob = { status: string; error?: string; transcripts?: TranscriptEntry[] };
+      const path = meetingPath(targetMeetingId, 'post-meeting-batch');
+      const headers = { Authorization: 'Bearer ' + targetToken, 'Content-Type': 'application/json' };
+      let { job } = await apiRequest<{ job: BatchJob }>(path, {
+        method: 'POST', headers, body: JSON.stringify({ language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
+      });
+      const deadline = Date.now() + 4 * 60 * 60 * 1000;
+      while (job.status !== 'done') {
+        if (generation !== joinGeneration.current) return;
+        if (job.status === 'failed') throw new Error(job.error || 'Batch gagal. Transkrip live tetap tersedia.');
+        if (Date.now() > deadline) throw new Error('Pemrosesan masih berlangsung. Buka kembali hasil rapat untuk memeriksa status.');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        ({ job } = await apiRequest<{ job: BatchJob }>(path, { headers }));
+        if (!job) throw new Error('Status batch tidak ditemukan.');
+      }
+      if (generation === joinGeneration.current && job.transcripts?.length) {
+        setTranscripts(job.transcripts);
+        await triggerSummarize(targetMeetingId, targetToken, summaryRoomName || roomName, job.transcripts);
       }
     } catch (err) {
       setSummaryError(err instanceof Error ? err.message : 'Gagal melakukan batch diarization.');
@@ -837,7 +1049,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setSummary(null);
     setSummaryError(null);
     saveActiveView('summary');
-    setView('summary');
+    navigateTo({ view: 'summary' });
     const formData = new FormData();
     formData.append('audio', file);
     try {
@@ -855,6 +1067,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
       if (data.meetingId) {
         setSummaryMeetingId(data.meetingId);
+        navigateTo({ view: 'summary', meetingId: data.meetingId }, true);
       }
       if (data.token) {
         setSummaryToken(data.token);
@@ -893,14 +1106,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     for (const entry of data.updatedEntries) transcriptDelivery.saved({meetingId:targetMeeting,entry});
   };
 
-  const handleAddSpeechLine = (value: LiveFinal) => {
-    const final = typeof value === 'string' ? null : value;
+  const handleAddSpeechLine = (value: LiveFinal, model = 'qwen3-asr-0.6b-live') => {
     const text = typeof value === 'string' ? value : value.text;
     if (!text.trim() || !meetingId || !token) return;
     const path = meetingPath(meetingId, 'transcript');
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify(final ? { sttModel: 'qwen3-asr-0.6b-live', final } : { text: text.trim(), requestId }),
+      body: JSON.stringify(liveTranscriptBody(value, model, requestId)),
     }).then(result => ({ ...result, meetingId })));
   };
 
@@ -987,7 +1199,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleAddAudio = (audio: Blob, language: string, model?: string) => {
     if (!meetingId || !token) return;
     const path = meetingPath(meetingId, 'audio');
-    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel, backendHealth?.qwenDiarizationReady) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
+    const isSharedMic = supportsSharedMicrophone(model || backendHealth?.sttModel, qwenDiarizationForModel(model || backendHealth?.sttModel, backendHealth)) && Boolean(callPreferences.sharedRoomMic || joinMedia.sharedRoomMic);
     const useLiveDiarize = isSharedMic && (callPreferences.liveDiarization ?? joinMedia.liveDiarization ?? true);
     saveQueue.enqueue(requestId => apiRequest<{ entry: TranscriptEntry | null }>(path, {
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': audio.type,
@@ -1003,7 +1215,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ connected }),
     }, 5000); } catch { if (connected && !endingMeeting.current && generation === joinGeneration.current) setSyncError('Kehadiran belum tersinkron. Periksa koneksi layanan.'); }
   };
-  const handleToggleRecording = async (enabled: boolean) => {
+  const handleToggleRecording = async (enabled: boolean, postMeetingBatch = false) => {
     if (!meetingId || !token || recordingPending) return;
     const generation = joinGeneration.current;
     setRecordingPending(true); setRecordingError(null);
@@ -1012,7 +1224,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       const data = await apiRequest<{ success: boolean; recording?: { status: string } }>(meetingPath(meetingId, `recording/${action}`), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ postMeetingBatch, language: callPreferences.speechLanguage === 'en-US' ? 'en' : 'id' }),
       }, 15000);
       if (generation === joinGeneration.current) {
         setIsRecording(data?.recording?.status === 'active');
@@ -1081,7 +1293,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
     setMeetingIntent(isGuest ? 'join' : intent);
     setJoinError(null);
-    setView('lobby');
+    navigateTo({ view: 'lobby', intent: isGuest ? 'join' : intent });
   };
 
   return (
@@ -1093,25 +1305,25 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           view={view}
           intent={meetingIntent}
           employeeName={employeeName}
-          onLogout={onLogout} logoutPending={logoutPending}
           hasSummary={summaryHistory.length > 0 || inProgressList.length > 0 || Boolean(summary) || isSummarizing || Boolean(summaryError)}
           onHome={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('home');
-            setView('home');
+            navigateTo({ view: 'home' });
           }}
           onCreate={() => openLobby('create')}
           onJoin={() => openLobby('join')}
           onSchedule={openSchedule}
           onSettings={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('settings');
-            setView('settings');
+            navigateTo({ view: 'settings', section: 'overview' });
+          }}
+          onDocumentation={() => {
+            saveActiveView('documentation');
+            navigateTo({ view: 'documentation' });
           }}
           onSummary={() => {
-            joinGeneration.current++; joinPending.current = false; setIsJoining(false); preJoinMedia.stopAll();
             saveActiveView('summary');
-            setView('summary');
+            navigateTo({ view: 'summary', meetingId: null });
             if (!summary && !isSummarizing) {
               setSummaryMeetingId(null);
             }
@@ -1124,13 +1336,13 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
         ) : (
           <div className="page-identity">
-            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
+            <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'documentation' ? 'Dokumentasi' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
             <strong>Internal Meeting & AI Minutes</strong>
           </div>
         )}
 
         <div className="header-meta">
-          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();setSummaryMeetingId(null);setView('summary');}}/>}
+          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();navigateTo({ view: 'summary', meetingId: null });}}/>}
           {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
@@ -1151,6 +1363,9 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               )}
             </div>
           )}
+          {view !== 'in-call' && <button type="button" className="header-account-logout" disabled={logoutPending || !onLogout} onClick={() => void onLogout?.()} title={!onLogout ? 'Mode tanpa login: tidak ada sesi akun untuk dikeluarkan' : 'Keluar dari akun BaliCall'} aria-label="Keluar akun" aria-busy={logoutPending}>
+            {logoutPending ? <Loader2 className="ui-spinner" size={17} aria-hidden="true" /> : <LogOut size={17} aria-hidden="true" />}<span>{logoutPending ? 'Keluar…' : 'Keluar akun'}</span>
+          </button>}
           <span className="user-avatar" title={employeeName || 'Bali Tower Sentra'}>{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span>
         </div>
       </header>
@@ -1169,7 +1384,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',recordings:'Rekaman terunggah'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah'}[view]}>
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}
@@ -1185,14 +1400,46 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             employeeId={employeeId}
             employeeName={employeeName}
             department={department}
-            onBack={() => setView('home')}
+            onBack={() => {
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'schedule') {
+                window.history.back();
+              } else {
+                navigateTo({ view: 'home' });
+              }
+            }}
             onCreateSchedule={handleCreateSchedule}
             onReschedule={handleReschedule}
             onCancelSchedule={handleCancelSchedule}
             onJoinRoom={handleJoinScheduledRoom}
           />
         )}
-        {view === 'settings' && <SettingsPage aiStatus={healthStatus} transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null} authUser={isGuest ? null : authUser} onProfileUpdated={user=>{setEmployeeName(user.name);onProfileUpdated?.(user);}} preferences={userPreferences.preferences} notice={userPreferences.notice} employeeId={employeeId} employeeName={employeeName} department={department} onSave={userPreferences.save} onCheckDevices={next => openLobby('create', next)} />}
+        {view === 'settings' && (
+          <SettingsPage
+            section={settingsSection}
+            onSectionChange={nextSection => {
+              if (nextSection === 'overview' && typeof window !== 'undefined' && window.history.state?.view === 'settings' && window.history.state?.section && window.history.state.section !== 'overview') {
+                window.history.back();
+              } else {
+                navigateTo({ view: 'settings', section: nextSection });
+              }
+            }}
+            aiStatus={healthStatus}
+            transcription={backendHealth ? { configured: Boolean(backendHealth.sttConfigured), models: backendHealth.sttModels || [], defaultModel: backendHealth.sttModel || '' } : null}
+            authUser={isGuest ? null : authUser}
+            onProfileUpdated={user => { setEmployeeName(user.name); onProfileUpdated?.(user); }}
+            preferences={userPreferences.preferences}
+            notice={userPreferences.notice}
+            employeeId={employeeId}
+            employeeName={employeeName}
+            department={department}
+            onSave={userPreferences.save}
+            onCheckDevices={next => openLobby('create', next)}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); navigateTo({ view: 'recordings' }); }}
+            onLogout={onLogout}
+            logoutPending={logoutPending}
+          />
+        )}
+        {view === 'documentation' && <DocumentationPage />}
 
         {view === 'lobby' && (
           <LobbyView
@@ -1221,7 +1468,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
               transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
-              onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, transcriptionModel: model })}
+              onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, ...modelPreferencePatch(model) })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
               qwenDiarizationReady={qwenDiarizationForModel(userPreferences.preferences.transcriptionModel, backendHealth)}
               sttModels={backendHealth?.sttModels ?? []}
@@ -1233,8 +1480,17 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           />
         )}
 
+        {view === 'summary' && postMeetingBatchState && <p role="status" className="settings-notice">
+          {postMeetingBatchState.status === 'done' ? 'Batch audio Qwen + Nemotron selesai. Transkrip dan notulen batch tersimpan.'
+            : postMeetingBatchState.status === 'waiting' ? 'Batch audio menunggu seluruh peserta keluar dan rekaman Egress selesai.'
+            : postMeetingBatchState.status === 'failed' || postMeetingBatchState.status === 'timeout' ? `Batch audio belum berhasil: ${postMeetingBatchState.error || 'Coba kembali setelah layanan siap.'} Transkrip live tetap tersedia.`
+            : postMeetingBatchState.status === 'reconnecting' ? 'Koneksi status batch terputus. Mencoba kembali; proses server tetap berjalan.'
+            : postMeetingBatchState.status === 'summarizing' ? 'Qwen selesai mentranskripsi. AI sedang menyusun notulen batch audio.'
+            : 'Qwen + Nemotron sedang memproses rekaman audio seluruh peserta.'}
+        </p>}
+
         {view === 'in-call' && token && (
-          <InCallView callDuration={callDuration}
+          <Suspense fallback={<p role="status">Menyiapkan ruang rapat…</p>}><InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
             meetingHostId={meetingHostId}
@@ -1250,7 +1506,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               else if (rec?.status === 'stopped') setIsRecording(false);
             }}
             callPreferences={callPreferences}
-            onSttModelChanged={(model: string) => setCallPreferences(prev => ({ ...prev, transcriptionModel: model }))}
+            onSttModelChanged={(model: string) => setCallPreferences(prev => ({ ...prev, ...modelPreferencePatch(model) }))}
             qwenDiarizationReady={qwenDiarizationForModel(callPreferences.transcriptionModel, backendHealth)}
             onToggleSharedMic={handleToggleSharedMic}
             onToggleLiveDiarization={handleToggleLiveDiarization}
@@ -1261,6 +1517,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             sttConfigured={backendHealth?.sttConfigured || false}
             sttModels={backendHealth?.sttModels || []}
             defaultSttModel={backendHealth?.sttModel || ''}
+            pendingSaves={pendingSaves}
             saveBlocked={Boolean(transcriptSaveError)}
             onAddAudio={handleAddAudio} onCreateLiveSession={handleCreateLiveSession}
             onPresence={handlePresence}
@@ -1280,11 +1537,22 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             speakRequestAt={speakRequestAt}
             pendingSpeakRequests={pendingSpeakRequests}
             onRequestToSpeak={requestToSpeak}
-          />
+          /></Suspense>
         )}
         
         {view === 'recordings' && !isGuest && (
-          <RecordingUploadView onBack={() => { saveActiveView('summary'); setView('summary'); }} />
+          <RecordingUploadView
+            recordingId={recordingId}
+            onRecordingChange={recId => navigateTo({ view: 'recordings', recordingId: recId })}
+            onBack={() => {
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'recordings') {
+                window.history.back();
+              } else {
+                saveActiveView('summary');
+                navigateTo({ view: 'summary', meetingId: null });
+              }
+            }}
+          />
         )}
 
         {view === 'summary' && !summaryMeetingId && !isSummarizing && (
@@ -1297,14 +1565,18 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onSelectSummary={openSavedSummary}
             onSelectInProgress={openInProgressSummary}
             onBackToHome={() => {
-              saveActiveView('home');
-              setView('home');
+              if (typeof window !== 'undefined' && window.history.state?.view && window.history.state.view !== 'summary') {
+                window.history.back();
+              } else {
+                saveActiveView('home');
+                navigateTo({ view: 'home' });
+              }
             }}
             onRefreshData={fetchDbSummaries}
             isLoadingDb={isLoadingDb}
             notice={historyNotice}
             onUploadAudio={handleUploadAudioBatch}
-            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); setView('recordings'); }}
+            onOpenRecordings={isGuest ? undefined : () => { saveActiveView('recordings'); navigateTo({ view: 'recordings' }); }}
           />
         )}
 
@@ -1319,18 +1591,24 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             copied={copied}
             onCopy={copyMarkdownSummary}
             isSummarizing={isSummarizing}
+            hasRecording={summaryHasRecording}
             batchDiarizing={batchDiarizing}
             onBatchDiarize={handleBatchDiarize}
             pendingSaves={pendingSaves}
             summaryError={summaryError}
             onRetry={handleRetrySummarize}
             onBackToHistory={() => {
-              setSummaryMeetingId(null);
-              setSummary(null);
-              setIsSummarizing(false);
-              setSummaryError(null);
-              const session = readSummarySession();
-              if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+              if (typeof window !== 'undefined' && window.history.state?.view === 'summary' && window.history.state?.meetingId) {
+                window.history.back();
+              } else {
+                setSummaryMeetingId(null);
+                setSummary(null);
+                setIsSummarizing(false);
+                setSummaryError(null);
+                const session = readSummarySession();
+                if (session) saveSummarySession({ ...session, meetingId: '', open: true });
+                navigateTo({ view: 'summary', meetingId: null });
+              }
             }}
             onNewCall={() => {
               summaryGeneration.current++;
@@ -1345,363 +1623,13 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               setSummaryToken(null);
               setSummaryRoomName('');
               saveActiveView('home');
-              setView('home');
+              navigateTo({ view: 'home' });
             }}
           />
         )}
       </main>
       </div>
     </div>
-  );
-}
-
-function InCallView({ callDuration,
-  qwenDiarizationReady, onSttModelChanged,
-  meetingId, onTranscriptEntries, onTranscriptSyncError, registerTranscriptPublisher,
-  sttModels, defaultSttModel, onCreateLiveSession,
-  joinMedia, callPreferences,
-  recordingPending, recordingError, isRecording, onToggleRecording, onRecordingSync,
-  sttProvider, setSttProvider, sttConfigured, saveBlocked, onAddAudio, onPresence,
-  microphoneRestricted, speakRequestPending, speakRequestAt, pendingSpeakRequests,
-  onRequestToSpeak,
-  token,
-  serverUrl,
-  roomName,
-  employeeId,
-  employeeName,
-  transcripts,
-  activeTab,
-  setActiveTab,
-  onAddSpeechLine,
-  onRenameSpeaker,
-  onEndMeeting,
-  isSummarizing,
-  meetingRole,
-  meetingHostId,
-  meetingCoHostIds,
-  onManageParticipant,
-  onToggleSharedMic,
-  onToggleLiveDiarization,
-  onToggleBatchDiarization,
-}: any) {
-  const [mediaOptions] = useState(() => ({
-    audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
-    videoCaptureDefaults: { deviceId: joinMedia.cameraId === 'default' ? undefined : { exact: joinMedia.cameraId } },
-  }));
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const onRoomError = useCallback((error: Error) => {
-    // Camera access errors are handled separately; audio can remain connected.
-    const failure = MediaDeviceFailure.getFailure(error);
-    if (!failure || failure === MediaDeviceFailure.Other) setConnectionError('Koneksi rapat bermasalah: ' + error.message);
-  }, []);
-  const onConnected = useCallback(() => setConnectionError(null), []);
-  return (
-    <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
-    {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
-    <LiveKitRoom
-      serverUrl={serverUrl}
-      token={token}
-      connect={true}
-      onError={onRoomError}
-      onConnected={onConnected}
-      audio={joinMedia.microphoneEnabled}
-      options={mediaOptions}
-      style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
-    >
-      <RoomAudioRenderer />
-      <TranscriptRealtimeBridge meetingId={meetingId} token={token} onEntries={onTranscriptEntries} onError={onTranscriptSyncError} onRecordingSync={onRecordingSync} register={registerTranscriptPublisher} />
-      <RoomContent callDuration={callDuration}
-        qwenDiarizationReady={qwenDiarizationReady} onSttModelChanged={onSttModelChanged}
-        sttModels={sttModels} defaultSttModel={defaultSttModel} onCreateLiveSession={onCreateLiveSession}
-        startWithCamera={joinMedia.cameraEnabled}
-        recordingPending={recordingPending}
-        recordingError={recordingError}
-        isRecording={isRecording}
-        onToggleRecording={onToggleRecording}
-        callPreferences={callPreferences}
-        onToggleSharedMic={onToggleSharedMic}
-        onToggleLiveDiarization={onToggleLiveDiarization}
-        onToggleBatchDiarization={onToggleBatchDiarization}
-        sttProvider={sttProvider} setSttProvider={setSttProvider} sttConfigured={sttConfigured}
-        saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
-        roomName={roomName}
-        employeeId={employeeId}
-        employeeName={employeeName}
-        transcripts={transcripts}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onAddSpeechLine={onAddSpeechLine} onRenameSpeaker={onRenameSpeaker}
-        onEndMeeting={onEndMeeting}
-        isSummarizing={isSummarizing}
-        meetingRole={meetingRole}
-        meetingHostId={meetingHostId}
-        meetingCoHostIds={meetingCoHostIds}
-        onManageParticipant={onManageParticipant}
-        microphoneRestricted={microphoneRestricted}
-        speakRequestPending={speakRequestPending}
-        speakRequestAt={speakRequestAt}
-        pendingSpeakRequests={pendingSpeakRequests}
-        onRequestToSpeak={onRequestToSpeak}
-      />
-    </LiveKitRoom>
-    </div>
-  );
-}
-
-function RoomContent({
-  qwenDiarizationReady, onSttModelChanged,
-  callDuration,
-  sttModels,
-  defaultSttModel,
-  onCreateLiveSession,
-  startWithCamera,
-  callPreferences,
-  onToggleSharedMic,
-  onToggleLiveDiarization,
-  onToggleBatchDiarization,
-  recordingPending,
-  recordingError,
-  isRecording,
-  onToggleRecording,
-  sttProvider,
-  setSttProvider,
-  sttConfigured,
-  saveBlocked,
-  onAddAudio,
-  onPresence,
-  roomName,
-  meetingRole,
-  meetingHostId,
-  meetingCoHostIds,
-  onManageParticipant,
-  employeeId,
-  transcripts,
-  activeTab,
-  setActiveTab,
-  onAddSpeechLine,
-  onRenameSpeaker,
-  onEndMeeting,
-  isSummarizing,
-  microphoneRestricted,
-  speakRequestPending,
-  speakRequestAt,
-  pendingSpeakRequests,
-  onRequestToSpeak,
-}: any) {
-  const participants = useParticipants();
-  const room = useRoomContext();
-  const { localParticipant, isMicrophoneEnabled, microphoneTrack, isCameraEnabled, isScreenShareEnabled, lastCameraError, lastMicrophoneError } = useLocalParticipant();
-  const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], { onlySubscribed: false });
-  const screenTracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: true }).filter(isTrackReference).filter(track => !track.publication.isMuted);
-  const connectionState = useConnectionState();
-  const connected = connectionState === ConnectionState.Connected;
-  const spotlightIdentity = useSpeakerSpotlight(room, connected);
-  const preferredOutputError = usePreferredAudioOutput(room, connected, callPreferences.outputId);
-  const camera = useCameraControl(localParticipant, connected, startWithCamera);
-  const blur = useBackgroundBlur(localParticipant, isCameraEnabled, connected);
-  const microphone = useMicrophoneControl(localParticipant, connected);
-  const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
-  const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported);
-  const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
-  const microphoneError = microphone.error || (!isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null);
-  const isMuted = !isMicrophoneEnabled;
-  const [finishing, setFinishing] = useState(false);
-  const finishRequest = useRef(false);
-  const [finishError, setFinishError] = useState<string | null>(null);
-  const [devicesOpen, setDevicesOpen] = useState(false);
-  const closeDevices = useCallback(() => setDevicesOpen(false), []);
-  const presence = useEffectEvent((value: boolean) => onPresence(value));
-  useEffect(() => {
-    void presence(connected);
-    if (!connected) return;
-    const timer = setInterval(() => void presence(true), 10000);
-    return () => clearInterval(timer);
-  }, [connected]);
-  const volume = useTrackVolume(microphoneTrack ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone } : undefined);
-  const micVolume = isMuted ? 0 : Math.min(100, Math.round(volume * 100));
-  const [speechLanguage, setSpeechLanguage] = useState<'id-ID' | 'en-US'>(() => callPreferences.speechLanguage);
-  const [selectedSttModel, setSelectedSttModel] = useState<string | null>(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).model || null);
-  const [transcriptionNotice, setTranscriptionNotice] = useState(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).notice);
-  const [modelPending, setModelPending] = useState(false);
-  const [modelError, setModelError] = useState<string | null>(null);
-  const sttModel = selectedSttModel || defaultSttModel;
-  const isLiveModel = sttModel === 'whisperlivekit-small' || sttModel === 'qwen3-asr-0.6b-live';
-  const paused = isMuted || !connected || isSummarizing || saveBlocked;
-  const browserSpeech = useSpeechTranscription({ language: speechLanguage, muted: paused || sttProvider !== 'browser', onFinal: onAddSpeechLine });
-  const backendSpeech = useBackendTranscription({ language: speechLanguage, model: sttModel, muted: paused || sttProvider !== 'server' || isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, volume, sharedRoomMic: Boolean(callPreferences.sharedRoomMic), onAudio: onAddAudio });
-  const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
-    muted: paused || sttProvider !== 'server' || !isLiveModel,
-    track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: onAddSpeechLine,
-    model: sttModel, diarize: sttModel === 'qwen3-asr-0.6b-live' && Boolean(callPreferences.sharedRoomMic) && (callPreferences.liveDiarization ?? true) });
-  const serverSpeech = isLiveModel ? liveSpeech : backendSpeech;
-  const changeSttModel = async (model: string) => {
-    if (modelPending || finishing || isSummarizing || microphone.pending || model === sttModel || !sttModels.includes(model)) return;
-    setModelPending(true); setModelError(null);
-    try {
-      await serverSpeech.prepareTrackChange();
-      setSelectedSttModel(model);
-      onSttModelChanged?.(model);
-      setTranscriptionNotice(null);
-    } catch (error) {
-      setModelError(error instanceof Error ? error.message : 'Gagal mengganti model transkripsi.');
-    } finally {
-      serverSpeech.resumeTrackChange();
-      setModelPending(false);
-    }
-  };
-  const { prepareTrackChange, resumeTrackChange } = serverSpeech;
-  const changeSpeechSettings = async (apply: () => void) => {
-    if (modelPending || finishing || isSummarizing || microphone.pending) return;
-    setModelPending(true); setModelError(null);
-    try {
-      if (sttProvider === 'server') await prepareTrackChange();
-      apply();
-      setTranscriptionNotice(null);
-    } catch (error) {
-      setModelError(error instanceof Error ? error.message : 'Gagal mengganti pengaturan transkripsi.');
-    } finally {
-      resumeTrackChange(); setModelPending(false);
-    }
-  };
-  const prepareMicrophoneChange = useCallback(async () => {
-    if (sttProvider === 'server') await prepareTrackChange();
-  }, [sttProvider, prepareTrackChange]);
-  const resumeMicrophoneChange = useCallback(() => {
-    resumeTrackChange();
-  }, [resumeTrackChange]);
-  const deviceSettings = useDeviceSettings(room, connected, finishing || isSummarizing || modelPending || camera.pending || microphone.pending, prepareMicrophoneChange, resumeMicrophoneChange);
-  const { isListeningSpeechApi, interimText, speechError, toggleSpeechRecognition, speechEnabled, finishTranscription } =
-    sttProvider === 'server' ? serverSpeech : browserSpeech;
-  const finishMeeting = async (generate: boolean) => {
-    if (finishRequest.current) return;
-    finishRequest.current = true;
-    setFinishing(true); setFinishError(null);
-    try { await finishTranscription(); await onEndMeeting(generate); }
-    catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }
-    finally { finishRequest.current = false; setFinishing(false); }
-  };
-
-  return (
-    <>
-      {transcriptionNotice && (
-        <div className="settings-notice" role="status">
-          {transcriptionNotice}
-        </div>
-      )}
-
-      <MeetingRoom
-        qwenDiarizationReady={qwenDiarizationReady}
-        callDuration={callDuration}
-        meetingRole={meetingRole}
-        meetingHostId={meetingHostId}
-        meetingCoHostIds={meetingCoHostIds}
-        onManageParticipant={onManageParticipant}
-        microphoneRestricted={microphoneRestricted}
-        speakRequestPending={speakRequestPending}
-        speakRequestAt={speakRequestAt}
-        onRequestToSpeak={onRequestToSpeak}
-        pendingSpeakRequests={pendingSpeakRequests}
-        participants={participants}
-        roomName={roomName}
-        employeeId={employeeId}
-        cameraTracks={cameraTracks}
-        isCameraEnabled={isCameraEnabled}
-        cameraPending={camera.pending || blur.blurPending}
-        cameraError={cameraError}
-        microphoneError={microphoneError}
-        onToggleCamera={camera.toggleCamera}
-        microphonePending={microphone.pending}
-        connectionState={connectionState}
-        screenTracks={screenTracks}
-        isScreenShareEnabled={isScreenShareEnabled}
-        screenSharePending={screenShare.pending}
-        screenShareError={screenShare.error}
-        screenShareSupported={screenShareSupported}
-        onToggleScreenShare={screenShare.toggleScreenShare}
-        devicePending={deviceSettings.pendingKind !== null}
-        deviceError={
-          devicesOpen
-            ? null
-            : deviceSettings.error || preferredOutputError
-        }
-        onOpenDevices={() => setDevicesOpen(true)}
-        spotlightIdentity={spotlightIdentity}
-        mirrorLocalVideo={callPreferences.mirrorLocalVideo}
-        connected={connected}
-        isMuted={isMuted}
-        micVolume={micVolume}
-        finishing={finishing}
-        isSummarizing={isSummarizing}
-        finishError={finishError}
-        speechError={speechError}
-        interimText={interimText}
-        isListening={isListeningSpeechApi}
-        speechEnabled={speechEnabled}
-        saveBlocked={saveBlocked}
-        sttProvider={sttProvider}
-        sttConfigured={sttConfigured}
-        setSttProvider={provider =>
-          void changeSpeechSettings(() => setSttProvider(provider))
-        }
-        speechLanguage={speechLanguage}
-        setSpeechLanguage={language =>
-          void changeSpeechSettings(() => setSpeechLanguage(language))
-        }
-        sttModel={sttModel}
-        sttModels={sttModels}
-        onChangeSttModel={changeSttModel}
-        modelPending={modelPending}
-        modelError={modelError}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        transcripts={transcripts}
-        recordingPending={recordingPending}
-        recordingError={recordingError}
-        isRecording={isRecording}
-        onToggleRecording={onToggleRecording}
-        onToggleMute={microphone.toggleMicrophone}
-        onToggleTranscription={toggleSpeechRecognition}
-        onFinish={finishMeeting}
-        onAddSpeechLine={onAddSpeechLine} onRenameSpeaker={onRenameSpeaker}
-        backgroundControl={blur}
-        isCameraBlur={blur.isBlurEnabled}
-        cameraBlurPending={blur.blurPending}
-        cameraBlurSupported={blur.blurSupported}
-        cameraBlurError={blur.blurError}
-        onToggleCameraBlur={blur.toggleBlur}
-        onClearCameraBlurError={blur.clearBlurError}
-      />
-
-      {devicesOpen && (
-        <DeviceSettingsDialog
-          settings={deviceSettings}
-          connected={connected}
-          blocked={
-            finishing ||
-            isSummarizing ||
-            camera.pending ||
-            microphone.pending ||
-            blur.blurPending
-          }
-          micVolume={micVolume}
-          sttProvider={sttProvider}
-          mirror={shouldMirrorCamera(
-            callPreferences.mirrorLocalVideo,
-            blur.selection
-          )}
-          sharedRoomMic={callPreferences.sharedRoomMic}
-          sharedMicSupported={sttProvider === 'server' && supportsSharedMicrophone(sttModel, qwenDiarizationReady)}
-          batchSupported={!sttModel.startsWith('qwen3-asr-')}
-          onToggleSharedMic={onToggleSharedMic}
-          liveDiarization={callPreferences.liveDiarization ?? true}
-          onToggleLiveDiarization={onToggleLiveDiarization}
-          batchDiarization={callPreferences.batchDiarization ?? true}
-          onToggleBatchDiarization={onToggleBatchDiarization}
-          onClose={closeDevices}
-        />
-      )}
-    </>
   );
 }
 
@@ -1721,6 +1649,7 @@ function SummaryView({
   onRetry,
   onBackToHistory,
   onBatchDiarize,
+  hasRecording = false,
 }: {
   summary: MeetingSummary | null;
   roomName: string;
@@ -1737,12 +1666,69 @@ function SummaryView({
   onRetry?: () => void;
   onBackToHistory?: () => void;
   onBatchDiarize?: () => void;
+  hasRecording?: boolean;
 }) {
   const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
   const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [hasRec, setHasRec] = useState<boolean>(Boolean(hasRecording));
+  const [downloadingRecording, setDownloadingRecording] = useState(false);
+  const [recordingDownloadError, setRecordingDownloadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (hasRecording) {
+      setHasRec(true);
+      return;
+    }
+    if (meetingId) {
+      const cleanId = meetingId.replace(/^meeting-/, '');
+      fetch(`${API_BASE}/meetings/${cleanId}/recording`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.hasRecording) setHasRec(true);
+        })
+        .catch(() => {});
+    }
+  }, [meetingId, hasRecording]);
+
+  const downloadRecording = async () => {
+    setDownloadingRecording(true);
+    setRecordingDownloadError(null);
+    const cleanId = meetingId.replace(/^meeting-/, '');
+    const url = `${API_BASE}/meetings/${encodeURIComponent(cleanId)}/recording/download`;
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        let msg = 'Gagal mengunduh rekaman rapat.';
+        try {
+          const errData = await res.json();
+          if (errData?.error) msg = errData.error;
+        } catch { /* ignore non-JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = recordingDownloadName(res, cleanId);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      setRecordingDownloadError(err?.message || 'Gagal mengunduh rekaman rapat.');
+    } finally {
+      setDownloadingRecording(false);
+    }
+  };
 
   const downloadExport = async (format: 'pdf' | 'json') => {
     setExporting(format);
@@ -1875,7 +1861,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment, entry.speakerName)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -1960,7 +1946,7 @@ function SummaryView({
                         <div>
                           <strong className="transcript-username">{entry.speakerName}</strong>
                           <div className="transcript-diarized-row">
-                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
+                            <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment, entry.speakerName)}</span>
                             <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                           </div>
                           <p>{segment.text}</p>
@@ -2042,10 +2028,10 @@ function SummaryView({
                 className="button-secondary"
                 onClick={onBatchDiarize}
                 disabled={batchDiarizing || isSummarizing}
-                title="Jalankan ulang batch diarization untuk seluruh rekaman audio rapat ini"
+                title="Qwen + Nemotron memproses satu rekaman LiveKit seluruh peserta. Rekam sejak awal dan tunggu semua peserta keluar."
               >
                 {batchDiarizing ? <Loader2 className="ui-spinner" size={15} /> : <Sparkles size={15} />}
-                <span>{batchDiarizing ? 'Memproses Diarisasi...' : 'Diarisasi Ulang (Batch)'}</span>
+                <span>{batchDiarizing ? 'Memproses batch Qwen…' : 'Batch Qwen + Nemotron'}</span>
               </button>
             )}
             <button className="button-secondary" onClick={onCopy}>
@@ -2063,10 +2049,25 @@ function SummaryView({
               {exporting === 'pdf' ? 'Menyiapkan PDF...' : 'Export PDF'}
             </button>
 
+            {hasRec && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={downloadRecording}
+                disabled={downloadingRecording}
+                title="Unduh rekaman rapat dalam format aslinya (MP4 video atau OGG audio)"
+              >
+                {downloadingRecording ? <Loader2 className="ui-spinner" size={15} /> : <Video size={15} />}
+                <span>{downloadingRecording ? 'Menyiapkan Rekaman...' : 'Unduh Rekaman'}</span>
+              </button>
+            )}
+
             <button className="button-primary" onClick={onNewCall}> Rapat baru <ArrowRight size={15} /></button>
           </div>
         </header>
 
+        <McpReviewPanel meetingId={meetingId} token={token} summaryVersion={`${summary.summaryVersion || ''}:${summary.generatedAt || ''}`} />
+        <SummaryEvidence summary={summary} />
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
         {!token && <div className="summary-note">Hasil ini dibuka dari riwayat browser. Salin notulen atau unduh JSON; PDF server memerlukan sesi akses rapat yang masih berlaku.</div>}
 
@@ -2074,6 +2075,13 @@ function SummaryView({
           <div className="summary-note" role="alert">
             <AlertCircle size={16} />
             {exportError}
+          </div>
+        )}
+
+        {recordingDownloadError && (
+          <div className="summary-note" role="alert">
+            <AlertCircle size={16} />
+            {recordingDownloadError}
           </div>
         )}
         <nav className="summary-tabs" aria-label="Bagian notulen" role="tablist" onKeyDown={event => {
@@ -2115,7 +2123,7 @@ function SummaryView({
                   <div>
                     <strong className="transcript-username">{entry.speakerName}</strong>
                     <div className="transcript-diarized-row">
-                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment)}</span>
+                      <span className="transcript-diarized-speaker" data-speaker={segment.speaker}>{speakerDisplayLabel(segment, entry.speakerName)}</span>
                       <span className="segment-time-pill">{segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s</span>
                     </div>
                     <p>{segment.text}</p>

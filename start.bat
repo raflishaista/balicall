@@ -81,13 +81,13 @@ if errorlevel 1 (
 )
 
 :: Launch 2: Local Whisper STT + Nemotron-3 Diarization Server
-netstat -ano -p tcp | findstr ":8000 " | findstr "LISTENING" >nul
+netstat -ano -p tcp | findstr ":8001 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-    echo [2/4] Starting Local Whisper STT + Diarization Server on Port 8000...
+    echo [2/4] Starting Local Whisper STT + Diarization Server on Port 8001...
     start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
     ping -n 3 127.0.0.1 >nul
 ) else (
-    echo [2/4] Port 8000 is already active [Whisper STT Server].
+    echo [2/4] Port 8001 is already active [Whisper STT Server].
 )
 
 :: Launch 3: Backend Server
@@ -117,7 +117,7 @@ echo.
 echo   [1] Web Client  : http://localhost:5187 (or http://127.0.0.1:5187)
 echo   [2] Backend API : http://127.0.0.1:3001
 echo   [3] LiveKit SFU : ws://127.0.0.1:7880
-echo   [4] Whisper STT : http://127.0.0.1:8000
+echo   [4] Whisper STT : http://127.0.0.1:8001
 echo ========================================================
 echo.
 echo [*] Opening browser at http://localhost:5187 ...

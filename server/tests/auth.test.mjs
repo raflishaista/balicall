@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import {attachAuth,hashPassword,verifyPassword} from '../auth.js';
+import {attachAuth,hashPassword,verifyPassword,isOriginAllowed} from '../auth.js';
 import {hashToken} from '../authStore.js';
 import {loadConfig} from '../config.js';
 
@@ -18,6 +18,21 @@ test('login requires explicit opt-in and production cookies require HTTPS',()=>{
   assert.equal(loadConfig({DATABASE_URL:'postgresql://example'}).authEnabled,false);
   assert.equal(loadConfig({AUTH_ENABLED:'true'}).authEnabled,true);
   assert.throws(()=>loadConfig({AUTH_ENABLED:'true',AUTH_COOKIE_SECURE:'false',NODE_ENV:'production'}),/HTTPS/);
+});
+test('origin validation permits localhost, configured origins and private LAN IPs while rejecting foreign domains',()=>{
+  const config = loadConfig({AUTH_ENABLED:'true', CORS_ORIGINS:'http://localhost:5187,http://127.0.0.1:5187'});
+  assert.equal(isOriginAllowed('http://localhost:5187', config), true);
+  assert.equal(isOriginAllowed('http://127.0.0.1:5187', config), true);
+  assert.equal(isOriginAllowed('http://10.17.101.232:5187', config), true);
+  assert.equal(isOriginAllowed('http://10.17.101.232:3001', config), true);
+  assert.equal(isOriginAllowed('http://10.17.101.232', config), true);
+  assert.equal(isOriginAllowed('http://localhost:5173', config), true);
+  assert.equal(isOriginAllowed('http://192.168.1.100:5187', config), true);
+  assert.equal(isOriginAllowed('http://172.20.10.2:5187', config), true);
+  assert.equal(isOriginAllowed('http://localhost:5187/', config), true);
+  assert.equal(isOriginAllowed('http://evil.example:5187', config), false);
+  assert.equal(isOriginAllowed('https://evil.example', config), false);
+  assert.equal(isOriginAllowed('http://attacker.com', config), false);
 });
 test('sessions, CSRF, activation replay, invalid login and logout are enforced',async t=>{
   const password='Akun pengujian aman 2026';
@@ -42,6 +57,7 @@ test('sessions, CSRF, activation replay, invalid login and logout are enforced',
   assert.equal((await request('/api/private')).status,401);
   assert.equal((await request('/api/auth/login',{email:account.login_email,password:'wrong'})).status,401);
   assert.equal((await request('/api/auth/login',{email:account.login_email,password},null,null,'https://evil.example')).status,403);
+  assert.equal((await request('/api/auth/login',{email:account.login_email,password},null,null,'http://10.17.101.232:5187')).status,200);
   const login=await request('/api/auth/login',{email:account.login_email,password});
   assert.equal(login.status,200);const data=await login.json(),cookie=login.headers.get('set-cookie').split(';')[0];
   assert.match(login.headers.get('set-cookie'),/HttpOnly/);assert.match(login.headers.get('set-cookie'),/SameSite=Lax/);

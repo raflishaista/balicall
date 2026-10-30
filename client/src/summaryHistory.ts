@@ -3,15 +3,27 @@ export interface TranscriptEntry {
   id: string; speakerId: string; speakerName: string; text: string; timestamp: string; revision?: number;
   segments?: { text: string; speaker: string; start: number; end: number; sourceId?: string; sessionId?: string; attribution?: string; speakerName?: string }[];
 }
+export interface SummarySourceEvidence {
+  version: number; transcriptDigest: string; utteranceCount: number;
+  items: {field: 'decisions' | 'actionItems'; index: number; sources: {utteranceId: string; speaker: string; quote: string; timestamp?: string | null}[]}[];
+}
+export function validSourceEvidence(value: unknown): value is SummarySourceEvidence {
+  if (!object(value) || value.version !== 1 || typeof value.transcriptDigest !== 'string' || !Number.isInteger(value.utteranceCount) || !Array.isArray(value.items)) return false;
+  return value.items.every(item => object(item) && ['decisions','actionItems'].includes(String(item.field)) && Number.isInteger(item.index) && Number(item.index) >= 0
+    && Array.isArray(item.sources) && item.sources.length > 0 && item.sources.every(source => object(source) && ['utteranceId','speaker','quote'].every(key => typeof source[key] === 'string')
+      && (source.timestamp === undefined || source.timestamp === null || typeof source.timestamp === 'string')));
+}
 export interface MeetingSummary {
   title: string; executiveSummary: string; keyDiscussionPoints: string[]; decisions: string[];
   actionItems: { task: string; assignee: string; priority: 'High' | 'Medium' | 'Low'; deadline: string }[];
   attendanceSummary: string[]; transcriptCount?: number; provider?: string; note?: string;
   generatedAt?: string; dbSummaryId?: number;
+  sourceEvidence?: SummarySourceEvidence; summaryVersion?: string;
 }
 export interface SummaryRecord {
   meetingId: string; roomName: string; savedAt: string; summary: MeetingSummary; transcripts: TranscriptEntry[];
   hostId?: string; hostName?: string; department?: string;
+  hasRecording?: boolean; recordingSize?: number;
 }
 export interface InProgressRecord {
   meetingId: string; roomName: string; token?: string; transcripts: TranscriptEntry[]; startedAt: string;
@@ -53,20 +65,33 @@ function validTranscripts(value: unknown): value is TranscriptEntry[] {
 export function readSummaryHistory(): SummaryRecord[] {
   const value = read(HISTORY_KEY);
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is SummaryRecord => object(item) && typeof item.meetingId === 'string'
+  return newestSummaries(value.filter((item): item is SummaryRecord => object(item) && typeof item.meetingId === 'string'
     && typeof item.roomName === 'string' && typeof item.savedAt === 'string' && Number.isFinite(Date.parse(item.savedAt)) && validSummary(item.summary)
-    && validTranscripts(item.transcripts)).slice(0, HISTORY_LIMIT);
+    && validTranscripts(item.transcripts)));
 }
 export function upsertSummary(records: SummaryRecord[], record: SummaryRecord) {
-  return [record, ...records.filter(item => item.meetingId !== record.meetingId)].slice(0, HISTORY_LIMIT);
+  return newestSummaries([record, ...records.filter(item => item.meetingId !== record.meetingId)]);
+}
+export function newestSummaries(records: SummaryRecord[]) {
+  return [...records].sort((a,b) => (Date.parse(b.savedAt) || 0) - (Date.parse(a.savedAt) || 0)).slice(0,HISTORY_LIMIT);
+}
+export function mergeSummaryRecords(records: SummaryRecord[], incoming: SummaryRecord[]) {
+  const byId = new Map(records.map(record => [record.meetingId,record]));
+  for (const record of incoming) {
+    const existing = byId.get(record.meetingId);
+    if (!existing || Date.parse(record.savedAt) >= Date.parse(existing.savedAt)) byId.set(record.meetingId,record);
+  }
+  return newestSummaries([...byId.values()]);
 }
 export function saveSummaryHistory(records: SummaryRecord[]) {
   // Explicit projection keeps bearer tokens out of persistent localStorage.
-  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts, hostId, hostName, department }) => ({
+  return write(HISTORY_KEY, records.slice(0, HISTORY_LIMIT).map(({ meetingId, roomName, savedAt, summary, transcripts, hostId, hostName, department, hasRecording, recordingSize }) => ({
     meetingId, roomName, savedAt, summary, transcripts,
     ...(hostId ? { hostId } : {}),
     ...(hostName ? { hostName } : {}),
     ...(department ? { department } : {}),
+    ...(hasRecording !== undefined ? { hasRecording: Boolean(hasRecording) } : {}),
+    ...(typeof recordingSize === 'number' ? { recordingSize } : {}),
   })));
 }
 export function readSummarySession(): SummarySession | null {
@@ -123,6 +148,19 @@ export function saveActiveView(view: string): boolean {
   return write(ACTIVE_VIEW_KEY, view, true);
 }
 
+export function normalizeArchiveTranscripts(value: unknown): TranscriptEntry[] {
+  if (!Array.isArray(value)) return [];
+  const name = (...values: unknown[]) => values.find(value => typeof value === 'string' && value.trim()) as string | undefined;
+  return value.filter(object).map(entry => ({
+    ...entry,
+    id: typeof entry.id === 'string' ? entry.id : '',
+    speakerId: name(entry.speakerId, entry.speaker_id) || '',
+    speakerName: name(entry.speakerName, entry.speaker_name) || 'Pembicara tidak diketahui',
+    text: typeof entry.text === 'string' ? entry.text : '',
+    timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : '',
+  } as TranscriptEntry));
+}
+
 export function normalizeDbSummary(raw: any): SummaryRecord {
   const s = raw?.summary || raw || {};
   const rawActions = s.action_items || s.actionItems || [];
@@ -132,6 +170,9 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
     priority: (['High', 'Medium', 'Low'].includes(String(item?.priority)) ? item.priority : 'Medium') as 'High' | 'Medium' | 'Low',
     deadline: typeof item?.deadline === 'string' ? item.deadline : 'Belum ditentukan',
   })) : [];
+
+  const hasRecording = Boolean(raw.hasRecording ?? raw.has_recording ?? (raw.recording && raw.recording.status !== 'idle'));
+  const recordingSize = typeof raw.recordingSize === 'number' ? raw.recordingSize : (typeof raw.recording_size === 'number' ? raw.recording_size : undefined);
 
   return {
     meetingId: String(raw.meeting_id || raw.meetingId || raw.id || ''),
@@ -147,13 +188,18 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
       attendanceSummary: Array.isArray(s.attendance_summary || s.attendanceSummary)
         ? (s.attendance_summary || s.attendanceSummary).map(String) : [],
       provider: s.provider ? String(s.provider) : undefined,
+      ...(Number.isInteger(Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count)) && Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count) >= 0
+        ? {transcriptCount:Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count)} : {}),
+      sourceEvidence: validSourceEvidence(s.source_evidence || s.sourceEvidence) ? (s.source_evidence || s.sourceEvidence) : undefined,
       generatedAt: String(s.created_at || s.createdAt || s.generatedAt || new Date().toISOString()),
       dbSummaryId: typeof raw.id === 'number' ? raw.id : undefined,
     },
-    transcripts: Array.isArray(raw.transcripts) ? raw.transcripts : [],
+    transcripts: normalizeArchiveTranscripts(raw.transcripts),
     hostId: raw.host_id || raw.hostId,
     hostName: raw.host_name || raw.hostName,
     department: raw.department,
+    hasRecording,
+    recordingSize,
   };
 }
 
@@ -165,4 +211,10 @@ export function scopedSummaryStorage(employeeId: string | null) {
     summaryTokenFor: bind(summaryTokenFor), readInProgressSummaries: bind(readInProgressSummaries),
     saveInProgressSummary: bind(saveInProgressSummary), removeInProgressSummary: bind(removeInProgressSummary),
     readActiveView: bind(readActiveView), saveActiveView: bind(saveActiveView) };
+}
+
+export function clearSummarySession() {
+  try {
+    for (const key of [SESSION_KEY, IN_PROGRESS_KEY, TOKEN_KEY]) window.sessionStorage.removeItem(accountKey(key));
+  } catch { /* A revoked server session remains revoked even if browser storage is blocked. */ }
 }

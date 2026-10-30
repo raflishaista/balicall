@@ -5,7 +5,8 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {createApp} from '../server/app.js';
+process.env.DATABASE_URL = '';
+const {createApp} = await import('../server/app.js');
 import {loadConfig} from '../server/config.js';
 
 const [configPath,voiceA,voiceB,output]=process.argv.slice(2);
@@ -77,7 +78,7 @@ try{
  const returned=stored.transcripts.filter(entry=>!beforeReturn.has(entry.requestId) && entry.segments?.[0].speaker===segment.speaker);
  assert.ok(returned.length,'Returning synthetic voice was not assigned to its original speaker');
  assert.ok(returned.every(entry=>entry.segments[0].speakerName==='Budi QA'),'Manual name did not survive reconnect');
- const report={passed:true,fixture:'Synthetic A → pause → B → network drop → A',sameSpeakerSession:true,reconnects:2,
+ const report={passed:true,fixture:'Synthetic clips → pause → network drop → return; distinct voices not assumed',sameSpeakerSession:true,reconnects:2,
   storedFinals:stored.transcripts.length,replayDeduplicated:true,manualNameOnReturningVoice:true,returningSegments:returned.length,
   labels:[...new Set(stored.transcripts.flatMap(entry=>entry.segments?.map(segment=>segment.speaker) || []))]};
  writeFileSync(output,JSON.stringify(report,null,2));console.log(JSON.stringify(report));await request(route('leave'),{});

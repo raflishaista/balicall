@@ -10,6 +10,13 @@ import * as uploads from './recordingStore.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
+/** @type {Record<string, string>} */
+export const DiarizerLabels = {
+  none: 'Tanpa pemisah pembicara',
+  nemotron: 'Nemotron-3',
+  pyannote: 'Pyannote',
+};
+
 async function looksLikeMp4(path) {
   const handle = await open(path, 'r');
   try {
@@ -112,7 +119,6 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     const form = new FormData();
     // File-backed Blob: streams from disk instead of loading the whole recording into RAM.
     form.append('file', await openAsBlob(row.file_path, { type: 'video/mp4' }), 'recording.mp4');
-    form.append('model', config.recordingSttModel);
     form.append('model', row.stt_model || config.recordingSttModel);
     form.append('language', row.language);
     const useDiarizer = !isQwen && row.diarizer && row.diarizer !== 'none';
@@ -248,11 +254,12 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   }));
   
   app.get('/api/recording-uploads/options', requireActor, (_req, res) => {
+    const defaultDiarizer = (config.recordingDiarization && config.recordingDiarizers.find(d => d !== 'none')) || 'none';
     res.json({
       success: true,
       llm: { default: config.llmModel, models: config.recordingLlmModels },
       stt: { default: config.recordingSttModel, models: config.recordingSttModels },
-      diarizer: { default: 'none', options: config.recordingDiarizers },
+      diarizer: { default: defaultDiarizer, options: config.recordingDiarizers },
     });
   });
 
@@ -268,11 +275,6 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     if (!row.transcript?.text) return res.status(409).json({ error: 'Belum ada transkrip untuk diringkas.' });
     const llmModel = String(req.body?.llmModel || row.llm_model || config.llmModel).trim();
     if (!config.recordingLlmModels.includes(llmModel)) return res.status(400).json({ error: 'Model ringkasan tidak tersedia.' });
-    const sttModel = String(req.body?.sttModel || config.recordingSttModel).trim();
-    if (!config.recordingSttModels.includes(sttModel)) {
-      await discard();
-      return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
-    }
     const updated = await uploads.updateUpload(row.id, { status: 'processing', stage: 'summarizing', error: null, llmModel });
     enqueue(() => resummarize(row.id));
     res.status(202).json({ success: true, upload: { ...updated, transcript: undefined, summary: undefined } });

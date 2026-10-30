@@ -1,5 +1,10 @@
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { transcriptionModelLabel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { TranscriptionStatus } from './TranscriptionFeedback';
+import { transcriptionStatus } from './transcriptionStatus';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import type { MeetingPreferences } from './preferences';
+import { TranscriptionModelOptions } from './TranscriptionModelOptions';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
 import { SpeakerNameEditor } from './SpeakerNameEditor';
 import type { SpeakerNameChange } from './SpeakerNameEditor';
@@ -23,9 +28,11 @@ import {
   ChevronRight,
   Sparkles,
   SlidersHorizontal,
+  ShieldCheck,
 } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
+import { LeaveConfirmDialog } from './LeaveConfirmDialog';
 import { shouldMirrorCamera } from './backgroundEffects';
 import type { BackgroundBlurControl } from './useBackgroundBlur';
 import { MeetingControls } from './MeetingControls';
@@ -80,6 +87,8 @@ interface MeetingRoomProps {
   isSummarizing: boolean;
   finishError: string | null;
   speechError: string | null;
+  speechWarning?: string | null;
+  pendingSaves?: number;
   interimText: string;
   isListening: boolean;
   speechEnabled: boolean;
@@ -131,10 +140,12 @@ interface MeetingRoomProps {
   microphonePending: boolean;
   connectionState: ConnectionState;
   mirrorLocalVideo?: boolean;
+  callPreferences?: MeetingPreferences;
 
   recordingPending: boolean;
   recordingError: string | null;
-  onToggleRecording: (enabled: boolean) => Promise<void>;
+  onToggleRecording: (enabled: boolean, postMeetingBatch?: boolean) => Promise<void>;
+  qwenBatchConfigured?: boolean;
 
   isCameraBlur?: boolean;
   cameraBlurPending?: boolean;
@@ -173,6 +184,8 @@ export function MeetingRoom({
   isSummarizing,
   finishError,
   speechError,
+  speechWarning,
+  pendingSaves = 0,
   interimText,
   isListening,
   speechEnabled,
@@ -215,10 +228,12 @@ export function MeetingRoom({
   microphonePending,
   connectionState,
   mirrorLocalVideo = true,
+  callPreferences,
   recordingPending,
   recordingError,
   isRecording,
   onToggleRecording,
+  qwenBatchConfigured = false,
   isCameraBlur = false,
   cameraBlurPending = false,
   cameraBlurSupported = true,
@@ -258,8 +273,22 @@ export function MeetingRoom({
   // Gunakan status recording yang sudah dikonfirmasi.
   const recording = livekitRecording || isRecording === true;
 
-  const handleToggleRecording = () =>
-    onToggleRecording(!recording);
+  const handleToggleRecording = async () => {
+    if (callPreferences?.recordingConsentPrompt && !recording) {
+      if (!window.confirm('Mulai merekam rapat ini? Seluruh peserta akan menerima pemberitahuan visual bahwa sesi ini sedang direkam.')) {
+        return;
+      }
+    }
+    await onToggleRecording(!recording);
+  };
+
+  const autoRecordDone = useRef(false);
+  useEffect(() => {
+    if (callPreferences?.autoRecordMeeting && connected && meetingRole === 'host' && !recording && !recordingPending && !autoRecordDone.current) {
+      autoRecordDone.current = true;
+      onToggleRecording(true);
+    }
+  }, [callPreferences?.autoRecordMeeting, connected, meetingRole, recording, recordingPending, onToggleRecording]);
   const [backgroundsOpen, setBackgroundsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'speaker'>('grid');
   const compact = useCompactMeeting();
@@ -295,6 +324,41 @@ export function MeetingRoom({
 
   const transcriptTab = useRef<HTMLButtonElement>(null);
   const attendanceTab = useRef<HTMLButtonElement>(null);
+  const transcriptListRef = useRef<HTMLDivElement>(null);
+  const isScrolledToBottomRef = useRef(true);
+  const hasInitialScrolledRef = useRef(false);
+
+  const handleTranscriptScroll = () => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    isScrolledToBottomRef.current = atBottom;
+  };
+
+  useEffect(() => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    if (isScrolledToBottomRef.current) {
+      const behavior = hasInitialScrolledRef.current ? 'smooth' : 'auto';
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior,
+      });
+      if (transcripts.length > 0) {
+        hasInitialScrolledRef.current = true;
+      }
+    }
+  }, [transcripts, interimText]);
+
+  useEffect(() => {
+    if (panelVisible && activeTab === 'transcript') {
+      const el = transcriptListRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+        isScrolledToBottomRef.current = true;
+      }
+    }
+  }, [panelVisible, activeTab]);
 
   const activateTab = (tab: 'transcript' | 'attendance') => {
     setActiveTab(tab);
@@ -381,24 +445,29 @@ export function MeetingRoom({
         ? 'Menyiapkan notulen…'
         : 'Menyimpan rapat…';
 
+  const isGuest = employeeId.startsWith('GUEST-');
+  const isLastUser = participants.length <= 1 || participants.filter(p => !p.isLocal).length === 0;
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  const [leaveIntent, setLeaveIntent] = useState<'leave' | 'summary'>('leave');
+
   const requestFinish = (generate: boolean) => {
-    setFinishMode(generate ? 'summary' : 'leave');
-    void onFinish(generate).finally(() => setFinishMode(null));
+    setLeaveIntent(generate ? 'summary' : 'leave');
+    setConfirmLeaveOpen(true);
   };
 
-  const transcriptStatus = !connected
-    ? 'Menunggu koneksi'
-    : isMuted
-      ? 'Mikrofon nonaktif'
-      : saveBlocked
-        ? 'Penyimpanan tertunda'
-        : speechError
-          ? 'Transkripsi bermasalah'
-          : isListening
-            ? 'Mendengarkan'
-            : speechEnabled
-              ? 'Memulai transkripsi'
-              : 'Transkripsi dihentikan';
+  const handleConfirmLeave = () => {
+    setConfirmLeaveOpen(false);
+    const shouldGenerate = (leaveIntent === 'summary' || isLastUser) && !isGuest;
+    setFinishMode(shouldGenerate ? 'summary' : 'leave');
+    void onFinish(shouldGenerate).finally(() => setFinishMode(null));
+  };
+
+  const handleCancelLeave = () => {
+    setConfirmLeaveOpen(false);
+  };
+
+  const transcriptionState = { connected, isMuted, saveBlocked, speechError, isListening, speechEnabled, interimText, pendingSaves };
+  const currentTranscriptionStatus = transcriptionStatus(transcriptionState);
 
   const handleParticipantAction = async (
     participantId: string,
@@ -481,7 +550,13 @@ export function MeetingRoom({
             <span className={recording ? 'recording-active' : ''} role="status">
               {recording ? '● Merekam' : 'Tidak merekam'}
             </span>
-            <span role="status">Transkripsi · {transcriptStatus}</span>
+            <span role="status">Transkripsi · {currentTranscriptionStatus.label}</span>
+            {callPreferences?.showSecurityBadge !== false && (
+              <span role="status" title="Koneksi media WebRTC diamankan dengan enkripsi DTLS-SRTP">
+                <ShieldCheck size={12} style={{ verticalAlign: '-1px', marginRight: '4px' }} />
+                Terenkripsi
+              </span>
+            )}
           </div>
         </div>
 
@@ -728,15 +803,9 @@ export function MeetingRoom({
               <summary className="transcription-bar-header" aria-label="Opsi transkripsi">
                 <div className="transcription-status" role="status">
                   <i
-                    className={
-                      isListening
-                        ? 'status-dot online'
-                        : speechError
-                          ? 'status-dot offline'
-                          : 'status-dot'
-                    }
+                    className={currentTranscriptionStatus.tone === 'error' ? 'status-dot offline' : currentTranscriptionStatus.tone === 'active' ? 'status-dot online' : 'status-dot'}
                   />
-                  <span>{transcriptStatus}</span>
+                  <span>{currentTranscriptionStatus.label}</span>
                 </div>
                 <span className="transcription-options-btn">
                   <SlidersHorizontal size={12} />
@@ -746,12 +815,19 @@ export function MeetingRoom({
               </summary>
 
               <div className="transcription-dropdown-panel">
+                {meetingRole === 'host' && qwenBatchConfigured && <div className="transcription-dropdown-field">
+                  <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
+                  <p>Rekam audio seluruh peserta sejak awal; kamera tidak direkam. Batch dimulai otomatis setelah semua peserta keluar. Label pembicara berlaku untuk rekaman ini; suara bertumpuk ditandai.</p>
+                  <button type="button" className="button-secondary" disabled={recording || recordingPending || !connected} onClick={() => {
+                    if (!callPreferences?.recordingConsentPrompt || window.confirm('Mulai rekaman audio seluruh peserta untuk batch Qwen + Nemotron setelah rapat?')) void onToggleRecording(true, true);
+                  }}>{recording ? 'Rekaman sedang berjalan' : 'Rekam audio untuk batch Qwen'}</button>
+                </div>}
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-lang-select">Bahasa</label>
                   <select
                     id="stt-lang-select"
                     value={speechLanguage}
-                    disabled={busy}
+                    disabled={busy || sttModel === SEA_LIVE_MODEL}
                     onChange={event =>
                       setSpeechLanguage(event.target.value as 'id-ID' | 'en-US')
                     }
@@ -782,6 +858,7 @@ export function MeetingRoom({
                   <label htmlFor="stt-model-select">Model</label>
                   {sttModel === 'qwen3-asr-0.6b' && <p role="status">{qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
                   {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
+                  {sttModel === SEA_LIVE_MODEL && <p role="status">{SEA_LIVE_NOTICE}</p>}
                   <select
                     id="stt-model-select"
                     value={sttModel}
@@ -796,17 +873,13 @@ export function MeetingRoom({
                     onChange={event => void onChangeSttModel(event.target.value)}
                   >
                     {!sttModels.length && <option value="">Belum tersedia</option>}
-                    {sttModels.map(model => (
-                      <option key={model} value={model}>
-                        {transcriptionModelLabel(model)}
-                      </option>
-                    ))}
+                    <TranscriptionModelOptions models={sttModels} />
                   </select>
                 </div>
 
                 {sttProvider === 'browser' && (
                   <p className="transcription-hint-text" role="status">
-                    Pilih layanan Server untuk memilih faster-whisper atau WhisperLiveKit.
+                    Pilih layanan Server untuk memilih model transkripsi yang tersedia.
                   </p>
                 )}
                 {modelPending && (
@@ -821,6 +894,8 @@ export function MeetingRoom({
             </details>
           </div>
 
+          <TranscriptionStatus state={transcriptionState} warning={speechWarning} />
+
           {speechError && (
             <div className="transcription-error" role="alert">
               <p>{speechError}</p>
@@ -834,6 +909,8 @@ export function MeetingRoom({
           )}
 
           <div
+            ref={transcriptListRef}
+            onScroll={handleTranscriptScroll}
             className="live-transcript-list"
             role="log"
             aria-label="Transkrip langsung"
@@ -863,7 +940,7 @@ export function MeetingRoom({
                         data-speaker={segment.speaker}
                         title={`${entry.speakerName} · ${segment.speaker}`}
                       >
-                        {segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
+                        {segment.attribution === 'participant' ? initials(entry.speakerName) : segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
                       </span>
                       <div>
                         <strong className="transcript-username">
@@ -874,7 +951,7 @@ export function MeetingRoom({
                             className="transcript-diarized-speaker"
                             data-speaker={segment.speaker}
                           >
-                            {speakerDisplayLabel(segment)}
+                            {speakerDisplayLabel(segment, entry.speakerName)}
                           </span>
                           {onRenameSpeaker && segment.attribution==='assigned' && segment.sourceId && segment.sessionId && (segment.sourceId===employeeId || meetingRole==='host' || meetingRole==='co-host') &&
                             <SpeakerNameEditor sourceId={segment.sourceId} sessionId={segment.sessionId} speaker={segment.speaker} speakerName={segment.speakerName} onSave={onRenameSpeaker} disabled={busy} />}
@@ -882,6 +959,7 @@ export function MeetingRoom({
                             {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s
                           </span>
                         </div>
+                        <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
                         <p>{segment.text}</p>
                       </div>
                     </article>
@@ -907,6 +985,7 @@ export function MeetingRoom({
                     </span>
                     <div>
                       <strong>{entry.speakerName}</strong>
+                      <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
                       <p>{entry.text}</p>
                     </div>
                   </article>,
@@ -928,40 +1007,47 @@ export function MeetingRoom({
           {interimText && (
             <div className="interim-transcript">
               <AudioLines size={16} />
-              <p>{interimText}</p>
+              <div><strong className="transcript-phase provisional">Sementara · dapat berubah</strong><p>{interimText}</p></div>
             </div>
           )}
 
-          {import.meta.env.DEV && (
-            <details className="manual-transcript">
-              <summary>Tambahkan ucapan manual <ChevronDown size={14} /></summary>
-              <form
-                onSubmit={event => {
-                  event.preventDefault();
-                  if (manualText.trim()) {
-                    onAddSpeechLine(manualText.trim());
-                    setManualText('');
-                  }
-                }}
+          <div className="meeting-chat-bar">
+            <form
+              className="meeting-chat-form"
+              onSubmit={event => {
+                event.preventDefault();
+                if (manualText.trim()) {
+                  onAddSpeechLine(manualText.trim());
+                  setManualText('');
+                  isScrolledToBottomRef.current = true;
+                  requestAnimationFrame(() => {
+                    if (transcriptListRef.current) {
+                      transcriptListRef.current.scrollTo({
+                        top: transcriptListRef.current.scrollHeight,
+                        behavior: 'smooth',
+                      });
+                    }
+                  });
+                }
+              }}
+            >
+              <input
+                aria-label="Pesan chat"
+                value={manualText}
+                disabled={busy || saveBlocked}
+                onChange={event => setManualText(event.target.value)}
+                placeholder="Ketik pesan chat…"
+              />
+              <button
+                type="submit"
+                aria-label="Kirim pesan"
+                title="Kirim pesan"
+                disabled={busy || saveBlocked || !manualText.trim()}
               >
-                <input
-                  aria-label="Ucapan manual"
-                  value={manualText}
-                  disabled={busy || saveBlocked}
-                  onChange={event => setManualText(event.target.value)}
-                  placeholder="Ketik ucapan untuk pengujian"
-                  required
-                />
-                <button
-                  type="submit"
-                  aria-label="Simpan ucapan manual"
-                  disabled={busy || saveBlocked}
-                >
-                  <Send size={16} />
-                </button>
-              </form>
-            </details>
-          )}
+                <Send size={16} />
+              </button>
+            </form>
+          </div>
 
           <div
             className={`listening-footer ${isListening ? 'listening' : ''} ${
@@ -984,15 +1070,7 @@ export function MeetingRoom({
               )}
             </div>
             <span>
-              {!connected
-                ? 'Menunggu koneksi'
-                : isMuted
-                  ? 'Mikrofon mati'
-                  : isVoiceActive
-                    ? 'Suara terdeteksi'
-                    : isListening
-                      ? 'Mendengarkan...'
-                      : 'Transkripsi siaga'}
+              {currentTranscriptionStatus.label}
             </span>
           </div>
         </div>
@@ -1166,6 +1244,16 @@ export function MeetingRoom({
           onClose={() => setBackgroundsOpen(false)}
         />
       )}
+
+      <LeaveConfirmDialog
+        isOpen={confirmLeaveOpen}
+        isLastUser={isLastUser}
+        isGuest={isGuest}
+        intent={leaveIntent}
+        busy={busy}
+        onConfirm={handleConfirmLeave}
+        onCancel={handleCancelLeave}
+      />
     </div>
   );
 }

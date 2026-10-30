@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 310" role="img" aria-labelledby="title desc">
+  <title id="title">Rancangan diarisasi batch pasca-rapat</title>
+  <desc id="desc">Audio seluruh peserta masuk ke LiveKit, direkam, diproses Nemotron dan Qwen ASR, lalu menghasilkan transkrip akhir dan notulen.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 9 3.5 0 7Z" fill="#5980a3"/></marker>
+    <style>text{font-family:Arial,sans-serif;fill:#263e54}.label{font-size:17px;font-weight:700}.detail{font-size:12px;fill:#6a7d8f}.box{fill:#fff;stroke:#9cb6c9;stroke-width:1.5}.planned{fill:#fff8e8;stroke:#d3a448;stroke-width:1.5}.line{fill:none;stroke:#5980a3;stroke-width:2;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="960" height="310" rx="16" fill="#f6f9fb"/>
+  <rect x="30" y="105" width="160" height="95" rx="12" class="box"/><text x="110" y="143" text-anchor="middle" class="label">Peserta</text><text x="110" y="167" text-anchor="middle" class="detail">Semua perangkat</text>
+  <rect x="250" y="105" width="160" height="95" rx="12" class="box"/><text x="330" y="143" text-anchor="middle" class="label">LiveKit</text><text x="330" y="167" text-anchor="middle" class="detail">Audio ruang</text>
+  <rect x="470" y="105" width="160" height="95" rx="12" class="planned"/><text x="550" y="143" text-anchor="middle" class="label">Rekaman</text><text x="550" y="167" text-anchor="middle" class="detail">Egress audio</text>
+  <rect x="690" y="35" width="215" height="85" rx="12" class="planned"/><text x="797" y="69" text-anchor="middle" class="label">Nemotron</text><text x="797" y="92" text-anchor="middle" class="detail">Giliran pembicara</text>
+  <rect x="690" y="190" width="215" height="85" rx="12" class="planned"/><text x="797" y="224" text-anchor="middle" class="label">Qwen ASR 0.6B</text><text x="797" y="247" text-anchor="middle" class="detail">Teks per giliran</text>
+  <path d="M190 152H250" class="line"/><path d="M410 152H470" class="line"/><path d="M630 142H656V77H690" class="line"/><path d="M630 163H656V232H690" class="line"/>
+  <text x="480" y="285" text-anchor="middle" class="detail">Hasil Nemotron + Qwen digabung menjadi transkrip batch berversi dan notulen.</text>
+</svg>

@@ -1,10 +1,12 @@
+import { SUMMARY_VERSION, summaryTranscriptDigest } from './summaryGrounding.js';
+import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLiveConfig.js';
 import express from 'express';
-import { attachAuth } from './auth.js';
+import { attachAuth, isOriginAllowed } from './auth.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomUUID, randomBytes, createHmac } from 'node:crypto';
+import { existsSync, statSync, realpathSync } from 'node:fs';
+import { join, basename, relative, isAbsolute } from 'node:path';
+import { randomUUID, randomBytes, createHmac, createHash } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
 import { createAttendanceFinalizer } from './attendanceFinalizer.js';
@@ -12,15 +14,19 @@ import { createGuestAccess } from './guestAccess.js';
 import { WorkspaceStore } from './workspaceStore.js';
 import { attachWorkspaceApi } from './workspaceApi.js';
 import { createNotifications } from './notifications.js';
-import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio } from './providers.js';
+import { effectiveLlm, ServiceError, summarize, transcribeAudio, batchDiarizeAudio, normalizeTranscriptText } from './providers.js';
 import { attachRecordingUploads } from './recordingUploads.js';
+import { createPostMeetingBatch, publicBatch } from './postMeetingBatch.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady } from './qwenCapabilities.js';
+import { createItProjectClient } from './itproject.js';
+import { createMcpReview } from './mcpReview.js';
 import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
 import {
   isDbConnected,
   saveMeeting,
   saveMeetingSummary,
+  savePostMeetingBatch,
   saveTranscripts,
   saveAttendees,
   getMeetingSummaries,
@@ -56,7 +62,7 @@ const pdfText = value => {
   return String(value);
 };
 
-export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush } = {}) {
+export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush, mcpClient } = {}) {
   const app = express();
   const store = new MeetingStore(config.dataFile);
   const workspace=workspaceStore||new WorkspaceStore();
@@ -68,7 +74,1654 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   const inFlightAudio = new Map();
   const inFlightSummarize = new Map();
   const meetingAudios = new Map();
+  const postMeetingBatch = createPostMeetingBatch({ config, store, egress: egressClient, fetchImpl,
+    summarize: meeting => summarize(meeting, config, fetchImpl),
+    persist: async (meeting, result) => {
+      if (config.databaseUrl) {
+        await savePostMeetingBatch(meeting, publicBatch(result));
+        await saveMeetingSummary(meeting.id, meeting.roomName, result.summary);
+      }
+      try {
+        mcpReview.register(meeting, result.summary);
+      } catch (error) {
+        console.warn('[ITPROJECT] Sinkronisasi action items dari batch gagal:', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+      }
+    },
+  });
   const webhookLogs = [];
+  const itProject = mcpClient || createItProjectClient(config);
+  const mcpReview = createMcpReview({store,client:itProject,destination:config.itprojectMcpUrl,
+    plan:(meeting,summary,reviewClient,reviewStore)=>syncActionItemsToItProject(meeting,summary,{reviewClient,reviewStore})});
+  const itprojectOAuthPending = new Map();
+  const escapeHtml = value =>
+    String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    })[char]);
+
+  const isoDateInJakarta = value => {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(value));
+
+    const values = Object.fromEntries(
+      parts.map(({ type, value }) => [type, value])
+    );
+
+    return `${values.year}-${values.month}-${values.day}`;
+  };
+  
+  function flattenTaskTree(tasks = []) {
+    return tasks.flatMap(task => [
+      task,
+      ...flattenTaskTree(task.sub_task_recursive || []),
+    ]);
+  }
+
+    function normalizeTaskReference(value) {
+    return String(value || '')
+      .normalize('NFKC')
+      .toLocaleLowerCase('id-ID')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .replace(/\s+/gu, ' ');
+  }
+
+  function taskMatchesReference(candidate, reference) {
+    const candidateTitle = normalizeTaskReference(candidate.title);
+    const normalizedReference = normalizeTaskReference(reference);
+
+    // Abaikan perbedaan spasi, misalnya "balikol" dan "balik kol".
+    const compactTitle = candidateTitle.replace(/\s+/g, '');
+    const compactReference = normalizedReference.replace(/\s+/g, '');
+
+    if (compactTitle === compactReference) {
+      return true;
+    }
+
+    // Tetap izinkan frasa khas yang menjadi bagian dari judul lengkap.
+    if (
+      compactReference.length >= 12 &&
+      compactTitle.length >= 12 &&
+      (
+        compactTitle.includes(compactReference) ||
+        compactReference.includes(compactTitle)
+      )
+    ) {
+      return true;
+    }
+
+    // Toleransi maksimal 1–2 karakter salah transkripsi untuk referensi panjang.
+    if (compactReference.length < 18 || compactTitle.length < 18) {
+      return false;
+    }
+
+    const maxDistance = Math.min(
+      2,
+      Math.floor(Math.min(compactTitle.length, compactReference.length) * 0.08)
+    );
+
+    if (Math.abs(compactTitle.length - compactReference.length) > maxDistance) {
+      return false;
+    }
+
+    let previousRow = Array.from(
+      { length: compactReference.length + 1 },
+      (_, index) => index
+    );
+
+    for (let rowIndex = 1; rowIndex <= compactTitle.length; rowIndex++) {
+      const currentRow = [rowIndex];
+      let rowMinimum = rowIndex;
+
+      for (
+        let columnIndex = 1;
+        columnIndex <= compactReference.length;
+        columnIndex++
+      ) {
+        const substitutionCost =
+          compactTitle[rowIndex - 1] === compactReference[columnIndex - 1]
+            ? 0
+            : 1;
+
+        currentRow[columnIndex] = Math.min(
+          currentRow[columnIndex - 1] + 1,
+          previousRow[columnIndex] + 1,
+          previousRow[columnIndex - 1] + substitutionCost
+        );
+
+        rowMinimum = Math.min(rowMinimum, currentRow[columnIndex]);
+      }
+
+      if (rowMinimum > maxDistance) {
+        return false;
+      }
+
+      previousRow = currentRow;
+    }
+
+    return previousRow[compactReference.length] <= maxDistance;
+  }
+
+  async function syncActionItemsToItProject(meeting, summary, {reviewClient=itProject,reviewStore=store} = {}) {
+
+     const actionItems = Array.isArray(summary.actionItems)
+      ? summary.actionItems
+      : [];
+    const taskUpdates = Array.isArray(summary.taskUpdates)
+      ? summary.taskUpdates
+      : [];
+    const taskEdits = Array.isArray(summary.taskEdits)
+      ? summary.taskEdits
+      : [];
+    const projectCreations = Array.isArray(summary.projectCreations)
+      ? summary.projectCreations
+      : [];
+    const projectUpdates = Array.isArray(summary.projectUpdates)
+      ? summary.projectUpdates
+      : [];
+
+    let targetProjectId = reviewClient.projectId;
+    let existingTasks = [];
+
+    const existingTaskReferences = [
+      ...taskUpdates.map(update => update.task),
+      ...taskEdits.map(edit => edit.task),
+    ].map(reference => String(reference || '').trim());
+
+    // When there is no configured project ID, resolve task edits/status changes
+    // against projects previously created by BaliCall and stored in MeetingStore.
+    if (
+      !targetProjectId &&
+      !projectCreations.length &&
+      existingTaskReferences.length
+    ) {
+      const projectsById = new Map();
+      for (const sourceMeeting of reviewStore.meetings.values()) {
+        for (const dispatch of Object.values(
+          sourceMeeting.itProjectProjectDispatch || {}
+        )) {
+          if (dispatch.status === 'created' && dispatch.projectId) {
+            projectsById.set(dispatch.projectId, {
+              id: dispatch.projectId,
+              title: dispatch.title,
+              projectNo: dispatch.projectNo || null,
+            });
+          }
+        }
+      }
+
+      const projectTasksById = new Map();
+      let projectLookupFailed = false;
+
+      for (const project of projectsById.values()) {
+        try {
+          const result = await reviewClient.projectTasks(project.id);
+          projectTasksById.set(
+            project.id,
+            flattenTaskTree(result.data?.data || [])
+          );
+        } catch (error) {
+          projectLookupFailed = true;
+          console.warn('[ITPROJECT] Project lokal tidak dapat diperiksa untuk mencari task.', {
+            meetingId: meeting.id,
+            projectId: project.id,
+            title: project.title,
+            message: error.message,
+          });
+        }
+      }
+
+      if (projectLookupFailed) {
+        console.warn('[ITPROJECT] Sync edit task dilewati: pencarian project lokal tidak lengkap.', {
+          meetingId: meeting.id,
+        });
+        return;
+      }
+
+      const resolutions = existingTaskReferences.map(reference => {
+        const normalizedReference = normalizeTaskReference(reference);
+        const matches = [];
+
+        for (const [projectId, tasks] of projectTasksById) {
+          for (const task of tasks) {
+            if (taskMatchesReference(task, normalizedReference)) {
+              matches.push({ projectId, task });
+            }
+          }
+        }
+
+        return { reference, matches };
+      });
+
+      const matchedProjectIds = new Set(
+        resolutions.flatMap(resolution =>
+          resolution.matches.map(match => match.projectId)
+        )
+      );
+
+      if (
+        resolutions.some(resolution => resolution.matches.length !== 1) ||
+        matchedProjectIds.size !== 1
+      ) {
+        console.warn('[ITPROJECT] Sync edit task dilewati: referensi task tidak cocok unik ke satu project lokal.', {
+          meetingId: meeting.id,
+          taskReferences: resolutions.map(resolution => ({
+            task: resolution.reference,
+            matches: resolution.matches.length,
+          })),
+          matchingProjects: matchedProjectIds.size,
+        });
+        return;
+      }
+
+      targetProjectId = [...matchedProjectIds][0];
+      existingTasks = projectTasksById.get(targetProjectId) || [];
+
+      console.info('[ITPROJECT] Project task lama ditemukan secara dinamis.', {
+        meetingId: meeting.id,
+        projectId: targetProjectId,
+        taskReferences: existingTaskReferences,
+      });
+    }
+    
+    if (!projectCreations.length && actionItems.length && !reviewClient.projectId) {
+      const projectReferences = [
+        ...new Set(
+          actionItems
+            .map(item => normalizeTaskReference(item.project))
+            .filter(Boolean)
+        ),
+      ];
+
+      if (projectReferences.length !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: sebutkan satu project tujuan secara jelas.',
+          {
+            meetingId: meeting.id,
+            projectReferences,
+          }
+        );
+        return;
+      }
+
+      const reference = projectReferences[0];
+      const matches = new Map();
+
+      const addMatchingProject = project => {
+        if (!project?.id) return;
+
+        const title = normalizeTaskReference(project.title);
+        const projectNo = normalizeTaskReference(project.project_no);
+
+        if (title === reference || projectNo === reference) {
+          matches.set(project.id, project);
+        }
+      };
+
+      // Cari dahulu project yang pernah dibuat oleh BaliCall.
+      for (const sourceMeeting of reviewStore.meetings.values()) {
+        for (const dispatch of Object.values(
+          sourceMeeting.itProjectProjectDispatch || {}
+        )) {
+          if (dispatch.status === 'created') {
+            addMatchingProject({
+              id: dispatch.projectId,
+              title: dispatch.title,
+              project_no: dispatch.projectNo,
+            });
+          }
+        }
+      }
+
+      // Jika belum ditemukan secara lokal, cari di daftar project akun MCP.
+      if (matches.size === 0) {
+        try {
+          const result = await reviewClient.userProjects();
+          const projects = result.data?.data;
+
+          if (!Array.isArray(projects)) {
+            throw new Error('Respons daftar project tidak berisi array data.');
+          }
+
+          projects.forEach(addMatchingProject);
+        } catch (error) {
+          console.warn(
+            '[ITPROJECT] Task baru dilewati: daftar project tidak dapat dicari.',
+            {
+              meetingId: meeting.id,
+              projectReference: reference,
+              message: error.message,
+            }
+          );
+          return;
+        }
+      }
+
+      if (matches.size !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: project tujuan tidak ditemukan secara unik.',
+          {
+            meetingId: meeting.id,
+            projectReference: reference,
+            matches: matches.size,
+          }
+        );
+        return;
+      }
+
+      targetProjectId = [...matches.values()][0].id;
+
+      console.info('[ITPROJECT] Project task baru ditemukan secara dinamis.', {
+        meetingId: meeting.id,
+        projectId: targetProjectId,
+        projectReference: reference,
+      });
+    }
+
+    if (
+      !reviewClient.authenticated ||
+      (
+        !projectCreations.length &&
+        (actionItems.length || taskUpdates.length || taskEdits.length) &&
+        !targetProjectId
+      )
+    ) {
+      console.warn('[ITPROJECT] Sync dilewati: autentikasi atau project tujuan tidak tersedia.', {
+        meetingId: meeting.id,
+        authenticated: reviewClient.authenticated,
+        hasUrl: Boolean(config.itprojectMcpUrl),
+        hasAccessToken: Boolean(config.itprojectMcpToken),
+        hasRefreshToken: Boolean(config.itprojectOAuthRefreshToken),
+        hasConfiguredProject: Boolean(reviewClient.projectId),
+        hasTaskType: Boolean(reviewClient.taskTypeId),
+        projectCreations: projectCreations.length,
+        projectUpdates: projectUpdates.length,
+      });
+      return;
+    }
+    
+    if (
+      !actionItems.length &&
+      !taskUpdates.length &&
+      !taskEdits.length &&
+      !projectCreations.length &&
+      !projectUpdates.length
+    ) {
+      console.warn('[ITPROJECT] Sync dilewati: ringkasan tidak memiliki action item', {
+        meetingId: meeting.id,
+      });
+      return;
+    }
+
+    if (projectCreations.length) {
+      // Versi awal mendukung satu project per rapat.
+      // Hindari mengarahkan edit task lama ke project yang baru dibuat.
+      if (taskUpdates.length || taskEdits.length) {
+        console.warn('[ITPROJECT] Sync project baru dilewati: rapat yang sama juga mengubah task lama.', {
+          meetingId: meeting.id,
+        });
+        return;
+      }
+
+      const requestedProject = projectCreations[0];
+      const projectDispatchKey = createHash('sha256')
+        .update(`${meeting.id}|${requestedProject.title.trim().toLowerCase()}`)
+        .digest('hex');
+
+      const previousProjectDispatch =
+        reviewStore.get(meeting.id)?.itProjectProjectDispatch?.[projectDispatchKey];
+
+      if (previousProjectDispatch?.status === 'created') {
+        targetProjectId = previousProjectDispatch.projectId;
+      } else if (
+        previousProjectDispatch?.status === 'creating' ||
+        previousProjectDispatch?.status === 'failed'
+      ) {
+        console.warn('[ITPROJECT] Create project tidak dicoba ulang otomatis; periksa dashboard untuk mencegah duplikat.', {
+          meetingId: meeting.id,
+          title: requestedProject.title,
+          previousStatus: previousProjectDispatch.status,
+          projectId: previousProjectDispatch.projectId || null,
+        });
+        return;
+      } else {
+        const projectOptionsResult = await reviewClient.projectOptions();
+        const projectOptions = projectOptionsResult.data?.data;
+
+        if (!projectOptions?.statuses || !projectOptions?.priorities) {
+          throw new Error('Opsi status atau prioritas project tidak tersedia.');
+        }
+
+        const requestedStatus =
+          projectOptions.statuses.find(option =>
+            option.name?.trim().toLowerCase() ===
+            requestedProject.status.trim().toLowerCase()
+          );
+
+        const requestedPriority =
+          projectOptions.priorities.find(option =>
+            option.name?.trim().toLowerCase() ===
+            requestedProject.priority.trim().toLowerCase()
+          );
+
+        if (!requestedStatus || !requestedPriority) {
+          throw new Error('Status atau prioritas project tidak cocok dengan opsi IT Project.');
+        }
+
+        const monthNumbers = {
+          januari: '01',
+          februari: '02',
+          maret: '03',
+          april: '04',
+          mei: '05',
+          juni: '06',
+          juli: '07',
+          agustus: '08',
+          september: '09',
+          oktober: '10',
+          november: '11',
+          desember: '12',
+        };
+
+        const parseProjectDate = value => {
+          const text = String(value || '').trim();
+
+          if (!text) return '';
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            return text;
+          }
+
+          const match = text.match(
+            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
+          );
+
+          if (!match) {
+            throw new Error(`Tanggal project tidak dikenali: '${text}'.`);
+          }
+
+          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
+        };
+
+        const startDate =
+          parseProjectDate(requestedProject.startDate) ||
+          isoDateInJakarta(summary.generatedAt || meeting.createdAt || Date.now());
+
+        const dueDate = parseProjectDate(requestedProject.dueDate);
+
+        if (dueDate && dueDate < startDate) {
+          throw new Error('Due date project tidak boleh sebelum start date.');
+        }
+
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
+          current.itProjectProjectDispatch ||= {};
+          current.itProjectProjectDispatch[projectDispatchKey] = {
+            status: 'creating',
+            title: requestedProject.title,
+            startedAt: new Date().toISOString(),
+          };
+        });
+
+        try {
+          const projectResult = await reviewClient.createProject({
+            title: requestedProject.title.trim(),
+            description: `<p>${escapeHtml(requestedProject.description)}</p>`,
+            emoji: requestedProject.emoji,
+            start_date: startDate,
+            ...(dueDate ? { due_date: dueDate } : {}),
+            status_id: requestedStatus.id,
+            priority_id: requestedPriority.id,
+          });
+
+          const createdProject =
+            projectResult.data?.data ||
+            projectResult.data?.project ||
+            projectResult.data;
+
+          if (!createdProject?.id) {
+            throw new Error('Respons create-project tidak berisi ID project.');
+          }
+
+          targetProjectId = createdProject.id;
+
+          reviewStore.transact(() => {
+            const current = reviewStore.get(meeting.id);
+            current.itProjectProjectDispatch[projectDispatchKey] = {
+              status: 'created',
+              title: requestedProject.title,
+              projectId: targetProjectId,
+              projectNo: createdProject.project_no || null,
+              createdAt: new Date().toISOString(),
+            };
+          });
+
+          console.info('[ITPROJECT] Project berhasil dibuat dari rapat.', {
+            meetingId: meeting.id,
+            projectId: targetProjectId,
+            projectNo: createdProject.project_no || null,
+            title: requestedProject.title,
+          });
+        } catch (error) {
+          reviewStore.transact(() => {
+            const current = reviewStore.get(meeting.id);
+            current.itProjectProjectDispatch[projectDispatchKey] = {
+              status: 'failed',
+              title: requestedProject.title,
+              error: error.message,
+              failedAt: new Date().toISOString(),
+            };
+          });
+
+          console.warn('[ITPROJECT] Project gagal dibuat dari rapat.', {
+            meetingId: meeting.id,
+            title: requestedProject.title,
+            message: error.message,
+          });
+          return;
+        }
+      }
+    }
+
+    if (!targetProjectId && actionItems.length) {
+      console.warn('[ITPROJECT] Task dilewati: tidak ada ID project tujuan.', {
+        meetingId: meeting.id,
+      });
+      return;
+    }
+
+    console.info('[ITPROJECT] Sync dimulai', {
+      meetingId: meeting.id,
+      actionItems: actionItems.length,
+      taskUpdates: taskUpdates.length,
+      taskEdits: taskEdits.length,
+      projectId: targetProjectId,
+      projectUpdates: projectUpdates.length,
+    });
+
+    const hasTaskOperations =
+      actionItems.length || taskUpdates.length || taskEdits.length;
+    let options = {};
+
+    if (hasTaskOperations) {
+      const optionsResult = await reviewClient.taskOptions(targetProjectId);
+      options = optionsResult.data?.data || {};
+
+      if (!options.taskStatuses || !options.taskPriorities ||
+          !options.taskTypes || !options.assignableUsers) {
+        throw new Error('Opsi task IT Project tidak lengkap.');
+      }
+    }
+
+    if (
+      targetProjectId &&
+      (taskUpdates.length || taskEdits.length) &&
+      !existingTasks.length
+    ) {
+      const existingResult = await reviewClient.projectTasks(targetProjectId);
+      existingTasks = flattenTaskTree(existingResult.data?.data || []);
+    }
+
+    const activeSprint = (options.sprints || []).find(
+      sprint => sprint.status?.name?.trim().toLowerCase() === 'active'
+    );
+
+    if (actionItems.length && !activeSprint) {
+      console.warn('[ITPROJECT] Tidak ada sprint aktif; task akan tetap di backlog.', {
+        projectId: targetProjectId,
+      });
+    }
+
+    const numericIdByEncodedId = new Map([
+      ['UJeeXo83zdG0pYJFV7r6', '1'],
+      ['1moX49HDcroSUIwOANWL', '2'],
+      ['bNiTmH27qshwj46Fc8fi', '3'],
+      ['UCeeXo83zdG0pYJFV7r6', '4'],
+      ['BGpapXmIwrE2LC6eY1VT', '5'],
+    ]);
+
+    let status = null;
+    let defaultType = null;
+    let numericStatusId = null;
+
+    if (actionItems.length) {
+      status = options.taskStatuses.find(
+        option => option.name?.trim().toLowerCase() ===
+          reviewClient.taskStatusName.trim().toLowerCase()
+      );
+
+      defaultType = options.taskTypes.find(
+        option => option.id === reviewClient.taskTypeId
+      );
+
+      if (!status || !defaultType) {
+        throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
+      }
+
+      numericStatusId = numericIdByEncodedId.get(status.id);
+
+      if (!numericStatusId) {
+        throw new Error('Status awal task belum punya pemetaan numerik.');
+      }
+    }
+    const normalizeActionStatus = value => {
+    const key = String(value || '').trim().toLocaleLowerCase('id-ID');
+    const aliases = {
+      'to do': 'To Do',
+      todo: 'To Do',
+      blocked: 'Blocked',
+      terhambat: 'Blocked',
+      'in progress': 'In Progress',
+      'sedang dikerjakan': 'In Progress',
+      finished: 'Finished',
+      'selesai dikerjakan': 'Finished',
+      'in review': 'In Review',
+      'sedang ditinjau': 'In Review',
+      completed: 'Completed',
+      komplit: 'Completed',
+      tuntas: 'Completed',
+    };
+
+    return aliases[key] || '';
+  };
+
+    const orderedActionItems = [
+      ...actionItems.filter(item => !String(item.parent || '').trim()),
+      ...actionItems.filter(item => String(item.parent || '').trim()),
+    ];
+    const createdTaskReferences = [];
+
+    for (const item of orderedActionItems) {
+      const title = String(item.task || '').trim();
+      if (!title) continue;
+      const explicitStatusMatch = title.match(
+        /\bstatus(?:nya)?\s+(to\s+do|blocked|in\s+progress|finished|in\s+review|completed|komplit|tuntas)\b/i
+      );
+
+      const statusFromTaskText = explicitStatusMatch
+        ? normalizeActionStatus(explicitStatusMatch[1])
+        : '';
+
+      const requestedStatusName =
+        statusFromTaskText ||
+        normalizeActionStatus(item.status) ||
+        status.name;
+
+      const selectedStatus = options.taskStatuses.find(
+        option => option.name?.trim().toLowerCase() ===
+          requestedStatusName.toLowerCase()
+      );
+
+      if (!selectedStatus) {
+        console.warn('[ITPROJECT] Status task tidak tersedia; task dilewati.', {
+          meetingId: meeting.id,
+          title,
+          requestedStatus: item.status || '',
+        });
+        continue;
+      }
+      const requestedTypeName = String(item.type || '').trim().toLowerCase();
+      const selectedType = requestedTypeName
+        ? options.taskTypes.find(
+            option => option.name?.trim().toLowerCase() === requestedTypeName
+          )
+        : null;
+
+      const type = selectedType || defaultType;
+      const numericTypeId = numericIdByEncodedId.get(type.id);
+
+      if (!numericTypeId) {
+        console.warn('[ITPROJECT] Tipe task tidak punya pemetaan numerik; task dilewati.', {
+          meetingId: meeting.id,
+          title,
+          requestedType: item.type || '',
+        });
+        continue;
+      }
+
+      const key = createHash('sha256')
+        .update([
+          meeting.id,
+          title.toLowerCase(),
+          String(item.assignee || '').trim().toLowerCase(),
+          String(item.deadline || '').trim().toLowerCase(),
+        ].join('|'))
+        .digest('hex');
+
+      // Jangan kirim ulang item yang pernah dicoba agar tidak membuat duplikat
+      // jika respons server hilang setelah task sebenarnya berhasil dibuat.
+      const previousDispatch =
+        reviewStore.get(meeting.id)?.itProjectTaskDispatch?.[key];
+
+      if (previousDispatch?.status === 'created') {
+        if (previousDispatch.taskId) {
+          createdTaskReferences.push({
+            id: previousDispatch.taskId,
+            title: previousDispatch.title || title,
+          });
+        }
+        continue;
+      }
+
+      if (previousDispatch?.status === 'creating') {
+        continue;
+      }
+
+      const priorityName = String(item.priority || '').trim().toLowerCase();
+      const priority = options.taskPriorities.find(
+        option => option.name?.trim().toLowerCase() === priorityName
+      );
+
+      const numericPriorityId = priority
+        ? numericIdByEncodedId.get(priority.id)
+        : null;
+
+      if (!priority) {
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
+          current.itProjectTaskDispatch ||= {};
+          current.itProjectTaskDispatch[key] = {
+            status: 'failed',
+            title,
+            error: `Prioritas '${item.priority}' tidak tersedia atau belum punya pemetaan numerik.`,
+          };
+        });
+        continue;
+      }
+
+      const assigneeName = String(item.assignee || '').trim();
+      const matches = assigneeName
+        ? options.assignableUsers.filter(user =>
+            user.name?.trim().toLowerCase() === assigneeName.toLowerCase() ||
+            user.email?.trim().toLowerCase() === assigneeName.toLowerCase())
+        : [];
+      const owner = matches.length === 1 ? matches[0] : null;
+
+      const description = [
+        `<p>Sumber: rapat ${escapeHtml(meeting.roomName)} (${escapeHtml(meeting.id)})</p>`,
+        assigneeName
+          ? `<p>PIC dari notulen: ${escapeHtml(assigneeName)}${owner ? '' : ' (belum cocok dengan anggota project)'}</p>`
+          : '',
+        item.deadline
+          ? `<p>Tenggat dari notulen: ${escapeHtml(item.deadline)}</p>`
+          : '',
+      ].filter(Boolean).join('');
+
+      const dueDateMatch = String(item.deadline || '').match(
+        /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
+      );
+
+      const mentionedStartDate = String(item.startDate || '').trim();
+      const startDate = /^\d{4}-\d{2}-\d{2}$/.test(mentionedStartDate)
+        ? mentionedStartDate
+        : isoDateInJakarta(
+            summary.generatedAt || meeting.createdAt || Date.now()
+          );
+
+      const monthNumbers = {
+        januari: '01',
+        februari: '02',
+        maret: '03',
+        april: '04',
+        mei: '05',
+        juni: '06',
+        juli: '07',
+        agustus: '08',
+        september: '09',
+        oktober: '10',
+        november: '11',
+        desember: '12',
+      };
+
+      const deadlineText = String(item.deadline || '').trim();
+      const isoDeadlineMatch = deadlineText.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+
+      const dueDate = isoDeadlineMatch
+        ? isoDeadlineMatch[1]
+        : dueDateMatch
+          ? `${dueDateMatch[3]}-${monthNumbers[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`
+          : '';
+          
+      const parentReference = String(item.parent || '').trim();
+      let parentId = '';
+
+      if (parentReference) {
+        const parentCandidates = new Map();
+
+        for (const candidate of createdTaskReferences) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        for (const candidate of options.taskParents || []) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        if (parentCandidates.size !== 1) {
+          console.warn('[ITPROJECT] Subtask dilewati: parent tidak ditemukan secara unik.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+            matches: parentCandidates.size,
+          });
+          continue;
+        }
+
+        const selectedCategory = (options.taskCategories || []).find(
+          category => category.id === reviewClient.taskCategoryId
+        );
+
+        if (selectedCategory?.name?.trim().toLowerCase() === 'epic') {
+          console.warn('[ITPROJECT] Subtask dilewati: task berkategori Epic tidak boleh menjadi subtask.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+          });
+          continue;
+        }
+
+        parentId = [...parentCandidates.keys()][0];
+      }
+
+      reviewStore.transact(() => {
+        const current = reviewStore.get(meeting.id);
+        current.itProjectTaskDispatch ||= {};
+        current.itProjectTaskDispatch[key] = {
+          status: 'creating',
+          title,
+          startedAt: new Date().toISOString(),
+        };
+      });
+
+      try {
+        let task = null;
+        if (previousDispatch?.status === 'failed' && previousDispatch.startedAt) {
+          const existingResult = await reviewClient.projectTasks(targetProjectId);
+          const existingTasks = flattenTaskTree(existingResult.data?.data || []);
+          const previousStartedAt = Date.parse(previousDispatch.startedAt);
+
+          task = existingTasks.find(candidate =>
+            candidate.title?.trim().toLowerCase() === title.toLowerCase() &&
+            Number.isFinite(Date.parse(candidate.created_at)) &&
+            Date.parse(candidate.created_at) >= previousStartedAt - 60_000
+          ) || null;
+        }
+
+        if (!task) {
+          const result = await reviewClient.createTask({
+            project: targetProjectId,
+            title,
+            status_id: numericStatusId,
+            priority_id: numericPriorityId,
+            type_id: numericTypeId,
+            task_category_id: reviewClient.taskCategoryId,
+            ...(parentId ? { parent_id: parentId } : {}),
+            assign_users: owner ? [owner.id] : [],
+            description,
+            start_date: startDate,
+            ...(dueDate ? { due_date: dueDate } : {}),
+          });
+
+          task = result.data?.data;
+        }
+
+        if (!task?.id) {
+          throw new Error('Respons create-task tidak berisi ID task.');
+        }
+
+        createdTaskReferences.push({
+          id: task.id,
+          title,
+        });
+
+        let statusUpdate = 'unchanged';
+
+        if (selectedStatus.id !== status.id) {
+          const selectedStatusName = selectedStatus.name.trim().toLowerCase();
+          const statusNeedsDueDate =
+            !['to do', 'blocked'].includes(selectedStatusName);
+          const statusDueDate = dueDate || task.due_date || '';
+
+          if (statusNeedsDueDate && !statusDueDate) {
+            statusUpdate = 'skipped_missing_due_date';
+            console.warn('[ITPROJECT] Status task tidak diubah karena due date wajib belum tersedia.', {
+              meetingId: meeting.id,
+              taskId: task.id,
+              requestedStatus: selectedStatus.name,
+            });
+          } else {
+            await reviewClient.updateTaskStatus({
+              task: task.id,
+              status_id: selectedStatus.id,
+              ...(statusDueDate ? { due_date: statusDueDate } : {}),
+            });
+            statusUpdate = 'updated';
+          }
+        }
+
+        let sprintAssignment = 'no_active_sprint';
+
+        if (activeSprint?.id) {
+          try {
+            await reviewClient.assignSprintTasks({
+              sprint: activeSprint.id,
+              task_ids: [task.id],
+            });
+            sprintAssignment = 'assigned';
+          } catch (error) {
+            sprintAssignment = 'failed';
+            console.warn('[ITPROJECT] Task dibuat, tetapi gagal ditambahkan ke sprint aktif:', {
+              meetingId: meeting.id,
+              taskId: task.id,
+              sprintId: activeSprint.id,
+              sprintName: activeSprint.name,
+              message: error.message,
+            });
+          }
+        }
+
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
+          current.itProjectTaskDispatch[key] = {
+            status: 'created',
+            title,
+            taskId: task.id,
+            sprintAssignment,
+            createdAt: new Date().toISOString(),
+          };
+        });
+        console.info('[ITPROJECT] Task berhasil dibuat', {
+          meetingId: meeting.id,
+          taskId: task.id,
+          projectId: targetProjectId,
+          title,
+          taskType: type.name,
+          startDate,
+          dueDate: dueDate || null,
+          deadlineFromSummary: item.deadline || null,
+          sprintAssignment,
+          sprintName: activeSprint?.name || null,
+          taskStatus: selectedStatus.name,
+          statusUpdate,
+        });
+      } catch (error) {
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
+          const previous = current.itProjectTaskDispatch?.[key];
+          current.itProjectTaskDispatch[key] = {
+            status: 'failed',
+            title,
+            error: error.message,
+            startedAt: previous?.startedAt,
+            failedAt: new Date().toISOString(),
+          };
+        });
+        console.warn('[ITPROJECT] Task gagal dibuat:', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+      }
+    }
+      for (const update of taskUpdates) {
+        const reference = normalizeTaskReference(update.task);
+
+        const matches = existingTasks.filter(candidate =>
+          taskMatchesReference(candidate, reference)
+        );
+
+        if (matches.length !== 1) {
+          console.warn('[ITPROJECT] Update status task lama dilewati: referensi tidak unik.', {
+            meetingId: meeting.id,
+            taskReference: update.task,
+            matches: matches.length,
+          });
+          continue;
+        }
+
+        const existingTask = matches[0];
+        const selectedStatus = options.taskStatuses.find(
+          option =>
+            option.name?.trim().toLowerCase() ===
+            String(update.status).trim().toLowerCase()
+        );
+
+        if (!selectedStatus) {
+          console.warn('[ITPROJECT] Update status task lama dilewati: status tidak tersedia.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            requestedStatus: update.status,
+          });
+          continue;
+        }
+
+        if (existingTask.status?.id === selectedStatus.id) {
+          console.info('[ITPROJECT] Status task lama tidak berubah.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            status: selectedStatus.name,
+          });
+          continue;
+        }
+
+        const existingDueDate = existingTask.due_date || '';
+        const statusNeedsDueDate =
+          !['to do', 'blocked'].includes(selectedStatus.name.trim().toLowerCase());
+
+        if (statusNeedsDueDate && !existingDueDate) {
+          console.warn('[ITPROJECT] Update status task lama dilewati: task belum memiliki due date.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            requestedStatus: selectedStatus.name,
+          });
+          continue;
+        }
+
+        try {
+          await reviewClient.updateTaskStatus({
+            task: existingTask.id,
+            status_id: selectedStatus.id,
+            ...(existingDueDate ? { due_date: existingDueDate } : {}),
+          });
+
+          console.info('[ITPROJECT] Status task lama berhasil diubah.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            previousStatus: existingTask.status?.name || null,
+            newStatus: selectedStatus.name,
+          });
+        } catch (error) {
+          console.warn('[ITPROJECT] Update status task lama gagal.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            requestedStatus: selectedStatus.name,
+            message: error.message,
+          });
+        }
+      }
+      for (const edit of taskEdits) {
+        const reference = normalizeTaskReference(edit.task);
+        const changes = edit.changes || {};
+
+        const matches = existingTasks.filter(candidate => {
+          const candidateTitle = normalizeTaskReference(candidate.title);
+
+          // Izinkan judul lengkap atau frasa khas dari judul.
+          // Tetap wajib cocok ke tepat satu task.
+          return (
+            candidateTitle === reference ||
+            (
+              reference.length >= 12 &&
+              candidateTitle.length >= 12 &&
+              (
+                candidateTitle.includes(reference) ||
+                reference.includes(candidateTitle)
+              )
+            )
+          );
+        });
+
+        if (matches.length !== 1) {
+          console.warn('[ITPROJECT] Edit task lama dilewati: referensi tidak unik.', {
+            meetingId: meeting.id,
+            taskReference: edit.task,
+            matches: matches.length,
+          });
+          continue;
+        }
+
+        const existingTask = matches[0];
+        const updateArgs = { task: existingTask.id };
+        const changedFields = [];
+
+        // Mencocokkan nama opsi secara persis setelah normalisasi.
+        // Jika tidak ada atau hasilnya ambigu, jangan menebak ID.
+        const findUniqueOption = (list, name, fieldName) => {
+          const normalizedName = normalizeTaskReference(name);
+
+          const aliases = {
+            prioritas: {},
+            'tipe task': {
+              dokumentasi: 'documentation',
+            },
+            kategori: {
+              isu: 'issue',
+            },
+            'parent task': {},
+            tag: {
+              tes: 'test',
+            },
+          };
+
+          const canonicalName =
+            aliases[fieldName]?.[normalizedName] || normalizedName;
+
+          const found = (list || []).filter(
+            option =>
+              normalizeTaskReference(option.name) === canonicalName
+          );
+
+          if (found.length !== 1) {
+            throw new Error(
+              `Opsi ${fieldName} '${name}' tidak ditemukan atau tidak unik.`
+            );
+          }
+
+          return found[0];
+        };
+
+        const findUniqueUser = name => {
+          const normalizedName = normalizeTaskReference(name);
+
+          // Koreksi salah dengar STT untuk nama assignee.
+          const userAliases = {
+            saini: 'bima',
+          };
+
+          const canonicalName =
+            userAliases[normalizedName] || normalizedName;
+
+          const found = (options.assignableUsers || []).filter(user =>
+            normalizeTaskReference(user.name) === canonicalName ||
+            normalizeTaskReference(user.email) === canonicalName
+          );
+
+          if (found.length !== 1) {
+            throw new Error(
+              `Anggota project '${name}' tidak ditemukan atau tidak unik.`
+            );
+          }
+
+          return found[0];
+        };
+
+        const parseEditDate = value => {
+          const text = String(value || '').trim();
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            return text;
+          }
+
+          const match = text.match(
+            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
+          );
+
+          if (!match) {
+            throw new Error(
+              `Tanggal '${text}' tidak dikenali. Gunakan tanggal lengkap yang dapat diubah ke YYYY-MM-DD.`
+            );
+          }
+
+          const monthNumbers = {
+            januari: '01',
+            februari: '02',
+            maret: '03',
+            april: '04',
+            mei: '05',
+            juni: '06',
+            juli: '07',
+            agustus: '08',
+            september: '09',
+            oktober: '10',
+            november: '11',
+            desember: '12',
+          };
+
+          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
+        };
+
+        try {
+          if (Object.hasOwn(changes, 'title')) {
+            const value = String(changes.title || '').trim();
+            if (!value) {
+              throw new Error('Judul baru kosong.');
+            }
+            updateArgs.title = value;
+            changedFields.push('title');
+          }
+
+          if (Object.hasOwn(changes, 'description')) {
+            const value = String(changes.description || '').trim();
+            updateArgs.description = value
+              ? `<p>${escapeHtml(value)}</p>`
+              : '';
+            changedFields.push('description');
+          }
+
+          if (Object.hasOwn(changes, 'emoji')) {
+            const value = String(changes.emoji || '').trim();
+            if (!value) {
+              throw new Error('Emoji baru kosong.');
+            }
+            updateArgs.emoji = value;
+            changedFields.push('emoji');
+          }
+
+          if (Object.hasOwn(changes, 'startDate')) {
+            updateArgs.start_date = parseEditDate(changes.startDate);
+            changedFields.push('start_date');
+          }
+
+          if (Object.hasOwn(changes, 'dueDate')) {
+            updateArgs.due_date = parseEditDate(changes.dueDate);
+            changedFields.push('due_date');
+          }
+
+          if (
+            updateArgs.start_date &&
+            updateArgs.due_date &&
+            updateArgs.due_date < updateArgs.start_date
+          ) {
+            throw new Error('Due date tidak boleh sebelum start date.');
+          }
+
+          if (Object.hasOwn(changes, 'priority')) {
+            const option = findUniqueOption(
+              options.taskPriorities,
+              changes.priority,
+              'prioritas'
+            );
+            updateArgs.priority_id = option.id;
+            changedFields.push('priority');
+          }
+
+          if (Object.hasOwn(changes, 'type')) {
+            const option = findUniqueOption(
+              options.taskTypes,
+              changes.type,
+              'tipe task'
+            );
+            updateArgs.type_id = option.id;
+            changedFields.push('type');
+          }
+
+          if (Object.hasOwn(changes, 'category')) {
+            const value = String(changes.category || '').trim();
+
+            // String kosong hanya untuk permintaan eksplisit menghapus kategori.
+            updateArgs.task_category_id = value
+              ? findUniqueOption(
+                  options.taskCategories,
+                  value,
+                  'kategori'
+                ).id
+              : '';
+            changedFields.push('category');
+          }
+
+          if (Object.hasOwn(changes, 'parent')) {
+            const value = String(changes.parent || '').trim();
+
+            if (!value) {
+              updateArgs.parent_id = '';
+            } else {
+              const parent = findUniqueOption(
+                options.taskParents,
+                value,
+                'parent task'
+              );
+
+              const descendants = new Set(
+                flattenTaskTree(existingTask.sub_task_recursive || [])
+                  .map(task => task.id)
+              );
+
+              if (
+                parent.id === existingTask.id ||
+                descendants.has(parent.id)
+              ) {
+                throw new Error(
+                  'Task tidak boleh menjadi parent dirinya sendiri atau subtaksnya.'
+                );
+              }
+
+              updateArgs.parent_id = parent.id;
+            }
+
+            changedFields.push('parent');
+          }
+
+          if (Object.hasOwn(changes, 'owner')) {
+            const owner = findUniqueUser(changes.owner);
+            updateArgs.owned_id = owner.id;
+            changedFields.push('owner');
+          }
+
+                    const usersToAssign = Object.hasOwn(changes, 'assignUsers')
+            ? changes.assignUsers.map(findUniqueUser)
+            : [];
+
+          const assignedUserIds = new Set(
+            usersToAssign.map(user => user.id)
+          );
+
+          const usersToUnassign = Object.hasOwn(changes, 'unassignUsers')
+            ? changes.unassignUsers
+                .map(findUniqueUser)
+                .filter(user => !assignedUserIds.has(user.id))
+            : [];
+
+          if (usersToAssign.length) {
+            updateArgs.assign_users = usersToAssign.map(user => user.id);
+            changedFields.push('assignUsers');
+          }
+
+          if (usersToUnassign.length) {
+            updateArgs.unassign_users = usersToUnassign.map(user => user.id);
+            changedFields.push('unassignUsers');
+          }
+
+          if (Object.hasOwn(changes, 'tags')) {
+            const tags = changes.tags.map(name =>
+              findUniqueOption(options.tags, name, 'tag')
+            );
+            if (tags.length) {
+              updateArgs.tag_ids = tags.map(tag => tag.id);
+              changedFields.push('tags');
+            }
+          }
+
+          if (Object.hasOwn(changes, 'removeTags')) {
+            const tags = changes.removeTags.map(name =>
+              findUniqueOption(options.tags, name, 'tag')
+            );
+            if (tags.length) {
+              updateArgs.remove_tag_ids = tags.map(tag => tag.id);
+              changedFields.push('removeTags');
+            }
+          }
+
+          if (!changedFields.length) {
+            console.info('[ITPROJECT] Edit task lama dilewati: tidak ada field yang berubah.', {
+              meetingId: meeting.id,
+              taskId: existingTask.id,
+              title: existingTask.title,
+            });
+            continue;
+          }
+
+          // Tool meminta tanggal untuk task yang statusnya bukan To Do/Blocked.
+          // Jika tidak diedit dalam rapat, teruskan tanggal lama agar nilainya tetap.
+          const currentStatus = existingTask.status?.name
+            ?.trim()
+            .toLowerCase();
+
+          if (!['to do', 'blocked'].includes(currentStatus)) {
+            updateArgs.start_date ||= existingTask.start_date || '';
+            updateArgs.due_date ||= existingTask.due_date || '';
+
+            if (!updateArgs.start_date || !updateArgs.due_date) {
+              console.warn('[ITPROJECT] Edit task lama dilewati: start date atau due date task belum tersedia.', {
+                meetingId: meeting.id,
+                taskId: existingTask.id,
+                title: existingTask.title,
+                requestedFields: changedFields,
+              });
+              continue;
+            }
+          }
+
+          await reviewClient.updateTask(updateArgs);
+
+          console.info('[ITPROJECT] Field task lama berhasil diubah.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            changedFields,
+          });
+        } catch (error) {
+          console.warn('[ITPROJECT] Edit task lama gagal atau dilewati.', {
+            meetingId: meeting.id,
+            taskId: existingTask.id,
+            title: existingTask.title,
+            requestedFields: changedFields,
+            message: error.message,
+          });
+        }
+      }
+
+      if (projectUpdates.length) {
+        const projects = [...reviewStore.meetings.values()].flatMap(sourceMeeting =>
+          Object.values(sourceMeeting.itProjectProjectDispatch || {})
+            .filter(dispatch =>
+              dispatch.status === 'created' && dispatch.projectId
+            )
+            .map(dispatch => ({
+              id: dispatch.projectId,
+              title: dispatch.title,
+              project_no: dispatch.projectNo || null,
+            }))
+        );
+
+        const projectOptionsResult = await reviewClient.projectOptions();
+        const projectOptions = projectOptionsResult.data?.data;
+
+        if (!projectOptions?.statuses || !projectOptions?.priorities) {
+          throw new Error('Opsi status atau prioritas project tidak tersedia.');
+        }
+
+        const parseProjectUpdateDate = value => {
+          const text = String(value || '').trim();
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            return text;
+          }
+
+          const match = text.match(
+            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
+          );
+
+          if (!match) {
+            throw new Error(`Tanggal project tidak dikenali: '${text}'.`);
+          }
+
+          const monthNumbers = {
+            januari: '01',
+            februari: '02',
+            maret: '03',
+            april: '04',
+            mei: '05',
+            juni: '06',
+            juli: '07',
+            agustus: '08',
+            september: '09',
+            oktober: '10',
+            november: '11',
+            desember: '12',
+          };
+
+          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
+        };
+
+        const findUniqueProjectOption = (list, name, fieldName) => {
+          const normalizedName = normalizeTaskReference(name);
+          const matches = (list || []).filter(option =>
+            normalizeTaskReference(option.name) === normalizedName
+          );
+
+          if (matches.length !== 1) {
+            throw new Error(
+              `Opsi ${fieldName} '${name}' tidak ditemukan atau tidak unik.`
+            );
+          }
+
+          return matches[0];
+        };
+
+        for (const edit of projectUpdates) {
+          const reference = normalizeTaskReference(edit.project);
+
+          const matches = projects.filter(project => {
+            const title = normalizeTaskReference(project.title);
+            const number = normalizeTaskReference(project.project_no);
+
+            return (
+              title === reference ||
+              number === reference ||
+              (
+                reference.length >= 12 &&
+                title.length >= 12 &&
+                (title.includes(reference) || reference.includes(title))
+              )
+            );
+          });
+
+          if (matches.length !== 1) {
+            console.warn('[ITPROJECT] Edit project dilewati: referensi tidak unik.', {
+              meetingId: meeting.id,
+              projectReference: edit.project,
+              matches: matches.length,
+            });
+            continue;
+          }
+
+          const existingProject = matches[0];
+          const changes = edit.changes || {};
+          const updateArgs = { project: existingProject.id };
+          const changedFields = [];
+
+          try {
+            const detailResult = await reviewClient.projectDetail(existingProject.id);
+            const projectDetail =
+              detailResult.data?.data?.project ||
+              detailResult.data?.project ||
+              detailResult.data;
+
+            if (!projectDetail?.id) {
+              throw new Error('Detail project tidak berisi data project.');
+            }
+            if (Object.hasOwn(changes, 'title')) {
+              const value = String(changes.title || '').trim();
+              if (!value) throw new Error('Judul project baru kosong.');
+              updateArgs.title = value;
+              changedFields.push('title');
+            }
+
+            if (Object.hasOwn(changes, 'description')) {
+              const value = String(changes.description || '').trim();
+              updateArgs.description = value
+                ? `<p>${escapeHtml(value)}</p>`
+                : '';
+              changedFields.push('description');
+            }
+
+            if (Object.hasOwn(changes, 'emoji')) {
+              const value = String(changes.emoji || '').trim();
+              if (!value) throw new Error('Emoji project baru kosong.');
+              updateArgs.emoji = value;
+              changedFields.push('emoji');
+            }
+
+            if (Object.hasOwn(changes, 'startDate')) {
+              updateArgs.start_date = parseProjectUpdateDate(changes.startDate);
+              changedFields.push('start_date');
+            }
+
+            if (Object.hasOwn(changes, 'dueDate')) {
+              updateArgs.due_date = parseProjectUpdateDate(changes.dueDate);
+              changedFields.push('due_date');
+            }
+
+            const existingStartDate = projectDetail.start_date
+            ? String(projectDetail.start_date).slice(0, 10)
+            : '';
+          const existingDueDate = projectDetail.due_date
+            ? String(projectDetail.due_date).slice(0, 10)
+            : '';
+
+          if (!updateArgs.start_date && existingStartDate) {
+            updateArgs.start_date = existingStartDate;
+          }
+
+          if (!updateArgs.due_date && existingDueDate) {
+            updateArgs.due_date = existingDueDate;
+          }
+
+          const startDate = updateArgs.start_date || existingStartDate;
+          const dueDate = updateArgs.due_date || existingDueDate;
+
+          if (!dueDate) {
+            console.warn('[ITPROJECT] Edit project dilewati: project belum memiliki due date.', {
+              meetingId: meeting.id,
+              projectId: existingProject.id,
+              title: existingProject.title,
+              requestedFields: changedFields,
+            });
+            continue;
+          }
+
+          if (startDate && dueDate < startDate) {
+            throw new Error('Due date project tidak boleh sebelum start date.');
+          }
+
+            if (startDate && dueDate && dueDate < startDate) {
+              throw new Error('Due date project tidak boleh sebelum start date.');
+            }
+
+            if (Object.hasOwn(changes, 'status')) {
+              updateArgs.status_id = findUniqueProjectOption(
+                projectOptions.statuses,
+                changes.status,
+                'status project'
+              ).id;
+              changedFields.push('status');
+            }
+
+            if (Object.hasOwn(changes, 'priority')) {
+              updateArgs.priority_id = findUniqueProjectOption(
+                projectOptions.priorities,
+                changes.priority,
+                'prioritas project'
+              ).id;
+              changedFields.push('priority');
+            }
+
+            if (!changedFields.length) {
+              console.info('[ITPROJECT] Edit project dilewati: tidak ada field yang berubah.', {
+                meetingId: meeting.id,
+                projectId: existingProject.id,
+                title: existingProject.title,
+              });
+              continue;
+            }
+
+            await reviewClient.updateProject(updateArgs);
+
+            console.info('[ITPROJECT] Project lama berhasil diubah.', {
+              meetingId: meeting.id,
+              projectId: existingProject.id,
+              projectNo: existingProject.project_no || null,
+              title: existingProject.title,
+              changedFields,
+            });
+          } catch (error) {
+            console.warn('[ITPROJECT] Edit project gagal atau dilewati.', {
+              meetingId: meeting.id,
+              projectId: existingProject.id,
+              title: existingProject.title,
+              requestedFields: changedFields,
+              message: error.message,
+            });
+          }
+        }
+      }
+  }
 
   app.use('/api', (req,res,next)=>{
     req.requestId=randomUUID();
@@ -76,14 +1729,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     next();
   });
   app.use(cors({ credentials: true, exposedHeaders:['X-Request-ID'], origin(origin, callback) {
-    if (!origin || config.corsOrigins.includes(origin)) return callback(null, true);
-    try {
-      const url = new URL(origin);
-      if (url.port === '5187' && (/^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(url.hostname))) {
-        return callback(null, true);
-      }
-    } catch {}
-    callback(null, false);
+    callback(null, isOriginAllowed(origin, config));
   } }));
 
   // Preserve rawBody buffer for LiveKit cryptographic webhook signature verification
@@ -101,6 +1747,73 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
+  app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const result = await itProject.projectOptions();
+    res.set('Cache-Control', 'no-store').json(result.data);
+  }));
+
+  app.post('/api/itproject/projects', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const {
+      title,
+      description,
+      emoji,
+      start_date: startDate,
+      due_date: dueDate,
+      status_id: statusId,
+      priority_id: priorityId,
+    } = req.body || {};
+
+    const validDate = value => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.valueOf()) &&
+        parsed.toISOString().slice(0, 10) === value;
+    };
+
+    if (!nonEmpty(title, 160) || !nonEmpty(description, 8000) ||
+        !nonEmpty(emoji, 16) || !validDate(startDate) ||
+        !nonEmpty(statusId, 128) || !nonEmpty(priorityId, 128)) {
+      return res.status(400).json({
+        error: 'Isi title, description, emoji, start_date, status_id, dan priority_id dengan benar.',
+      });
+    }
+
+    if (dueDate && (!validDate(dueDate) || dueDate < startDate)) {
+      return res.status(400).json({
+        error: 'due_date harus berformat YYYY-MM-DD dan tidak boleh sebelum start_date.',
+      });
+    }
+
+    const result = await itProject.createProject({
+      title: title.trim(),
+      description,
+      emoji,
+      start_date: startDate,
+      ...(dueDate ? { due_date: dueDate } : {}),
+      status_id: statusId,
+      priority_id: priorityId,
+    });
+
+    res.status(201).set('Cache-Control', 'no-store').json({
+      success: true,
+      result: result.data,
+    });
+  }));
+
   async function dispatchOutboundWebhook(url, payload) {
     if (!url) return;
     try {
@@ -114,12 +1827,181 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     }
   }
 
+  app.get('/api/itproject/task-options', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const project = typeof req.query.project === 'string'
+      ? req.query.project
+      : '';
+
+    if (!nonEmpty(project, 128)) {
+      return res.status(400).json({ error: 'Isi project dengan ID project ter-encode.' });
+    }
+
+    const result = await itProject.taskOptions(project);
+    res.set('Cache-Control', 'no-store').json(result.data);
+  }));
+
+  app.post('/api/itproject/tasks', asyncRoute(async (req, res) => {
+    if (!config.itprojectProjectCreationTestEnabled) {
+      return res.status(404).json({ error: 'Endpoint uji project tidak aktif.' });
+    }
+    if (!itProject.authenticated) {
+      return res.status(401).json({ error: 'Login OAuth IT Project belum dilakukan.' });
+    }
+
+    const {
+      project,
+      title,
+      status_id: statusId,
+      priority_id: priorityId,
+      type_id: typeId,
+      task_category_id: taskCategoryId,
+      description = '',
+    } = req.body || {};
+
+    if (!nonEmpty(project, 128) || !nonEmpty(title, 160) ||
+        !nonEmpty(statusId, 128) || !nonEmpty(priorityId, 128) ||
+        !nonEmpty(typeId, 128) ||
+        (taskCategoryId && !nonEmpty(taskCategoryId, 128)) ||
+        typeof description !== 'string' || description.length > 8000) {
+      return res.status(400).json({
+        error: 'Isi project, title, status_id, priority_id, dan type_id dengan benar.',
+      });
+    }
+
+    const result = await itProject.createTask({
+      project,
+      title: title.trim(),
+      status_id: statusId,
+      priority_id: priorityId,
+      type_id: typeId,
+      ...(taskCategoryId ? { task_category_id: taskCategoryId } : {}),
+      assign_users: [],
+      description,
+    });
+
+    res.status(201).set('Cache-Control', 'no-store').json({
+      success: true,
+      result: result.data,
+    });
+  }));
+
+  app.get(['/api/itproject/oauth/start', '/oauth/start'], (req, res) => {
+  if (!config.itprojectOAuthClientId || !config.itprojectOAuthRedirectUri) {
+    return res.status(503).send('Konfigurasi OAuth IT Project belum lengkap.');
+  }
+
+  const now = Date.now();
+  for (const [state, pending] of itprojectOAuthPending) {
+    if (pending.expiresAt <= now) itprojectOAuthPending.delete(state);
+  }
+
+  const state = randomBytes(32).toString('base64url');
+  const verifier = randomBytes(32).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+  itprojectOAuthPending.set(state, {
+    verifier,
+    expiresAt: now + 10 * 60 * 1000,
+  });
+
+  const authorizeUrl = new URL(
+    'https://devitproject.balitower.co.id/oauth/authorize'
+  );
+  authorizeUrl.searchParams.set('response_type', 'code');
+  authorizeUrl.searchParams.set('client_id', config.itprojectOAuthClientId);
+  authorizeUrl.searchParams.set('redirect_uri', config.itprojectOAuthRedirectUri);
+  authorizeUrl.searchParams.set('scope', 'mcp:use');
+  authorizeUrl.searchParams.set('resource', 'https://devitproject.balitower.co.id/mcp');
+  authorizeUrl.searchParams.set('state', state);
+  authorizeUrl.searchParams.set('code_challenge', challenge);
+  authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+  res.set('Cache-Control', 'no-store').redirect(authorizeUrl.toString());
+});
+
+  app.get(['/api/itproject/status', '/oauth/status'], (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({
+      authenticated: itProject.authenticated,
+      enabled: itProject.enabled,
+      mcpUrl: config.itprojectMcpUrl,
+      projectId: config.itprojectProjectId || null,
+      taskTypeId: config.itprojectTaskTypeId || null,
+      taskStatusName: config.itprojectTaskStatusName || 'To Do',
+      hasToken: Boolean(config.itprojectMcpToken),
+      tokenExpiresAt: config.itprojectOAuthExpiresAt
+        ? new Date(config.itprojectOAuthExpiresAt).toISOString()
+        : null,
+    });
+  });
+
+  app.get('/oauth/callback', asyncRoute(async (req, res) => {
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const pending = itprojectOAuthPending.get(state);
+
+    itprojectOAuthPending.delete(state);
+
+    if (!pending || pending.expiresAt <= Date.now() || !code) {
+      if (itProject.authenticated) {
+        return res.set('Cache-Control', 'no-store').send(
+          'Login OAuth IT Project sudah aktif. Token telah tersimpan di server/data/itproject-oauth.json dan siap digunakan.'
+        );
+      }
+      return res.status(400).send('Callback OAuth tidak valid atau sudah kedaluwarsa.');
+    }
+
+    const form = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: config.itprojectOAuthClientId,
+      code,
+      redirect_uri: config.itprojectOAuthRedirectUri,
+      code_verifier: pending.verifier,
+      resource: 'https://devitproject.balitower.co.id/mcp',
+    });
+
+    const response = await fetchImpl('https://devitproject.balitower.co.id/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form,
+    });
+
+    if (!response.ok) {
+      return res.status(502).send('IT Project gagal menerbitkan token OAuth.');
+    }
+
+    const tokens = await response.json();
+    if (!tokens.access_token) {
+      return res.status(502).send('Respons OAuth tidak berisi access token.');
+    }
+
+    try {
+      itProject.setOAuthTokens(tokens);
+    } catch (error) {
+      console.error('[ITPROJECT] OAuth tokens could not be persisted:', error.message);
+      return res.status(500).send(
+        'Login OAuth IT Project berhasil. Token tersimpan untuk digunakan kembali setelah backend restart.'
+      );
+    }
+
+    res.set('Cache-Control', 'no-store').send(
+      'Login OAuth IT Project berhasil! Token telah disimpan secara permanen di server/data/itproject-oauth.json dan siap digunakan.'
+    );
+  }));
+
   // 1. Health check & provider/database info
   app.get('/api/health', asyncRoute(async (_req, res) => {
     let livekitStatus = 'unavailable';
     try { await probe(); livekitStatus = 'reachable'; } catch { /* API health is independent of SFU. */ }
     const llmEffectiveProvider = effectiveLlm(config);
-    const qwenLive = await qwenLiveCapabilities(config, fetchImpl);
+    const [qwenLive, seaLive] = await Promise.all([qwenLiveCapabilities(config, fetchImpl), seaLiveCapabilities(config, fetchImpl)]);
+    const seaLivePilotReady = config.seaLivePilotEnabled && seaLive.ready;
     res.json({
       status: 'ok',
       livekitUrl: config.livekitUrl,
@@ -133,11 +2015,16 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       sttDiarization: Boolean(config.sttDiarization),
       qwenDiarizationReady: await qwenDiarizationReady(config, fetchImpl),
       qwenLiveReady: qwenLive.ready,
+      qwenBatchConfigured: postMeetingBatch.configured,
+      qwenBatchWorkerReady: await postMeetingBatch.workerReady(),
       qwenLiveDiarizationReady: qwenLive.diarization,
+      seaLivePilotReady,
+      seaLiveDiarizationReady: seaLivePilotReady && seaLive.diarization,
       sttModel: config.sttModel,
       sttModels: [...availableSttModels(config),
         ...(config.liveSttUrl && config.liveSttSecret ? ['whisperlivekit-small'] : []),
-        ...(qwenLive.ready ? [QWEN_LIVE_MODEL] : [])],
+        ...(qwenLive.ready ? [QWEN_LIVE_MODEL] : []),
+        ...(seaLivePilotReady ? [SEA_LIVE_MODEL] : [])],
       database: {
         connected: isDbConnected(),
         configured: Boolean(config.databaseUrl),
@@ -448,9 +2335,35 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     });
   }));
 
+  async function reviewActor(req, id) {
+    const meeting=store.get(id);
+    if (!meeting) throw new ServiceError('Rapat tidak ditemukan.',404);
+    if (req.auth?.user?.isGuest) throw new ServiceError('Tamu tidak dapat meninjau pengiriman MCP.',403);
+    let actor=req.auth?.user?.employeeId;
+    if (!actor && !config.authEnabled) {
+      const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+      if (!token) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
+      let claims;
+      try { claims=await verifier.verify(token); } catch { throw new ServiceError('Sesi akses rapat tidak valid.',401); }
+      if (claims.video?.room!==meeting.livekitRoom || !claims.video?.roomJoin) throw new ServiceError('Sesi tidak sesuai rapat.',403);
+      actor=claims.sub;
+    }
+    if (!actor) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
+    if (actor!==meeting.hostId && !meeting.participants.has(actor)) throw new ServiceError('Anda tidak memiliki akses tinjauan rapat ini.',403);
+    return actor;
+  }
+  app.get('/api/mcp-reviews/:id',asyncRoute(async(req,res)=>{
+    const actor=await reviewActor(req,req.params.id);
+    res.set('Cache-Control','no-store').json(await mcpReview.review(req.params.id,actor));
+  }));
+  app.post('/api/mcp-reviews/:id/decision',asyncRoute(async(req,res)=>{
+    const actor=await reviewActor(req,req.params.id);
+    res.set('Cache-Control','no-store').json(await mcpReview.decide(req.params.id,actor,req.body || {}));
+  }));
+
   // Meeting authorization middleware
   app.use('/api/meetings/:id', asyncRoute(async (req, res, next) => {
-    if (['db-summaries', 'db-details'].includes(req.params.id)) return next();
+    if (['db-summaries', 'db-details'].includes(req.params.id) || req.path === '/recording' || req.path === '/recording/download' || req.path.startsWith('/export')) return next();
     const meeting = store.get(req.params.id);
     if (!meeting) return res.status(404).json({ error: 'Meeting session not found' });
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -463,6 +2376,30 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     req.speakerId = claims.sub;
     next();
   }));
+
+  function getMeetingRecordingInfo(meetingId, storeMeeting = null) {
+    const cleanId = String(meetingId || '').replace(/^meeting-/, '');
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(cleanId)) return {hasRecording:false};
+    const names = [...new Set(['mp4','ogg'].flatMap(ext => [`meeting-${cleanId}.${ext}`, `${cleanId}.${ext}`]))];
+    const recordedName = storeMeeting?.recording?.filepath && basename(storeMeeting.recording.filepath);
+    if (names.includes(recordedName)) names.unshift(recordedName);
+    const roots = [...new Set([config.livekitRecordingsDir, config.qwenBatchRecordingsDir].filter(Boolean))];
+    for (const root of roots) {
+      let base;
+      try { base = realpathSync(root); } catch { continue; }
+      for (const name of names) {
+        try {
+          const filePath = realpathSync(join(base,name));
+          const rel = relative(base,filePath);
+          if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
+          const stats = statSync(filePath);
+          if (stats.isFile() && stats.size > 0) return {hasRecording:true,filePath,
+            fileName:basename(filePath),fileSize:stats.size};
+        } catch { /* Missing files are normal while Egress finishes writing. */ }
+      }
+    }
+    return {hasRecording:false};
+  }
 
   function writable(req, res) {
     const meeting = store.get(req.meetingId);
@@ -794,6 +2731,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   app.post('/api/meetings/:id/live-session', asyncRoute(async (req, res) => {
     if (!writable(req, res)) return;
     const { language, model, diarize = false, streamId } = req.body || {};
+    if (model === SEA_LIVE_MODEL) {
+      if (!config.seaLivePilotEnabled) return res.status(503).json({error:'SEA Live pilot belum diaktifkan. Pilih model lain.'});
+      const capabilities = await seaLiveCapabilities(config, fetchImpl);
+      if (!capabilities.ready) return res.status(503).json({error:'SEA Live worker belum siap. Pilih model lain.'});
+      if (language !== 'id' || typeof diarize !== 'boolean') return res.status(400).json({error:'Mode SEA Live tidak valid; gunakan Bahasa Indonesia.'});
+      if (diarize && !capabilities.diarization) return res.status(503).json({error:'Nemotron untuk SEA belum siap. Gunakan mikrofon pribadi atau coba lagi.'});
+      if (streamId !== undefined && (typeof streamId !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(streamId))) return res.status(400).json({error:'Sesi mikrofon tidak valid.'});
+      const payload=Buffer.from(JSON.stringify({meetingId:req.meetingId,speakerId:req.speakerId,language,model,
+        diarize,...(streamId?{streamId}:{}),exp:(capabilities.workerTime ?? Math.floor(Date.now()/1000))+60,nonce:randomUUID()})).toString('base64url');
+      const signature=createHmac('sha256',config.seaLiveSttSecret).update(payload).digest('base64url');
+      return res.set('Cache-Control','no-store').json({url:`${config.seaLiveSttUrl}?ticket=${payload}.${signature}`});
+    }
     if (model === QWEN_LIVE_MODEL) {
       const capabilities = await qwenLiveCapabilities(config, fetchImpl);
       if (!capabilities.ready || (diarize && !capabilities.diarization)) return res.status(503).json({ error: 'Qwen streaming atau diarization belum siap.' });
@@ -832,9 +2781,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       coHostIds: meeting.coHostIds || [],
       currentRole,
       recording: meeting.recording || null,
-      transcripts: meeting.transcripts,
+      transcripts: meeting.postMeetingBatch?.status === 'done' ? meeting.postMeetingBatch.transcripts : meeting.transcripts,
+      postMeetingBatch: publicBatch(meeting.postMeetingBatch),
       participants: [...meeting.participants.values()].map(publicParticipant),
-      summary: meeting.summary,
+      summary: meeting.postMeetingBatch?.status === 'done' ? meeting.postMeetingBatch.summary : meeting.summary,
       attendanceFinalization: meeting.attendanceFinalization || null,
       microphoneRestricted: Boolean(
         meeting.participants.get(req.speakerId)?.moderatorMuted
@@ -866,7 +2816,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const manager=req.speakerId===meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
     if (req.speakerId!==sourceId && !manager) return res.status(403).json({error:'Hanya pemilik mikrofon atau host yang dapat mengubah nama pembicara.'});
     const key=speakerAliasKey({sourceId,sessionId,speaker});
-    const matches=entry=>entry.sttModel===QWEN_LIVE_MODEL && entry.segments?.some(segment=>speakerAliasKey(segment)===key && segment.attribution==='assigned');
+    const matches=entry=>[QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel) && entry.segments?.some(segment=>speakerAliasKey(segment)===key && segment.attribution==='assigned');
     if (!meeting.transcripts.some(matches)) return res.status(404).json({error:'Pembicara yang dapat diberi nama tidak ditemukan.'});
     const updatedEntries=store.transact(()=>{
       meeting.speakerAliases ||= {};
@@ -887,22 +2837,30 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   app.post('/api/meetings/:id/transcript', (req, res) => {
-    if (req.body?.sttModel === QWEN_LIVE_MODEL) {
-      if (!writable(req,res)) return;
+    if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body?.sttModel)) {
       let final;
-      try { final = validateLiveFinal(req.body.final,req.speakerId); }
+      try {
+        final = validateLiveFinal(req.body.final,req.speakerId);
+        if (req.body.sttModel === SEA_LIVE_MODEL && !seaSessionDiarized(req.body.final,config,req.meetingId,req.speakerId)) {
+          if (req.body.final.attribution !== 'unknown') throw Error('SEA personal mode cannot assign acoustic speakers');
+          final.segments = final.segments.map(segment => ({ ...segment, speaker:'Peserta', attribution:'participant' }));
+        }
+      }
       catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
-      final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
+      if ([QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body.sttModel)) final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
       const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
-      const entry = existing || store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,QWEN_LIVE_MODEL);
+      if (existing) return res.json({success:true,entry:existing});
+      if (!writable(req,res)) return;
+      const entry = store.append(req.meetingId,req.speakerId,final.text,final.requestId,final.segments,req.body.sttModel);
       return res.json({success:true,entry});
     }
     const { text, requestId = randomUUID() } = req.body || {};
     if (!nonEmpty(text, 10000) || !requestIdValid(requestId)) return res.status(400).json({ error: 'Non-empty text and a valid requestId are required' });
+    const cleanText = normalizeTranscriptText(text);
     const previous = store.findEntry(store.get(req.meetingId), req.speakerId, requestId);
     if (previous) return res.json({ success: true, entry: previous });
     if (!writable(req, res)) return;
-    res.json({ success: true, entry: store.append(req.meetingId, req.speakerId, text, requestId) });
+    res.json({ success: true, entry: store.append(req.meetingId, req.speakerId, cleanText, requestId) });
   });
 
   app.post('/api/meetings/:id/presence', (req, res) => {
@@ -912,7 +2870,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   });
 
   app.post('/api/meetings/:id/recording/start', asyncRoute(async (req, res) => {
+    if (!requireMeetingManager(req, res)) return;
     const meeting = store.get(req.meetingId);
+    const batchRequested = req.body?.postMeetingBatch === true;
+    if (batchRequested && (req.speakerId !== meeting.hostId || !postMeetingBatch.configured)) return res.status(503).json({ error: 'Batch Qwen hanya dapat diaktifkan host setelah worker dan folder rekaman dikonfigurasi.' });
+    if (batchRequested && ((meeting.recordingRuns || 0) > 0 || !['id', 'en'].includes(req.body?.language || 'id'))) return res.status(400).json({ error: 'Batch memerlukan satu rekaman utuh dan bahasa id/en. Mulai dari rapat baru.' });
 
     if (meeting.status !== 'active') {
       return res.status(409).json({ error: 'Meeting sudah selesai.' });
@@ -925,23 +2887,25 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       });
     }
 
-    const filepath = `/out/${meeting.livekitRoom}.mp4`;
+    const audioOnly = batchRequested;
+    const filepath = `/out/${meeting.livekitRoom}.${audioOnly ? 'ogg' : 'mp4'}`;
 
     const result = await egressClient.startRoomCompositeEgress(
       meeting.livekitRoom,
       {
         file: {
           filepath,
-          fileType: 1,
+          fileType: audioOnly ? 2 : 1,
         },
       },
       // Empty layout skips the default template's screen-share focus switch.
       // Explicit grid keeps camera tiles equal and promotes screen sharing.
-      { layout: 'grid' },
+      audioOnly ? { audioOnly: true, ...(config.qwenBatchEgressMode === 'sdk' ? {} : { layout: 'grid' }) } : { layout: 'grid' },
     );
 
     const recording = {
       egressId: result.egressId,
+      audioOnly,
       status: 'active',
       startedAt: new Date().toISOString(),
       stoppedAt: null,
@@ -950,6 +2914,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
     store.transact(() => {
       store.get(req.meetingId).recording = recording;
+      store.get(req.meetingId).recordingRuns = (store.get(req.meetingId).recordingRuns || 0) + 1;
+      if (batchRequested) store.get(req.meetingId).postMeetingBatchRequested = { language: req.body?.language || 'id' };
     });
 
     res.json({
@@ -988,6 +2954,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
     }
 
+    postMeetingBatch.schedule(updated.id);
     try {
       await saveMeeting(updated);
       await saveAttendees(updated.id, [...updated.participants.values()]);
@@ -1007,6 +2974,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   app.post('/api/meetings/:id/recording/stop', asyncRoute(async (req, res) => {
+    if (!requireMeetingManager(req, res)) return;
     const meeting = store.get(req.meetingId);
     const recording = meeting.recording;
 
@@ -1041,6 +3009,40 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     res.json({
       success: true,
       recording: store.get(req.meetingId).recording,
+    });
+  }));
+
+  app.get('/api/meetings/:id/recording', asyncRoute(async (req, res) => {
+    if (req.auth?.user?.isGuest) {
+      return res.status(403).json({ error: 'Tamu tidak diizinkan mengakses rekaman rapat.' });
+    }
+    const storeMeeting = store.get(req.params.id);
+    const rec = getMeetingRecordingInfo(req.params.id, storeMeeting);
+    res.json({
+      success: true,
+      meetingId: req.params.id,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
+      fileName: rec.fileName || null,
+    });
+  }));
+
+  app.get('/api/meetings/:id/recording/download', asyncRoute(async (req, res) => {
+    if (req.auth?.user?.isGuest) {
+      return res.status(403).json({ error: 'Tamu tidak diizinkan mengunduh rekaman rapat.' });
+    }
+    const storeMeeting = store.get(req.params.id);
+    const rec = getMeetingRecordingInfo(req.params.id, storeMeeting);
+    if (!rec.hasRecording || !rec.filePath) {
+      return res.status(404).json({ error: 'Berkas rekaman tidak ditemukan untuk rapat ini.' });
+    }
+
+    const downloadFileName = rec.fileName || `meeting-${req.params.id}.mp4`;
+    res.download(rec.filePath, downloadFileName, (err) => {
+      if (err && !res.headersSent) {
+        console.warn('[RECORDING] Download error:', err.message);
+        res.status(500).json({ error: 'Gagal mengunduh berkas rekaman.' });
+      }
     });
   }));
 
@@ -1081,41 +3083,75 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   async function summarizeMeeting(id) {
     const meeting = store.get(id);
-    if (meeting.summary && meeting.summary.transcriptCount === meeting.transcripts.length) return meeting.summary;
+    
+    if (
+      meeting.summary?.summaryVersion === SUMMARY_VERSION &&
+      meeting.summary.transcriptCount === meeting.transcripts.length &&
+      meeting.summary.transcriptDigest === summaryTranscriptDigest(meeting)
+    ) {
+      try {
+        mcpReview.register(meeting, meeting.summary);
+      } catch (error) {
+        console.warn('[ITPROJECT] Retry sinkronisasi gagal:', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+      }
+
+      return meeting.summary;
+    }
     if (!inFlightSummarize.has(id)) {
       const task = (async () => {
-        const snapshot = structuredClone(meeting);
-        const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
-        const current = store.get(id);
-        if (current && current.transcripts.length === snapshot.transcripts.length) {
-          store.transact(() => { store.get(id).summary = summary; });
-        }
+        for (let snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++) {
+          const snapshot = structuredClone(store.get(id));
+          const transcriptDigest = summaryTranscriptDigest(snapshot);
+          const summary = { ...await summarize(snapshot, config, fetchImpl), transcriptDigest, transcriptCount: snapshot.transcripts.length, generatedAt: new Date().toISOString() };
+          const current = store.get(id);
+          if (!current || summaryTranscriptDigest(current) !== transcriptDigest) {
+            if (current && snapshotAttempt === 0) continue;
+            throw new ServiceError('Transkrip masih berubah saat notulen dibuat. Tunggu ucapan terakhir selesai lalu coba kembali.', 409);
+          }
+          if (current) {
+            store.transact(() => {
+              store.get(id).summary = summary;
+            });
+          }
 
-        // Persist to PostgreSQL database
-        try {
-          await saveMeeting(snapshot);
-          await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
-          await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
-          const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
-          if (dbSummary) summary.dbSummaryId = dbSummary.id;
-        } catch (dbErr) {
-          console.warn('[DB] Could not persist meeting to database:', dbErr.message);
-        }
+          // Persist to PostgreSQL database
+          try {
+            await saveMeeting(snapshot);
+            await saveTranscripts(snapshot.id, snapshot.roomName, snapshot.transcripts);
+            await saveAttendees(snapshot.id, [...snapshot.participants.values()]);
+            const dbSummary = await saveMeetingSummary(snapshot.id, snapshot.roomName, summary);
+            if (dbSummary) summary.dbSummaryId = dbSummary.id;
+          } catch (dbErr) {
+            console.warn('[DB] Could not persist meeting to database:', dbErr.message);
+          }
+          try {
+            mcpReview.register(store.get(snapshot.id), summary);
+          } catch (error) {
+            // Jangan gagalkan ringkasan rapat jika IT Project sedang tidak tersedia.
+            console.warn('[ITPROJECT] Sinkronisasi action items dilewati:', {
+              meetingId: snapshot.id,
+              message: error.message,
+            });
+          }
 
-        // Trigger outbound webhook if configured
-        if (config.outboundWebhookUrl) {
-          dispatchOutboundWebhook(config.outboundWebhookUrl, {
-            event: 'meeting.summary.created',
-            meetingId: snapshot.id,
-            roomName: snapshot.roomName,
-            summary,
-            transcriptsCount: snapshot.transcripts.length,
-            attendees: [...snapshot.participants.values()].map(publicParticipant),
-            timestamp: new Date().toISOString(),
-          });
-        }
+          // Trigger outbound webhook if configured
+          if (config.outboundWebhookUrl) {
+            dispatchOutboundWebhook(config.outboundWebhookUrl, {
+              event: 'meeting.summary.created',
+              meetingId: snapshot.id,
+              roomName: snapshot.roomName,
+              summary,
+              transcriptsCount: snapshot.transcripts.length,
+              attendees: [...snapshot.participants.values()].map(publicParticipant),
+              timestamp: new Date().toISOString(),
+            });
+          }
 
-        return summary;
+          return summary;
+        }
       })();
       inFlightSummarize.set(id, task);
     }
@@ -1129,6 +3165,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     store,
     pendingAudio: id => [...inFlightAudio].filter(([key]) => key.startsWith(`${id}:`)).map(([, work]) => work),
     persist: async meeting => {
+      postMeetingBatch.schedule(meeting.id);
       await saveMeeting(meeting);
       await saveAttendees(meeting.id, [...meeting.participants.values()]);
       if (meeting.transcripts.length) await saveTranscripts(meeting.id, meeting.roomName, meeting.transcripts);
@@ -1136,11 +3173,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     summarize: summarizeMeeting,
   });
 
+  app.get('/api/meetings/:id/post-meeting-batch', (req, res) => {
+    res.set('Cache-Control', 'no-store').json({ configured: postMeetingBatch.configured, requested: Boolean(store.get(req.meetingId).postMeetingBatchRequested), job: publicBatch(store.get(req.meetingId).postMeetingBatch) });
+  });
+  app.post('/api/meetings/:id/post-meeting-batch', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (req.speakerId !== meeting.hostId || req.auth?.user?.isGuest) return res.status(403).json({ error: 'Hanya host rapat yang dapat memulai batch Qwen.' });
+    if (inFlightSummarize.has(meeting.id)) return res.status(409).json({ error: 'Tunggu pembuatan notulen live selesai sebelum memulai batch.' });
+    const job = await postMeetingBatch.start(meeting.id, req.body?.language || 'id');
+    res.status(job.status === 'done' ? 200 : 202).json({ job: publicBatch(job) });
+  }));
+
   app.post('/api/meetings/:id/batch-diarize', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
     if (!meeting) return res.status(404).json({ error: 'Rapat tidak ditemukan.' });
-    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
-    if (hasLive()) return res.status(409).json({ error: 'Transkrip Qwen Live tidak dapat diganti dengan batch audio yang hanya memuat sebagian rapat.' });
+    const hasLive = () => meeting.transcripts.some(entry => [QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel));
+    if (hasLive()) return res.status(409).json({ error: 'Transkrip live tidak dapat diganti dengan batch audio yang hanya memuat sebagian rapat.' });
 
     let audioBuffers = [];
     let mimeType = 'audio/webm';
@@ -1246,8 +3294,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   app.post('/api/meetings/:id/summarize', asyncRoute(async (req, res) => {
     const meeting = store.get(req.meetingId);
+    if (meeting.postMeetingBatch?.status === 'done') return res.json({ success: true,
+      summary: meeting.postMeetingBatch.summary, transcripts: meeting.postMeetingBatch.transcripts, meetingStatus: meeting.status });
     const shouldBatch = req.query.batchDiarize === 'true' || req.body?.batchDiarize === true;
-    const hasLive = () => meeting.transcripts.some(entry => entry.sttModel === QWEN_LIVE_MODEL);
+    const hasLive = () => meeting.transcripts.some(entry => [QWEN_LIVE_MODEL,SEA_LIVE_MODEL].includes(entry.sttModel));
 
     if (shouldBatch && !hasLive() && meetingAudios.get(req.meetingId)?.length) {
       try {
@@ -1282,11 +3332,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const final = store.get(req.meetingId).attendanceFinalization;
       final.status = 'complete'; final.error = null;
     });
+    const rec = getMeetingRecordingInfo(req.meetingId, store.get(req.meetingId));
     res.json({
       success: true,
       summary,
       meetingStatus: store.get(req.meetingId).status,
       transcripts: store.get(req.meetingId).transcripts,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
     });
   }));
 
@@ -1295,10 +3348,20 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const limit = parseInt(req.query.limit, 10) || 20;
     const summaries = await getMeetingSummaries(limit);
 
+    const enrichedSummaries = summaries.map(s => {
+      const rec = getMeetingRecordingInfo(s.meeting_id, store.get(s.meeting_id));
+      return {
+        ...s,
+        hasRecording: rec.hasRecording,
+        recordingSize: rec.fileSize || null,
+      };
+    });
+
     const inProgress = [];
     if (store && store.meetings) {
       for (const [id, meeting] of store.meetings.entries()) {
         if (inFlightSummarize.has(id)) {
+          const rec = getMeetingRecordingInfo(id, meeting);
           inProgress.push({
             meetingId: id,
             roomName: meeting.roomName,
@@ -1306,6 +3369,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             transcriptCount: meeting.transcripts.length,
             participants: [...meeting.participants.values()].map(publicParticipant),
             createdAt: meeting.createdAt,
+            hasRecording: rec.hasRecording,
+            recordingSize: rec.fileSize || null,
           });
         }
       }
@@ -1313,17 +3378,19 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
     res.json({
       success: true,
-      count: summaries.length,
+      count: enrichedSummaries.length,
       databaseConnected: isDbConnected(),
       inProgress,
-      summaries,
+      summaries: enrichedSummaries,
     });
   }));
 
   app.get('/api/meetings/db-details/:meetingId', asyncRoute(async (req, res) => {
     const details = await getMeetingDetails(req.params.meetingId);
+    const storeMeeting = store.get(req.params.meetingId);
+    const rec = getMeetingRecordingInfo(req.params.meetingId, storeMeeting);
+
     if (!details) {
-      const storeMeeting = store.get(req.params.meetingId);
       if (storeMeeting) {
         return res.json({
           success: true,
@@ -1334,14 +3401,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             created_at: storeMeeting.createdAt,
             ended_at: storeMeeting.endedAt,
           },
-          summary: storeMeeting.summary,
-          transcripts: storeMeeting.transcripts,
+          summary: storeMeeting.postMeetingBatch?.status === 'done' ? storeMeeting.postMeetingBatch.summary : storeMeeting.summary,
+          transcripts: storeMeeting.postMeetingBatch?.status === 'done' ? storeMeeting.postMeetingBatch.transcripts : storeMeeting.transcripts,
+          postMeetingBatch: publicBatch(storeMeeting.postMeetingBatch),
           attendees: [...storeMeeting.participants.values()].map(publicParticipant),
+          hasRecording: rec.hasRecording,
+          recordingSize: rec.fileSize || null,
         });
       }
       return res.status(404).json({ error: 'Meeting not found in database', meetingId: req.params.meetingId });
     }
-    res.json({ success: true, ...details });
+    res.json({
+      success: true,
+      ...details,
+      hasRecording: rec.hasRecording,
+      recordingSize: rec.fileSize || null,
+    });
   }));
 
     // Meeting report export authorization.
@@ -1697,6 +3772,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (webhookLogs.length > 50) webhookLogs.pop();
 
     const applied = store.applyLivekitEvent(event, config.attendanceGraceMs ?? 10000);
+    if (applied.meetingId) postMeetingBatch.schedule(applied.meetingId);
     if (applied.meetingId && !applied.duplicate) {
       const meeting = store.get(applied.meetingId);
       await saveMeeting(meeting);
@@ -1746,5 +3822,5 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     res.status(status).json({ error: status === 500 ? 'Server could not complete the request. Check service logs and data storage.' : error.message,requestId:req.requestId });
   });
 
-  return { app, store, notificationTick:()=>notifications?.tick(), close(){attendanceFinalizer.close();notifications?.close();} };
+  return { app, store, notificationTick:()=>notifications?.tick(), close(){postMeetingBatch.close();attendanceFinalizer.close();notifications?.close();} };
 }

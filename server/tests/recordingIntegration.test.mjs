@@ -76,4 +76,34 @@ test('upload choices reach the worker and database without losing speaker segmen
     const rows=(await query("SELECT speaker_name FROM balicall_transcripts WHERE meeting_id='named-speaker-qa'")).rows;
     assert.equal(rows.length,1);assert.match(rows[0].speaker_name,/Budi/);
   });
+  await t.test('PostgreSQL stores the batch revision separately and serves it over a later live summary',async()=>{
+    const {savePostMeetingBatch,saveTranscripts,saveMeetingSummary,getMeetingDetails,getMeetingSummaries}=await import('../db.js');
+    const id='post-batch-pg-qc';
+    const meeting={id,roomName:'Synthetic batch QC',livekitRoom:'meeting-'+id,status:'ended',createdAt:new Date().toISOString(),endedAt:new Date().toISOString(),participants:new Map()};
+    const summary={title:'Batch Qwen result',executiveSummary:'Synthetic result',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[],provider:'Synthetic QC',generatedAt:new Date().toISOString(),transcriptSource:'qwen-post-meeting'};
+    const batch={id:'batch-pg-1',status:'done',summary,transcripts:[{id:'batch-entry-1',speakerId:'recording',speakerName:'Rekaman rapat',text:'Batch text',timestamp:new Date().toISOString(),sttModel:'qwen3-asr-0.6b-batch',segments:[{speaker:'Pembicara 1',sessionId:'batch-pg-1',text:'Batch text',start:0,end:1}]}]};
+    await savePostMeetingBatch(meeting,batch);
+    await saveTranscripts(id,meeting.roomName,[{id:'live-pg-entry',speakerId:'owner',speakerName:'Owner',text:'Live original'}]);
+    await saveMeetingSummary(id,meeting.roomName,{...summary,title:'Later live result'});
+    await savePostMeetingBatch(meeting,batch);
+    const details=await getMeetingDetails(id);
+    assert.equal(details.summary.title,'Batch Qwen result');
+    assert.equal(details.transcripts[0].text,'Batch text');
+    assert.equal(details.liveTranscripts[0].text,'Live original');
+    assert.equal(details.postMeetingBatch.transcripts[0].segments[0].sessionId,'batch-pg-1');
+    assert.equal((await query('SELECT * FROM balicall_post_meeting_batches WHERE meeting_id=$1',[id])).rows.length,1);
+    assert.equal((await getMeetingSummaries()).find(row=>row.meeting_id===id).title,'Batch Qwen result');
+  });
+
+  await t.test('summary source evidence survives PostgreSQL detail and archive reload',async()=>{
+    const {saveMeeting,saveMeetingSummary,getMeetingDetails,getMeetingSummaries}=await import('../db.js');
+    const meeting={id:'source-evidence-qc',roomName:'Evidence QC',status:'ended',createdAt:new Date().toISOString(),participants:new Map()};
+    const evidence={version:1,transcriptDigest:'a'.repeat(64),utteranceCount:1,checkedFields:['decisions','actionItems'],items:[{field:'decisions',index:0,sources:[{utteranceId:'U0001',speaker:'QC',text:'Disepakati 13 juta.',quote:'Disepakati 13 juta.'}]}]};
+    await saveMeeting(meeting);
+    const summary={title:'Evidence',executiveSummary:'QC',keyDiscussionPoints:[],decisions:['Anggaran 13 juta.'],actionItems:[],attendanceSummary:[],sourceEvidence:evidence};
+    assert.ok(await saveMeetingSummary(meeting.id,meeting.roomName,summary));
+    assert.deepEqual((await getMeetingDetails(meeting.id)).summary.source_evidence,evidence);
+    assert.deepEqual((await getMeetingSummaries(50)).find(row=>row.meeting_id===meeting.id).source_evidence,evidence);
+  });
+
 });

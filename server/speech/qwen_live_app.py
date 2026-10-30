@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import os
-import urllib.request
 from contextlib import asynccontextmanager,suppress
 from fastapi import FastAPI,WebSocket,WebSocketDisconnect
 from qwen_live_engine import QwenEngine
@@ -11,57 +10,21 @@ from qwen_live_protocol import MODEL,decode_pcm
 from qwen_live_session import QwenLiveSession
 from stream_tickets import TicketVerifier
 from retained_sessions import RetainedSessions
+from streaming_diarization import DiarizationClient,diarization_ready
 
 logger=logging.getLogger('uvicorn.error')
 
 
-class DiarizationClient:
-    def __init__(self,socket): self.socket=socket
-
-    @classmethod
-    async def connect(cls):
-        from websockets.asyncio.client import connect
-        socket=await connect(os.getenv('QWEN_DIAR_STREAM_URL','ws://127.0.0.1:8009/asr'),
-            additional_headers={'Authorization':'Bearer '+os.environ['QWEN_DIAR_STREAM_SECRET']},
-            open_timeout=5,max_size=65536,max_queue=1)
-        config=json.loads(await asyncio.wait_for(socket.recv(),5))
-        if config.get('type')!='config':
-            await socket.close(); raise ConnectionError('Diarization session unavailable')
-        return cls(socket)
-
-    async def feed(self,packet,finish=False):
-        try:
-            await self.socket.send(packet)
-            result=json.loads(await asyncio.wait_for(self.socket.recv(),20))
-            if 'turns' not in result: raise ConnectionError('Invalid diarization result')
-            return result['turns']
-        except (OSError,TimeoutError) as error: raise ConnectionError('Diarization disconnected') from error
-        except Exception as error:
-            # WebSocket ConnectionClosed is not an OSError.
-            raise ConnectionError('Diarization stream failed') from error
-
-    async def close(self):
-        with suppress(Exception): await self.socket.close()
-
-
-def diarization_ready():
-    try:
-        origin=os.getenv('QWEN_DIAR_HEALTH_URL','http://127.0.0.1:8009/health')
-        with urllib.request.urlopen(origin,timeout=0.75) as response:
-            data=json.loads(response.read(16384))
-        return data.get('ready') is True and data.get('streaming') is True and data.get('diarization') is True
-    except Exception: return False
-
-
-def create_app(engine=None,secret=None,diarizer_factory=None):
+def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
     @asynccontextmanager
     async def lifespan(app):
         key=secret if secret is not None else os.getenv('QWEN_LIVE_STT_SECRET','')
         if len(key)<32: raise RuntimeError('QWEN_LIVE_STT_SECRET must contain at least 32 characters')
         app.state.verifier=TicketVerifier(key,MODEL)
+        limit=max_sessions if max_sessions is not None else int(os.getenv('QWEN_LIVE_MAX_SESSIONS','2'))
+        app.state.sessions=RetainedSessions(limit=limit)
         app.state.engine=engine if engine is not None else QwenEngine()
         app.state.active=0
-        app.state.sessions=RetainedSessions()
         async def reap():
             while True:
                 await asyncio.sleep(5)
@@ -81,7 +44,7 @@ def create_app(engine=None,secret=None,diarizer_factory=None):
     @app.get('/health')
     def health():
         return dict(ready=hasattr(app.state,'engine'),streaming=True,native=True,model=MODEL,
-            diarization=diarization_ready(),activeSessions=app.state.active,maxSessions=2,
+            diarization=diarization_ready(),activeSessions=app.state.active,maxSessions=app.state.sessions.limit,
             retainedSessions=len(app.state.sessions.slots)-app.state.sessions.active,resumeGraceSeconds=45)
 
     @app.websocket('/asr')
@@ -107,8 +70,12 @@ def create_app(engine=None,secret=None,diarizer_factory=None):
                 diarizer=await factory() if ticket.get('diarize') else None
                 return QwenLiveSession(app.state.engine,ticket,diarizer)
             try: slot,resumed=await app.state.sessions.acquire(ticket,create_session)
-            except ValueError:
-                await socket.close(code=4429); return
+            except ValueError as error:
+                capacity=str(error)=='Streaming capacity exceeded'
+                await socket.accept()
+                message=(f'Kapasitas transkripsi penuh ({app.state.sessions.limit} sesi mikrofon). Suara mikrofon ini belum ditranskripsi. Tunggu slot tersedia atau hubungi penyelenggara.' if capacity else 'Sesi mikrofon sebelumnya masih tersambung. Tunggu sesi lama selesai lalu coba kembali.')
+                await socket.send_json(dict(type='error',code='capacity_exceeded' if capacity else 'session_conflict',error=message))
+                await socket.close(code=4429 if capacity else 4409);return
             session=slot.session
             app.state.active+=1
             await socket.accept()

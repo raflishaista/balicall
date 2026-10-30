@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp } from '../app.js';
@@ -78,6 +78,7 @@ async function fixture(t, overrides = {}, dependencies = {}) {
   await new Promise(resolve => server.once('listening', resolve));
   let base = `http://127.0.0.1:${server.address().port}/api`;
   t.after(async () => {
+    context.close();
     await new Promise(resolve => server.close(resolve));
     const absolute = resolve(directory);
     assert.ok(absolute.startsWith(resolve(tmpdir()) + '\\') || absolute.startsWith(resolve(tmpdir()) + '/'));
@@ -102,6 +103,58 @@ async function fixture(t, overrides = {}, dependencies = {}) {
     base = `http://127.0.0.1:${server.address().port}/api`;
   } };
 }
+
+test('SEA gates availability, binds resumable Indonesian tickets and deduplicates saved finals',async t=>{
+ let ready=false;
+ const model='sea-asr-id-live',secret='m'.repeat(40),workerTime=1700000000;
+ const f=await fixture(t,{sttModel:'small',sttModels:['small'],seaLiveSttUrl:'/sea-live-stt/asr',seaLiveSttSecret:secret},{fetchImpl:async()=>new Response(JSON.stringify({ready,streaming:true,model,languages:['id']}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
+ const a=await f.joinRoom('sea-owner');
+ const health=()=>f.request('/health',undefined,null,'GET');
+ assert.ok(!(await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'id'})).status,503);
+ ready=true;
+ assert.equal((await health()).data.seaLivePilotReady,false);
+ assert.ok(!(await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'id'})).status,503);
+ f.config.seaLivePilotEnabled=true;
+ assert.equal((await health()).data.seaLivePilotReady,true);
+ assert.ok((await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'en'})).status,400);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:true})).status,503);
+ assert.equal((await a.post('live-session',{model,language:'id',streamId:'bad'})).status,400);
+ const session=await a.post('live-session',{model,language:'id',streamId:'sea-microphone-12345'});
+ assert.equal(session.status,200);
+ const ticket=new URL(session.data.url,'http://local').searchParams.get('ticket');
+ const [payload,signature]=ticket.split('.');
+ assert.equal(signature,createHmac('sha256',secret).update(payload).digest('base64url'));
+ const claims=JSON.parse(Buffer.from(payload,'base64url'));
+ assert.equal(claims.streamId,'sea-microphone-12345');assert.equal(claims.model,model);assert.equal(claims.speakerId,'sea-owner');assert.equal(claims.exp,workerTime+60);
+ const final={segmentId:claims.nonce+'-1',sessionId:claims.nonce,sourceId:'sea-owner',text:'Halo tim.',start:0,end:2,speakerLabel:'Peserta',attribution:'unknown'};
+ const upload={sttModel:model,final};
+ const first=await a.post('transcript',upload),again=await a.post('transcript',upload);
+ assert.equal(first.status,200);assert.equal(first.data.entry.sttModel,model);
+ assert.equal(first.data.entry.speakerName,'sea-owner');
+ assert.equal(first.data.entry.segments[0].attribution,'participant');
+ assert.equal(first.data.entry.segments[0].speaker,'Peserta');
+ assert.equal(again.data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('transcript',{...upload,final:{...final,sourceId:'other'}})).status,400);
+ for (const attribution of ['assigned','overlap','participant']) {
+  assert.equal((await a.post('transcript',{...upload,final:{...final,attribution}})).status,400);
+ }
+ const forged=await a.post('transcript',{...upload,final:{...final,segmentId:claims.nonce+'-2',speakerLabel:'CEO',speakerName:'CEO'}});
+ assert.equal(forged.status,200);
+ assert.equal(forged.data.entry.speakerName,'sea-owner');
+ assert.equal(forged.data.entry.segments[0].speaker,'Peserta');
+ assert.equal(forged.data.entry.segments[0].speakerName,undefined);
+ assert.equal((await a.post('speaker-name',{sourceId:'sea-owner',sessionId:claims.nonce,speaker:'Peserta',name:'CEO'})).status,404);
+ await f.restart();
+ const entries=(await a.get('transcript')).data.transcripts;
+ assert.equal(entries.length,2);
+ assert.equal(entries[0].segments[0].attribution,'participant');
+ assert.equal(entries[0].segments[0].sessionId,claims.nonce);
+ assert.equal((await a.post('transcript',upload)).data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('batch-diarize',{})).status,409);
+});
 
 test('Qwen live tickets bind speaker and shared mode; structured finals persist once',async t=>{
  const workerTime=1700000000;
@@ -514,13 +567,13 @@ test('a slow summary cannot overwrite newer dialogue with a stale cached result'
   const waitStarted = new Promise(resolve => { started = resolve; });
   const valid = { title: 'Summary', executiveSummary: 'Summary', keyDiscussionPoints: [], decisions: [], actionItems: [], attendanceSummary: [] };
   const f = await fixture(t, { llmProvider: 'office', llmKey: 'test' }, {
-    fetchImpl: async () => { started(); await new Promise(resolve => { release = resolve; }); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })); },
+    fetchImpl: async () => { if (!release) { started(); await new Promise(resolve => { release = resolve; }); } return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] })); },
   });
   const a = await f.joinRoom(); await a.post('transcript', { text: 'first words' });
   const summarizing = a.post('summarize');
   await waitStarted; await a.post('transcript', { text: 'new words' }); release();
-  assert.equal((await summarizing).data.summary.transcriptCount, 1);
-  assert.equal((await a.get('transcript')).data.summary, null);
+  assert.equal((await summarizing).data.summary.transcriptCount, 2);
+  assert.equal((await a.get('transcript')).data.summary.transcriptCount, 2);
 });
 
 test('employee ID format validation rejects malformed text such as ns-12nsunauu with 400 Format ID Salah', async t => {
@@ -652,3 +705,156 @@ test('schedule API validates time, creates future room, lists and cancels', asyn
 });
 
 
+
+test('SEA acoustic mode keeps unknown/overlap, persists labels and permits owner aliases after reconnect',async t=>{
+ const model='sea-asr-id-live',secret='n'.repeat(40);
+ let diarization=true;
+ const f=await fixture(t,{seaLivePilotEnabled:true,seaLiveSttUrl:'/sea-live-stt/asr',seaLiveSttSecret:secret},{fetchImpl:async()=>Response.json({ready:true,streaming:true,model,languages:['id'],diarization},{headers:{Date:new Date(1700000000000).toUTCString()}})});
+ const a=await f.joinRoom('sea-source'),b=await f.joinRoom('sea-other');
+ assert.equal((await f.request('/health',undefined,null,'GET')).data.seaLiveDiarizationReady,true);
+ const response=await a.post('live-session',{model,language:'id',diarize:true,streamId:'sea-shared-microphone-123'});
+ assert.equal(response.status,200);
+ const proof=new URL(response.data.url,'http://local').searchParams.get('ticket');
+ const claims=JSON.parse(Buffer.from(proof.split('.')[0],'base64url'));
+ assert.equal(claims.diarize,true);
+ const final={sessionId:claims.nonce,segmentId:claims.nonce+'-1',sourceId:'sea-source',text:'Selamat pagi',start:0,end:1,speakerLabel:'Pembicara 1',attribution:'assigned',sessionProof:proof};
+ const upload=value=>a.post('transcript',{sttModel:model,final:value});
+ const first=await upload(final);
+ assert.equal(first.status,200);
+ assert.equal(first.data.entry.segments[0].speaker,'Pembicara 1');
+ assert.equal(first.data.entry.segments[0].attribution,'assigned');
+ assert.ok(!JSON.stringify(first.data).includes(proof));
+ assert.equal((await upload({...final,sessionProof:undefined,segmentId:claims.nonce+'-bad'})).status,400);
+ assert.equal((await b.post('transcript',{sttModel:model,final:{...final,sourceId:'sea-other'}})).status,400);
+ const alias={sourceId:'sea-source',sessionId:claims.nonce,speaker:'Pembicara 1',name:'Rafli'};
+ assert.equal((await b.post('speaker-name',alias)).status,403);
+ assert.equal((await a.post('speaker-name',alias)).status,200);
+ assert.equal((await upload({...final,segmentId:claims.nonce+'-2'})).data.entry.segments[0].speakerName,'Rafli');
+ for(const [index,attribution] of ['unknown','overlap'].entries()) {
+  const saved=await upload({...final,segmentId:claims.nonce+'-'+(index+3),attribution,speakerLabel:attribution==='unknown'?'Pembicara belum diketahui':'Suara bertumpuk'});
+  assert.equal(saved.status,200);assert.equal(saved.data.entry.segments[0].attribution,attribution);
+  assert.equal(saved.data.entry.segments[0].speakerName,undefined);
+ }
+ await f.restart();
+ const saved=(await a.get('transcript')).data.transcripts;
+ assert.equal(saved.length,4);assert.equal(saved[0].segments[0].speakerName,'Rafli');
+ assert.ok(!readFileSync(f.config.dataFile,'utf8').includes(proof));
+ assert.equal((await upload(final)).data.entry.id,first.data.entry.id);
+ diarization=false;
+ assert.equal((await f.request('/health',undefined,null,'GET')).data.seaLiveDiarizationReady,false);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:true})).status,503);
+ assert.equal((await a.post('live-session',{model,language:'id',diarize:false})).status,200);
+});
+
+
+test('batch records audio only and automatically processes only after the last participant leaves and Egress completes', async t => {
+  const dir=mkdtempSync(join(tmpdir(),'balicall-audio-batch-'));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  let captured,complete=false,submissions=0,stops=0;
+  t.mock.method(EgressClient.prototype,'startRoomCompositeEgress',async(...args)=>{captured=args;return {egressId:'EG-audio-batch'};});
+  t.mock.method(EgressClient.prototype,'stopEgress',async()=>{stops++;return {};});
+  t.mock.method(EgressClient.prototype,'listEgress',async()=>[{egressId:'EG-audio-batch',roomName:captured?.[0],status:complete?3:2}]);
+  const f=await fixture(t,{qwenBatchEnabled:true,qwenBatchRecordingsDir:dir,qwenSttBaseUrl:'http://batch-worker/v1',recordingPollMs:10},{fetchImpl:async(url,options)=>{
+    if(String(url).endsWith('/health')) return Response.json({ready:true,model:'qwen3-asr-0.6b',batchDiarization:true});
+    if(options.method==='POST') {
+      submissions++; assert.equal(options.body.get('file').type,'audio/ogg');
+      assert.equal(options.body.get('diarizer'),'nemotron');
+      return Response.json({job_id:'audio-qc-job'});
+    }
+    return Response.json({status:'done',result:{model:'qwen3-asr-0.6b',diarizer:'nemotron',speaker_scope:'recording',duration:2,
+      segments:[{text:'Kalimat peserta pertama',speaker:'Pembicara 1',start:0,end:1},{text:'Kalimat peserta kedua',speaker:'Pembicara 2',start:1,end:2}]}});
+  }});
+  const host=await f.joinRoom('audio-host'), guest=await f.joinRoom('audio-guest');
+  assert.equal((await guest.post('recording/start',{postMeetingBatch:true})).status,403);
+  const started=await host.post('recording/start',{postMeetingBatch:true,language:'id'});
+  assert.equal(started.status,200,JSON.stringify(started.data));
+  assert.equal(captured[2].audioOnly,true);
+  assert.equal(captured[2].layout,'grid');
+  assert.equal(captured[1].file.fileType,2);
+  assert.match(captured[1].file.filepath,/\.ogg$/);
+  assert.equal(started.data.recording.audioOnly,true);
+  writeFileSync(join(dir,captured[1].file.filepath.split('/').pop()),'synthetic-audio-container-fixture');
+  assert.equal((await host.post('leave')).data.status,'active');
+  assert.equal(stops,0); assert.equal(submissions,0);
+  assert.equal((await guest.post('leave')).data.status,'ended');
+  assert.equal(stops,1);
+  await new Promise(resolve=>setTimeout(resolve,35));
+  assert.equal(submissions,0,'Egress acknowledgement is not a completed recording');
+  complete=true;
+  let job;
+  for(let i=0;i<100;i++) {
+    job=(await host.get('post-meeting-batch')).data.job;
+    if(job?.status==='done'||job?.status==='failed') break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.equal(job?.status,'done',job?.error);
+  assert.equal(submissions,1);
+  assert.equal(job.transcripts.length,2);
+  const saved=JSON.parse(readFileSync(f.config.dataFile,'utf8')).meetings.find(m=>m.id===host.meetingId);
+  assert.equal(saved.postMeetingBatch.status,'done');
+  assert.equal(saved.postMeetingBatch.summary.transcriptSource,'qwen-post-meeting');
+  assert.equal(saved.transcripts.length,0,'Batch keeps the live transcript separate');
+  await f.restart();
+  assert.equal((await host.get('post-meeting-batch')).data.job.status,'done');
+  assert.equal(submissions,1,'Restart must not upload the same recording again');
+});
+
+test('summarizing never rewrites stored utterances or diarization segments',async t=>{
+ const f=await fixture(t),a=await f.joinRoom();
+ const saved=await a.post('transcript',{text:'Ucapan awal',requestId:'original-source'});
+ const original='Enok ikut perlombongan, bukan permohonan. Angka 12, koreksi 13.';
+ f.store.transact(()=>{const entry=f.store.get(a.meetingId).transcripts[0];entry.text=original;entry.segments=[{speaker:'Pembicara 1',text:original,start:0,end:3}];});
+ const before=structuredClone(f.store.get(a.meetingId).transcripts);
+ assert.equal((await a.post('summarize')).status,200);
+ assert.deepEqual((await a.get('transcript')).data.transcripts,before);
+ assert.equal(saved.status,200);
+});
+
+test('uncited AI decision fails without saving a summary or changing the transcript',async t=>{
+ const invalid={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:['Rian wajib migrasi besok.'],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>Response.json({choices:[{message:{content:JSON.stringify(invalid)}}]})});
+ const a=await f.joinRoom();await a.post('transcript',{text:'Migrasi masih usulan, belum disepakati.'});
+ const result=await a.post('summarize');assert.equal(result.status,422);assert.match(result.data.error,/rujukan/i);
+ const after=await a.get('transcript');assert.equal(after.data.summary,null);assert.equal(after.data.transcripts.length,1);
+});
+
+test('summary cache is invalidated when source text changes without changing utterance count',async t=>{
+ let calls=0;const value={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic'},{fetchImpl:async()=>{calls++;return Response.json({choices:[{message:{content:JSON.stringify(value)}}]});}});
+ const a=await f.joinRoom();await a.post('transcript',{text:'Anggaran 12 juta.'});assert.equal((await a.post('summarize')).status,200);
+ f.store.transact(()=>{f.store.get(a.meetingId).transcripts[0].text='Koreksi anggaran 13 juta.';});
+ assert.equal((await a.post('summarize')).status,200);assert.equal(calls,2);
+});
+
+test('continuous transcript changes stop after one refreshed snapshot without saving stale minutes',async t=>{
+ let calls=0,session;const value={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[]};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>{calls++;f.store.transact(()=>{f.store.get(session.meetingId).transcripts[0].text+=' pembaruan';});return Response.json({choices:[{message:{content:JSON.stringify(value)}}]});}});
+ session=await f.joinRoom();await session.post('transcript',{text:'Ucapan awal'});
+ const result=await session.post('summarize');assert.equal(result.status,409);assert.equal(calls,2);
+ assert.equal((await session.get('transcript')).data.summary,null);
+});
+
+test('replayed SEA/Qwen finals remain idempotent after leaving while new speech stays blocked',async t=>{
+ const f=await fixture(t),a=await f.joinRoom('live-owner');
+ const final={sourceId:'live-owner',sessionId:'lost-tail',segmentId:'lost-tail-1',text:'Ucapan yang sudah tersimpan.',speakerLabel:'Peserta',attribution:'unknown',start:0,end:1};
+ const body={sttModel:'qwen3-asr-0.6b-live',final};
+ const first=await a.post('transcript',body);assert.equal(first.status,200);
+ await a.post('leave');
+ const replay=await a.post('transcript',body);assert.equal(replay.status,200);assert.equal(replay.data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('transcript',{...body,final:{...final,segmentId:'lost-tail-2',text:'Ucapan baru tidak diizinkan.'}})).status,409);
+ assert.equal((await a.get('transcript')).data.transcripts.length,1);
+});
+
+
+for(const [name,source,decision] of [
+ ['unit','Disepakati anggaran 13 juta rupiah.','Disepakati anggaran 13 miliar rupiah.'],
+ ['sign','Disepakati perubahan -3 persen.','Disepakati perubahan 3 persen.'],
+ ['negation','Anggaran 13 juta belum disepakati; jangan mulai pembelian.','Disepakati anggaran 13 juta dan mulai pembelian.'],
+])test('unsupported summary '+name+' returns 422 without changing stored dialogue or saving minutes',async t=>{
+ const invalid={title:'QC',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[decision],actionItems:[],attendanceSummary:[],evidence:{decisions:[{index:0,sources:[{utteranceId:'U0001',quote:source}]}],actionItems:[]}};
+ const f=await fixture(t,{llmProvider:'office',llmKey:'synthetic',llmRetryCount:0},{fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]})});
+ const a=await f.joinRoom();await a.post('transcript',{text:source});
+ const before=(await a.get('transcript')).data.transcripts;
+ const result=await a.post('summarize');assert.equal(result.status,422);assert.match(result.data.error,/rujukan|konteks/i);
+ const after=await a.get('transcript');assert.equal(after.data.summary,null);assert.deepEqual(after.data.transcripts,before);
+});

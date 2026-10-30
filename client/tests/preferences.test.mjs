@@ -77,3 +77,39 @@ test('saved retired batch Qwen falls back to default without removing live prefe
   assert.equal(normalizePreferences({ transcriptionModel: 'qwen3-asr-0.6b' }).transcriptionModel, '');
   assert.equal(normalizePreferences({ transcriptionModel: 'qwen3-asr-0.6b-live', sharedRoomMic: true }).transcriptionModel, 'qwen3-asr-0.6b-live');
 });
+
+test('storage and security preferences round-trip and sanitize invalid inputs', () => {
+  let raw;
+  const storage = { getItem: () => raw, setItem: (_, value) => { raw = value; } };
+  const choices = {
+    ...DEFAULT_PREFERENCES,
+    autoRecordMeeting: true,
+    recordingQuality: 'hd',
+    recordingConsentPrompt: false,
+    defaultRecordingLanguage: 'en',
+    defaultRecordingDiarizer: 'nemotron',
+    saveSummaryOffline: false,
+    autoCopySummary: true,
+    allowGuestJoin: false,
+    muteOnJoin: true,
+    hostOnlyScreenShare: true,
+    requireSpeakApprovalForGuests: true,
+    autoReleaseDevicesOnLeave: false,
+    showSecurityBadge: false,
+  };
+  writePreferences(storage, choices);
+  assert.deepEqual(readPreferences(storage).preferences, choices);
+
+  const invalid = normalizePreferences({
+    recordingQuality: '4k',
+    defaultRecordingLanguage: 'fr',
+    defaultRecordingDiarizer: 'unknown',
+    autoRecordMeeting: 'yes',
+    allowGuestJoin: 1,
+  });
+  assert.equal(invalid.recordingQuality, 'standard');
+  assert.equal(invalid.defaultRecordingLanguage, 'id');
+  assert.equal(invalid.defaultRecordingDiarizer, 'none');
+  assert.equal(invalid.autoRecordMeeting, false);
+  assert.equal(invalid.allowGuestJoin, true);
+});

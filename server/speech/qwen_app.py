@@ -22,6 +22,7 @@ from faster_whisper.audio import decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from starlette.concurrency import run_in_threadpool
 from qwen_diarization import request_turns, transcribe_turns, diarizer_ready
+from qwen_batch import nemotron_ready, nemotron_turns, transcribe_recording
 
 MODEL_ALIAS = 'qwen3-asr-0.6b'
 LANGUAGES = {'id': 'Indonesian', 'en': 'English'}
@@ -104,6 +105,7 @@ def health():
     ready = app.state.recognize is not None
     return {'ready': ready, 'model': MODEL_ALIAS, 'models': [MODEL_ALIAS] if ready else [],
             'vad': 'silero', 'diarization': ready and diarizer_ready(),
+            'batchDiarization': ready and nemotron_ready(),
             'diarizationConfigured': bool(os.getenv('QWEN_DIARIZATION_URL')),
             'diarizationValidation': 'experimental; per-upload speaker labels; overlap not separated', 'wordTimestamps': False}
 
@@ -177,6 +179,7 @@ JOB_TTL_SECONDS = int(os.getenv('LONG_JOB_TTL_MINUTES', '120')) * 60
 CHUNK_SECONDS = 30
 CHUNK_PAD = int(0.3 * 16000)
 jobs = {}
+long_admission = BoundedSemaphore(1)
 
 
 def check_auth(authorization):
@@ -214,7 +217,7 @@ def plan_chunks(regions):
     return chunks
 
 
-def infer_long(job, path, language, diarize=False):
+def infer_long(job, path, language, diarize=False, diarizer='turns'):
     job['status'] = 'running'
     try:
         audio = decode_audio(path, sampling_rate=16000)
@@ -227,6 +230,14 @@ def infer_long(job, path, language, diarize=False):
         return {'text': '', 'segments': [], 'duration': 0.0}
     if not np.isfinite(audio).all():
         raise ValueError('Audio contains invalid samples')
+    if diarize and diarizer == 'nemotron':
+        # Diarize the complete recording once. Lock Qwen only per decode so
+        # live requests may interleave, without resetting the speaker timeline.
+        turns = nemotron_turns(audio)
+        def recognize(clip, selected_language):
+            with inference_lock:
+                return app.state.recognize(clip, selected_language)
+        return transcribe_recording(audio, LANGUAGES[language], recognize, speech_regions, turns)
     if diarize:
         with inference_lock:
             result = recognize_diarized(audio, language)
@@ -247,15 +258,17 @@ def infer_long(job, path, language, diarize=False):
     return {'text': ' '.join(parts), 'segments': [], 'duration': duration}
 
 
-def run_job(job, path, language, diarize=False):
+def run_job(job, path, language, diarize=False, diarizer='turns', admitted=False):
     try:
-        job['result'] = infer_long(job, path, language, diarize)
+        job['result'] = infer_long(job, path, language, diarize, diarizer)
         job['status'] = 'done'
     except Exception as error:
         logger.exception('Qwen long transcription job failed')
         job['status'] = 'failed'
         job['error'] = error.detail if isinstance(error, HTTPException) else str(error) if isinstance(error, ValueError) else 'Transcription failed'
     finally:
+        if admitted:
+            long_admission.release()
         job['finished_at'] = time.time()
         try:
             os.remove(path)
@@ -266,16 +279,27 @@ def run_job(job, path, language, diarize=False):
 @app.post('/v1/audio/transcriptions/jobs', status_code=202)
 async def submit_long(file: UploadFile = File(...), model: str = Form(...),
                       language: str = Form('id'), diarize: bool = Form(False),
+                      diarizer: str = Form('turns'),
                       authorization: str = Header('')):
     check_auth(authorization)
     if model != MODEL_ALIAS or language not in LANGUAGES:
         raise HTTPException(400, 'Unsupported model or language')
-    if diarize and not os.getenv('QWEN_DIARIZATION_URL'):
+    if diarizer not in ('turns', 'nemotron'):
+        raise HTTPException(400, 'Unsupported diarizer')
+    if diarize and diarizer == 'nemotron' and not await run_in_threadpool(nemotron_ready):
+        raise HTTPException(503, 'Batch Nemotron is not ready')
+    if diarize and diarizer == 'turns' and not os.getenv('QWEN_DIARIZATION_URL'):
         raise HTTPException(400, 'Qwen diarization service is not configured')
     if app.state.recognize is None:
         raise HTTPException(503, 'Qwen is not ready')
     purge_jobs()
-    fd, path = tempfile.mkstemp(suffix='.upload', dir=LONG_TMP_DIR)
+    if not long_admission.acquire(blocking=False):
+        raise HTTPException(429, 'A long recording is already processing', headers={'Retry-After': '30'})
+    try:
+        fd, path = tempfile.mkstemp(suffix='.upload', dir=LONG_TMP_DIR)
+    except Exception:
+        long_admission.release()
+        raise
     size = 0
     try:
         with os.fdopen(fd, 'wb') as out:
@@ -287,6 +311,7 @@ async def submit_long(file: UploadFile = File(...), model: str = Form(...),
         if size == 0:
             raise HTTPException(400, 'Audio file is empty')
     except Exception:
+        long_admission.release()
         try:
             os.remove(path)
         except OSError:
@@ -295,7 +320,13 @@ async def submit_long(file: UploadFile = File(...), model: str = Form(...),
     job_id = uuid.uuid4().hex
     job = {'status': 'queued', 'error': None, 'result': None, 'finished_at': None}
     jobs[job_id] = job
-    threading.Thread(target=run_job, args=(job, path, language, diarize), daemon=True).start()
+    try:
+        threading.Thread(target=run_job, args=(job, path, language, diarize, diarizer, True), daemon=True).start()
+    except Exception:
+        jobs.pop(job_id, None)
+        long_admission.release()
+        os.remove(path)
+        raise
     return {'job_id': job_id, 'status': 'queued'}
 
 

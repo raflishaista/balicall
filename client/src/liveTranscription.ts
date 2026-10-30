@@ -1,4 +1,5 @@
 export interface StreamingFinal {
+  sessionProof?: string;
   segmentId: string; sessionId: string; sourceId: string; text: string;
   start: number; end: number; speakerLabel: string; attribution: 'assigned' | 'unknown' | 'overlap';
 }
@@ -27,6 +28,7 @@ export function startLiveTranscription(options: {
   let finishing: Promise<void> | undefined;
   let resumeSupported = false;
   let paused = false;
+  let permanentStopRequested = false;
   const endRetained = async () => {
     const session=await options.createSession();
     const url=new URL(session.url,window.location.href);
@@ -83,9 +85,14 @@ export function startLiveTranscription(options: {
         } catch (error) { clearTimeout(timer); reject(error); fail(error instanceof Error ? error.message : 'Respons streaming tidak valid.'); }
       };
       socket!.onerror = () => { clearTimeout(timer); reject(new Error('Koneksi transkripsi streaming gagal.')); fail('Koneksi transkripsi streaming gagal.'); };
-      socket!.onclose = () => {
+      socket!.onclose = event => {
         clearTimeout(timer);
-        if (!drained) { reject(new Error('Koneksi streaming terputus.')); fail('Koneksi streaming terputus sebelum transkrip selesai. Coba lagi.'); }
+        if (!drained) {
+          const message = event?.code === 4429 ? 'Kapasitas transkripsi penuh. Suara mikrofon ini belum ditranskripsi. Tunggu slot tersedia atau hubungi penyelenggara.'
+            : event?.code === 4409 ? 'Sesi mikrofon sebelumnya belum selesai. Tunggu sebentar lalu coba lagi.'
+            : 'Koneksi streaming terputus sebelum transkrip selesai. Coba lagi.';
+          reject(new Error(message)); fail(message);
+        }
       };
     });
     if (stopping) return;
@@ -109,6 +116,7 @@ export function startLiveTranscription(options: {
 
   return {
     finish(mode?: {pause?: boolean}) {
+      if (!mode?.pause) permanentStopRequested = true;
       if (finishing) {
         if (paused && !mode?.pause) {
           paused=false;
@@ -123,14 +131,14 @@ export function startLiveTranscription(options: {
         if (socket?.readyState === WebSocket.OPEN && !failure) {
           if (worklet) {
             source?.disconnect();
-            await new Promise<void>(resolve => {
-              const timer = setTimeout(resolve, 500);
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('Paket suara terakhir belum selesai dikirim. Tunggu sebentar dan coba lagi sebelum keluar.')), 4000);
               flushAck = () => { clearTimeout(timer); resolve(); };
               worklet!.port.postMessage('flush');
             });
           }
           release();
-          paused=Boolean(mode?.pause && resumeSupported);
+          paused=Boolean(mode?.pause && resumeSupported && !permanentStopRequested);
           socket.send(paused ? JSON.stringify({type:'pause'}) : new ArrayBuffer(0));
           let timer: ReturnType<typeof setTimeout> | undefined;
           try {

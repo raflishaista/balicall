@@ -1,9 +1,10 @@
+import { SEA_LIVE_MODEL } from './seaLiveConfig.js';
 import { fileURLToPath } from 'node:url';
 
 export const QWEN_STT_MODEL = 'qwen3-asr-0.6b';
 export function availableSttModels(config) {
   const models = config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : []);
-  return [...new Set([...models.filter(model => model !== QWEN_STT_MODEL || config.qwenSttBaseUrl),
+  return [...new Set([...models.filter(model => model !== SEA_LIVE_MODEL && (model !== QWEN_STT_MODEL || config.qwenSttBaseUrl)),
     ...(config.qwenSttBaseUrl ? [QWEN_STT_MODEL] : [])])];
 }
 
@@ -20,7 +21,7 @@ export function loadConfig(env = process.env) {
     livekitSecret: env.LIVEKIT_API_SECRET || 'secret',
     livekitUrl: env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
     livekitInternalUrl: env.LIVEKIT_INTERNAL_URL || env.LIVEKIT_URL || 'ws://127.0.0.1:7880',
-    corsOrigins: (env.CORS_ORIGINS || 'http://localhost:5187,http://127.0.0.1:5187').split(',').map(value => value.trim()).filter(Boolean),
+    corsOrigins: (env.CORS_ORIGINS || 'http://localhost:5187,http://127.0.0.1:5187').split(',').map(value => value.trim().replace(/\/+$/, '')).filter(Boolean),
     llmProvider: (env.LLM_PROVIDER || 'office').toLowerCase(),
     llmKey: env.LLM_KEY || env.LLM_API_KEY || '',
     llmBaseUrl: env.LLM_BASE_URL || 'http://10.7.1.21/v1',
@@ -40,6 +41,11 @@ export function loadConfig(env = process.env) {
     qwenLiveSttUrl: env.QWEN_LIVE_STT_URL || '',
     qwenLiveSttSecret: env.QWEN_LIVE_STT_SECRET || '',
     qwenLiveHealthUrl: env.QWEN_LIVE_HEALTH_URL || 'http://127.0.0.1:8008/health',
+    seaLiveSttUrl: env.SEA_LIVE_STT_URL || '',
+    seaLiveSttSecret: env.SEA_LIVE_STT_SECRET || '',
+    seaLiveHealthUrl: env.SEA_LIVE_HEALTH_URL || 'http://127.0.0.1:8010/health',
+    seaLiveUpstreamUrl: env.SEA_LIVE_UPSTREAM_URL || 'ws://127.0.0.1:8010/asr',
+    seaLivePilotEnabled: env.SEA_LIVE_PILOT_ENABLED === 'true',
     sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
 
@@ -55,8 +61,12 @@ export function loadConfig(env = process.env) {
     recordingLlmModels: (env.RECORDING_LLM_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
     recordingSttModels: (env.RECORDING_STT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean),
     recordingDiarizers: (env.RECORDING_DIARIZERS || '').split(',').map(value => value.trim()).filter(Boolean),
+    livekitRecordingsDir: env.LIVEKIT_RECORDINGS_DIR || fileURLToPath(new URL('../infrastructure/livekit/recordings', import.meta.url)),
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
+    qwenBatchEnabled: env.QWEN_BATCH_ENABLED === 'true',
+    qwenBatchEgressMode: env.QWEN_BATCH_EGRESS_MODE || 'web',
+    qwenBatchRecordingsDir: env.QWEN_BATCH_RECORDINGS_DIR || '',
     // Operator opt-in only. Keep UI locked until real diarization QC passes.
     qwenDiarizationEnabled: env.QWEN_DIARIZATION_ENABLED === 'true',
     qwenSttKey: env.QWEN_STT_API_KEY || '',
@@ -64,6 +74,20 @@ export function loadConfig(env = process.env) {
     databaseUrl: env.DATABASE_URL || '',
     outboundWebhookUrl: env.OUTBOUND_WEBHOOK_URL || '',
     attendanceGraceMs: Number(env.ATTENDANCE_FINALIZE_GRACE_MS ?? 10000),
+    itprojectMcpUrl: env.ITPROJECT_MCP_URL || '',
+    itprojectMcpToken: env.ITPROJECT_MCP_TOKEN || '',
+    itprojectProjectId: env.ITPROJECT_PROJECT_ID || '',
+    itprojectTaskTypeId: env.ITPROJECT_TASK_TYPE_ID || '',
+    itprojectSprintId: env.ITPROJECT_SPRINT_ID || '',
+    itprojectTaskCategoryId: env.ITPROJECT_TASK_CATEGORY_ID || '',
+    itprojectTaskStatusName: env.ITPROJECT_TASK_STATUS_NAME || 'To Do',
+    itprojectOAuthClientId: env.ITPROJECT_OAUTH_CLIENT_ID || '',
+    itprojectOAuthRedirectUri: env.ITPROJECT_OAUTH_REDIRECT_URI || '',
+    itprojectOAuthTokenFile: env.ITPROJECT_OAUTH_TOKEN_FILE ||
+      fileURLToPath(new URL('./data/itproject-oauth.json', import.meta.url)),
+    itprojectProjectCreationTestEnabled:
+      env.ITPROJECT_PROJECT_CREATION_TEST_ENABLED === 'true' &&
+      env.NODE_ENV !== 'production',
     // DISABLED EMPLOYEE ID CHECK (saved for future re-enabling):
     // To re-enable strict verification, set VERIFY_EMPLOYEE_ID=true in .env
     /*
@@ -80,6 +104,12 @@ export function loadConfig(env = process.env) {
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
   if (Boolean(config.qwenLiveSttUrl) !== Boolean(config.qwenLiveSttSecret) || (config.qwenLiveSttSecret && config.qwenLiveSttSecret.length < 32)) throw new Error('Qwen streaming requires QWEN_LIVE_STT_URL and a secret of at least 32 characters');
   if(config.qwenLiveSttUrl&&!/^\/[\w/-]+$/.test(config.qwenLiveSttUrl))throw new Error('Qwen streaming URL must be a same-origin path');
+  if (Boolean(config.seaLiveSttUrl) !== Boolean(config.seaLiveSttSecret) || (config.seaLiveSttSecret && config.seaLiveSttSecret.length < 32)) throw new Error('SEA streaming requires paired URL and secret of at least 32 characters');
+  if (config.seaLiveSttUrl && !/^\/[\w/-]+$/.test(config.seaLiveSttUrl)) throw new Error('SEA streaming URL must be a same-origin path');
+  if (config.seaLiveSttUrl && config.seaLiveSttUrl !== '/sea-live-stt/asr') throw new Error('SEA streaming must use the production WebSocket proxy route');
+  const seaUpstream = new URL(config.seaLiveUpstreamUrl);
+  if (!['ws:', 'wss:'].includes(seaUpstream.protocol) || seaUpstream.username || seaUpstream.password || seaUpstream.search || seaUpstream.hash || seaUpstream.pathname !== '/asr') throw new Error('SEA upstream must be a ws/wss /asr URL without credentials or query');
+  if (config.sttModel === SEA_LIVE_MODEL) throw new Error('SEA is an optional live model; retain a batch STT_MODEL default');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs', 'qwenSttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }
@@ -98,6 +128,7 @@ export function loadConfig(env = process.env) {
     throw new Error('Production requires non-development LiveKit credentials');
   }
   if (!Number.isInteger(config.recordingUploadMaxMb) || config.recordingUploadMaxMb < 1 || config.recordingUploadMaxMb > 5000) throw new Error('RECORDING_UPLOAD_MAX_MB must be an integer from 1 to 5000');
+  if (!['web', 'sdk'].includes(config.qwenBatchEgressMode)) throw new Error('QWEN_BATCH_EGRESS_MODE must be web or sdk');
   if (!Number.isInteger(config.recordingPollMs) || config.recordingPollMs < 1000 || config.recordingPollMs > 60000) throw new Error('RECORDING_POLL_MS must be 1000–60000 milliseconds');
   if (!Number.isInteger(config.recordingMaxProcessMin) || config.recordingMaxProcessMin < 1 || config.recordingMaxProcessMin > 1440) throw new Error('RECORDING_MAX_PROCESS_MIN must be an integer from 1 to 1440');
   if (config.recordingSttUrl && !['http:', 'https:'].includes(new URL(config.recordingSttUrl).protocol)) throw new Error('Invalid recordingSttUrl protocol');

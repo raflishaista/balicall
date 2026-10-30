@@ -3,27 +3,20 @@ import os from 'node:os'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
+// https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  cacheDir: path.join(os.tmpdir(), 'vite-balicall-client-project2'),
+  cacheDir: path.join(os.tmpdir(), 'vite-balicall-client'),
   server: {
     host: '0.0.0.0',
-    port: 5188,
+    port: 5187,
     strictPort: true,
     proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:3002',
-        changeOrigin: true,
-      },
-      '/live-stt': {
-        target: 'http://127.0.0.1:8003',
-        ws: true,
-        rewrite: value => value.replace(/^\/live-stt/, ''),
-      },
-      '/qwen-live-stt': {
-        target: 'http://127.0.0.1:3002',
-        ws: true,
-      },
+      '/api': { target: 'http://127.0.0.1:3001', changeOrigin: true },
+      '/live-stt': { target: 'http://127.0.0.1:8003', ws: true, rewrite: value => value.replace(/^\/live-stt/, '') },
+      '/qwen-live-stt': { target: 'http://127.0.0.1:8008', ws: true, rewrite: value => value.replace(/^\/qwen-live-stt/, '') },
+      '/sea-live-stt': { target: 'http://127.0.0.1:3001', ws: true },
     },
   },
 })
+

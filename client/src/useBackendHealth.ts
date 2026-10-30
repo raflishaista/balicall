@@ -7,8 +7,9 @@ export interface BackendHealth {
   hasLlmKey?: boolean; livekitStatus?: string;
   sttProvider?: 'browser' | 'server'; sttConfigured?: boolean;
   sttModel?: string; sttModels?: string[]; sttDiarization?: boolean;
-  qwenDiarizationReady?: boolean;
+  qwenDiarizationReady?: boolean; qwenBatchConfigured?: boolean; qwenBatchWorkerReady?: boolean;
   qwenLiveReady?: boolean; qwenLiveDiarizationReady?: boolean;
+  seaLivePilotReady?: boolean; seaLiveDiarizationReady?: boolean;
   database?: { connected: boolean; configured: boolean };
   outboundWebhookConfigured?: boolean;
 }
@@ -39,8 +40,14 @@ export function useBackendHealth() {
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- check updates state only after the external API request settles.
     void check();
-    const timer = setInterval(() => void check(), 15000);
-    return () => { clearInterval(timer); request.current?.abort(); };
+    const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    const onVisible = () => { if (visible()) void check(); };
+    const timer = setInterval(onVisible, 15000);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer); request.current?.abort();
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [check]);
   return { health, checking, checked, error, checkedAt, refresh };
 }

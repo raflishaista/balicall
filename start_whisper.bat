@@ -14,12 +14,12 @@ if not "%~1"=="" set MODEL=%~1
 
 echo [*] Model: %MODEL%
 echo [*] Diarization: NVIDIA Nemotron-3 (models\nemotron3-diarization)
-echo [*] Endpoint: http://127.0.0.1:8000/v1/audio/transcriptions
+echo [*] Endpoint: http://127.0.0.1:8001/v1/audio/transcriptions
 echo.
 echo [*] Press Ctrl+C to stop the server.
 echo.
 
-python scripts\whisper_server.py --model "%MODEL%" --diarization-model models/nemotron3-diarization --host 127.0.0.1 --port 8000
+python scripts\whisper_server.py --model "%MODEL%" --diarization-model models/nemotron3-diarization --host 127.0.0.1 --port 8001
 pause
 exit /b
 
@@ -28,10 +28,10 @@ if not exist "server\speech\.venv\Scripts\python.exe" (
     echo [ERROR] Create server\speech\.venv and install requirements.txt first.
     exit /b 1
 )
-echo [*] Multi-model STT: http://127.0.0.1:8001/v1/audio/transcriptions
-echo [*] Configure STT_BASE_URL for port 8001 and advertise only installed model aliases.
+echo [*] Multi-model STT: http://127.0.0.1:8002/v1/audio/transcriptions
+echo [*] Configure STT_BASE_URL for port 8002 and advertise only installed model aliases.
 pushd "server\speech"
-.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8001
+.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8002
 set "WHISPER_EXIT=%ERRORLEVEL%"
 popd
 exit /b %WHISPER_EXIT%

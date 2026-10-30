@@ -1,3 +1,4 @@
+import {recordingDownloadName} from './recordingDownload';
 import { useState, useMemo } from 'react';
 import {
   FileText,
@@ -23,8 +24,10 @@ import {
   X,
   AlertCircle,
   FileAudio,
+  Video,
 } from 'lucide-react';
 import './SummaryHistory.css';
+import { API_BASE } from './api';
 import type { SummaryRecord, InProgressRecord } from './summaryHistory';
 
 export interface SummaryHistoryViewProps {
@@ -62,6 +65,7 @@ export function SummaryHistoryView({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const cleanEmployeeId = (employeeId || '').trim().toLowerCase();
   const cleanEmployeeName = (employeeName || '').trim().toLowerCase();
@@ -79,6 +83,40 @@ export function SummaryHistoryView({
       setCopiedId(record.meetingId);
       setTimeout(() => setCopiedId(null), 2000);
     });
+  };
+
+  const handleDownloadRecording = async (record: SummaryRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const cleanId = record.meetingId.replace(/^meeting-/, '');
+    setDownloadingId(record.meetingId);
+    try {
+      const res = await fetch(`${API_BASE}/meetings/${encodeURIComponent(cleanId)}/recording/download`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        let msg = 'Gagal mengunduh rekaman rapat.';
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch { /* ignore non-JSON */ }
+        alert(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = recordingDownloadName(res, cleanId);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal mengunduh rekaman rapat.');
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const departments = useMemo(() => {
@@ -362,7 +400,7 @@ export function SummaryHistoryView({
       <section className="surface-card history-archive-card">
         <header className="card-heading">
           <div>
-            <span className="section-kicker">ARSIP RESMI TERVERIFIKASI</span>
+            <span className="section-kicker">ARSIP NOTULEN RAPAT</span>
             <h2>Daftar Notulen Rapat ({filteredHistory.length})</h2>
           </div>
           <span className="subtle-tag">
@@ -398,7 +436,7 @@ export function SummaryHistoryView({
             {filteredHistory.map(record => {
               const decisionsCount = record.summary.decisions?.length || 0;
               const actionsCount = record.summary.actionItems?.length || 0;
-              const transcriptsCount = record.transcripts?.length || record.summary.transcriptCount || 0;
+              const transcriptsCount = record.transcripts?.length || record.summary.transcriptCount;
               const isCopied = copiedId === record.meetingId;
 
               return (
@@ -419,6 +457,12 @@ export function SummaryHistoryView({
                         <span className="db-sync-pill" title="Tersimpan di Database PostgreSQL">
                           <Database size={11} />
                           <span>DB #{record.summary.dbSummaryId}</span>
+                        </span>
+                      )}
+                      {record.hasRecording && (
+                        <span className="history-recording-pill" title="Rekaman video/audio rapat tersedia">
+                          <Video size={11} />
+                          <span>Rekaman</span>
                         </span>
                       )}
                     </div>
@@ -449,9 +493,9 @@ export function SummaryHistoryView({
                         <ListChecks size={12} />
                         <strong>{actionsCount}</strong> Tindak Lanjut
                       </span>
-                      <span className="history-metric-chip" title={`${transcriptsCount} Ucapan`}>
+                      <span className="history-metric-chip" title={transcriptsCount === undefined ? 'Jumlah ucapan belum tersedia' : `${transcriptsCount} Ucapan`}>
                         <MessageSquare size={12} />
-                        <strong>{transcriptsCount}</strong> Ucapan
+                        <strong>{transcriptsCount ?? '—'}</strong> Ucapan
                       </span>
                       {record.department && (
                         <span className="history-metric-chip dept-chip">
@@ -481,6 +525,22 @@ export function SummaryHistoryView({
                       {isCopied ? <Check size={13} /> : <Copy size={13} />}
                       <span>{isCopied ? 'Tersalin' : 'Salin Notulen'}</span>
                     </button>
+                    {record.hasRecording && (
+                      <button
+                        type="button"
+                        className="button-secondary compact-btn recording-download-btn"
+                        onClick={e => handleDownloadRecording(record, e)}
+                        disabled={downloadingId === record.meetingId}
+                        title="Unduh rekaman rapat dalam format aslinya (MP4 video atau OGG audio)"
+                      >
+                        {downloadingId === record.meetingId ? (
+                          <Loader2 size={13} className="ui-spinner" />
+                        ) : (
+                          <Video size={13} />
+                        )}
+                        <span>{downloadingId === record.meetingId ? 'Mengunduh...' : 'Unduh Rekaman'}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button-primary compact-btn"

@@ -1,3 +1,4 @@
+import { SUMMARY_VERSION, SUMMARY_INSTRUCTIONS, buildSummaryInput, validateSummaryEvidence, SummaryGroundingError } from './summaryGrounding.js';
 import { GoogleGenAI } from '@google/genai';
 import { setTimeout as delay } from 'node:timers/promises';
 import { attributedSpeakerName } from './qwenLiveConfig.js';
@@ -6,25 +7,161 @@ export class ServiceError extends Error {
   constructor(message, status = 502, details = {}) { super(message); this.status = status; Object.assign(this, details); }
 }
 
-export function parseSummary(text) {
-  if (typeof text !== 'string') throw new ServiceError('The summary service returned invalid content');
-  let result;
-  try { result = JSON.parse(text); } catch {
-    const block = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    try { result = JSON.parse(block?.[1] || ''); } catch { throw new ServiceError('The summary service did not return valid JSON'); }
+export function parseSummary(text, input) {
+  if (typeof text !== 'string') {
+    throw new ServiceError('The summary service returned invalid content');
   }
-  const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
-  if (!result || typeof result.title !== 'string' || typeof result.executiveSummary !== 'string' ||
-      !['keyDiscussionPoints', 'decisions', 'attendanceSummary'].every(key => strings(result[key])) ||
-      !Array.isArray(result.actionItems) || !result.actionItems.every(item => item &&
-        ['task', 'assignee', 'deadline'].every(key => typeof item[key] === 'string') && ['High', 'Medium', 'Low'].includes(item.priority))) {
+
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch {
+    const block = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    try {
+      result = JSON.parse(block?.[1] || '');
+    } catch {
+      throw new ServiceError('The summary service did not return valid JSON');
+    }
+  }
+
+  const strings = value =>
+    Array.isArray(value) && value.every(item => typeof item === 'string');
+  
+  const validTaskStatuses = [
+    'To Do',
+    'Blocked',
+    'In Progress',
+    'Finished',
+    'In Review',
+    'Completed',
+  ];
+
+  const validProjectStatuses = [
+    'Not Started',
+    'In Progress',
+    'On Hold',
+    'Completed',
+    'Cancelled',
+  ];
+  
+  const validProjectPriorities = [
+    'Low',
+    'Medium',
+    'High',
+    'Critical',
+  ];
+
+  const validProjectCreations =
+    Array.isArray(result?.projectCreations) &&
+    result.projectCreations.length <= 1 &&
+    result.projectCreations.every(project =>
+      project &&
+      typeof project.title === 'string' &&
+      typeof project.description === 'string' &&
+      typeof project.emoji === 'string' &&
+      typeof project.startDate === 'string' &&
+      typeof project.dueDate === 'string' &&
+      validProjectStatuses.includes(project.status) &&
+      validProjectPriorities.includes(project.priority)
+    );
+  
+  const validProjectUpdateFields = [
+    'title',
+    'description',
+    'emoji',
+    'startDate',
+    'dueDate',
+    'status',
+    'priority',
+  ];
+
+  const validProjectUpdates =
+    Array.isArray(result?.projectUpdates) &&
+    result.projectUpdates.every(item =>
+      item &&
+      typeof item.project === 'string' &&
+      item.project.trim() &&
+      item.changes &&
+      typeof item.changes === 'object' &&
+      !Array.isArray(item.changes) &&
+      Object.keys(item.changes).length > 0 &&
+      Object.keys(item.changes).every(key =>
+        validProjectUpdateFields.includes(key)
+      ) &&
+      Object.values(item.changes).every(value =>
+        typeof value === 'string'
+      ) &&
+      (
+        item.changes.status === undefined ||
+        validProjectStatuses.includes(item.changes.status)
+      ) &&
+      (
+        item.changes.priority === undefined ||
+        validProjectPriorities.includes(item.changes.priority)
+      )
+    );
+
+  if (
+    !result ||
+    typeof result.title !== 'string' ||
+    typeof result.executiveSummary !== 'string' ||
+    !['keyDiscussionPoints', 'decisions', 'attendanceSummary'].every(key =>
+      strings(result[key])
+    ) ||
+    !Array.isArray(result.actionItems) ||
+    !result.actionItems.every(item =>
+      item &&
+      ['task', 'assignee', 'deadline', 'project', 'parent'].every(
+        key => typeof item[key] === 'string'
+      ) &&
+      ['High', 'Medium', 'Low'].includes(item.priority) &&
+      (item.status === undefined ||
+        ['To Do', 'Blocked', 'In Progress', 'Finished', 'In Review', 'Completed']
+          .includes(item.status)) &&
+      (item.type === undefined || typeof item.type === 'string') &&
+      (item.startDate === undefined || typeof item.startDate === 'string')
+    ) ||
+    !Array.isArray(result.taskUpdates) ||
+    !result.taskUpdates.every(item =>
+      item &&
+      typeof item.task === 'string' &&
+      validTaskStatuses.includes(item.status)
+    )||
+    !validProjectCreations ||
+    !validProjectUpdates
+  ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
   }
-  return {
-    title: result.title, executiveSummary: result.executiveSummary,
-    keyDiscussionPoints: result.keyDiscussionPoints, decisions: result.decisions,
-    actionItems: result.actionItems, attendanceSummary: result.attendanceSummary,
+
+  const summary = {
+    title: result.title,
+    executiveSummary: result.executiveSummary,
+    keyDiscussionPoints: result.keyDiscussionPoints,
+    decisions: result.decisions,
+    actionItems: result.actionItems,
+    taskUpdates: result.taskUpdates,
+    taskEdits: result.taskEdits,
+    projectCreations: result.projectCreations,
+    projectUpdates: result.projectUpdates,
+    attendanceSummary: result.attendanceSummary,
   };
+
+  if (input) {
+    try {
+      summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
+    } catch (error) {
+      if (error instanceof SummaryGroundingError) {
+        console.warn(
+          '[SUMMARY] Validasi evidence gagal; notulen tetap digunakan:',
+          error.message
+        );
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  return summary;
 }
 
 export async function fetchJson(url, options, timeoutMs, fetchImpl = fetch) {
@@ -73,6 +210,22 @@ async function fetchOfficeJson(url, options, config, fetchImpl) {
   }
 }
 
+// Only orthographic brand/technical spelling; never infer names or semantic corrections.
+const ORTHOGRAPHIC_CORRECTIONS = [
+  [/\b(bali\s*tower|balitower)\b/gi, 'Bali Tower'],
+  [/\blive\s*kit\b/gi, 'LiveKit'],
+  [/\bwebrtc\b/gi, 'WebRTC'],
+];
+
+export function normalizeTranscriptText(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let result = text;
+  for (const [pattern, replacement] of ORTHOGRAPHIC_CORRECTIONS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 export function effectiveLlm(config) {
   if (config.llmProvider === 'office' && config.llmKey) return 'office';
   if (config.llmProvider === 'gemini' && config.geminiKey) return 'gemini';
@@ -80,26 +233,12 @@ export function effectiveLlm(config) {
 }
 
 export async function summarize(meeting, config, fetchImpl = fetch) {
-  const dialogue = meeting.transcripts.map(entry => {
-    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
-    const prefix = time ? `--- [${time}]` : '---';
-    if (entry.segments && entry.segments.length > 0) {
-        return entry.segments.map(seg => `${prefix} [${attributedSpeakerName(entry.speakerName,seg)}]: ${seg.text}`).join('\n');
-    }
-    return `${prefix} [${entry.speakerName}]: ${entry.text}`;
-  }).join('\n');
+  const input = buildSummaryInput(meeting);
   const attendance = [...meeting.participants.values()].filter(person => person.joinedAt).map(person => `${person.employeeName} (${person.employeeId})`);
-  const prompt = `Summarize this meeting in the language spoken. Do not invent decisions, deadlines, conditions or assignments. Use empty arrays if none were stated.
-Guidelines for actionItems:
-- Extract all actionable tasks agreed upon in the meeting.
-- 'task': Clear, specific description of the task.
-- 'assignee': PIC / Penanggung Jawab. Attribute to the person assigned, commanded, or committed to do the task. If a speaker commands or delegates to a specific person (e.g. "Siti, tolong periksa log" or "Rian kamu handle vendor"), the assignee must be that named person (e.g. "Siti" or "Rian"), NOT the speaker who gave the command. If multiple diarized speakers appear under one participant without names, distinguish them as "\${Speaker} (person_0)".
-- 'deadline': Tenggat waktu / batas waktu / syarat pengerjaan (e.g. "Hari ini sebelum 15:00; Syarat: tanpa memutus koneksi"). If none, use empty string "".
-- 'priority': "High", "Medium", or "Low".
-
-Return only JSON with this exact shape:
-{"title":"string","executiveSummary":"string","keyDiscussionPoints":["string"],"decisions":["string"],"actionItems":[{"task":"string","assignee":"string","priority":"High|Medium|Low","deadline":"string"}],"attendanceSummary":["string"]}
-Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDialogue:\n${dialogue}`;
+  const payload = JSON.stringify({
+    ...input,
+    connectedAttendees: attendance,
+  });
   const provider = effectiveLlm(config);
   if (provider === 'demo') {
     return {
@@ -111,7 +250,7 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
         return [`${entry.speakerName}: ${entry.text}`];
       }),
       decisions: [], actionItems: [], attendanceSummary: attendance,
-      provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
+      summaryVersion: SUMMARY_VERSION, provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
   }
   let content;
@@ -120,23 +259,26 @@ Meeting: ${meeting.roomName}\nConnected attendees: ${attendance.join(', ')}\nDia
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.llmKey}` },
       body: JSON.stringify({
         model: config.llmModel,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: SUMMARY_INSTRUCTIONS }, { role: 'user', content: payload }],
         chat_template_kwargs: { enable_thinking: false },
-        temperature: 0.2,
-        max_tokens: 4096,
+        temperature: 0,
+        max_tokens: 8192,
       }),
     }, config, fetchImpl);
+    if (data.choices?.[0]?.finish_reason === 'length') throw new ServiceError('Hasil notulen terpotong oleh batas keluaran model. Transkrip tetap tersedia; coba kembali atau gunakan model dengan kapasitas lebih besar.');
     content = data.choices?.[0]?.message?.content;
   } else {
     try {
       const client = new GoogleGenAI({ apiKey: config.geminiKey });
-      const response = await client.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt, config: {
+      const response = await client.models.generateContent({ model: 'gemini-2.5-flash', contents: payload, config: {
+        systemInstruction: SUMMARY_INSTRUCTIONS, temperature: 0,
         responseMimeType: 'application/json', httpOptions: { timeout: config.llmTimeoutMs },
       } });
+      if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new ServiceError('Hasil notulen Gemini terpotong oleh batas keluaran model. Transkrip tetap tersedia.');
       content = response.text;
-    } catch { throw new ServiceError('Gemini is unavailable or timed out. Please retry.'); }
+    } catch (error) { if (error instanceof ServiceError) throw error; throw new ServiceError('Gemini is unavailable or timed out. Please retry.'); }
   }
-  return { ...parseSummary(content), attendanceSummary: attendance, provider: provider === 'office' ? `Office (${config.llmModel})` : 'Gemini 2.5 Flash' };
+  return { ...parseSummary(content, input), summaryVersion: SUMMARY_VERSION, attendanceSummary: attendance, provider: provider === 'office' ? `Office (${config.llmModel})` : 'Gemini 2.5 Flash' };
 }
 
 export async function transcribeAudio(audio, mimeType, language, config, fetchImpl = fetch) {
@@ -158,7 +300,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
     method: 'POST', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: form,
   }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
-  const text = data.text.trim();
+  const text = normalizeTranscriptText(data.text.trim());
   if (!config.sttDiarization) return { text };
   if (!data.segments) {
     if (qwen) throw new ServiceError('The Qwen service returned no diarization segments');
@@ -171,7 +313,7 @@ export async function transcribeAudio(audio, mimeType, language, config, fetchIm
         !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
       throw new ServiceError('The speech service returned invalid diarization segments');
     }
-    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+    return { text: normalizeTranscriptText(segment.text.trim()), speaker: segment.speaker, start: segment.start, end: segment.end };
   }).filter(segment => segment.text);
   if (text && !segments.length) throw new ServiceError('The speech service returned no diarization for its text');
   return { text, segments };
@@ -210,7 +352,7 @@ export async function batchDiarizeAudio(audioBuffers, mimeType, language, config
         !Number.isFinite(segment.end) || segment.start < 0 || segment.end < segment.start) {
       throw new ServiceError('The batch diarization service returned invalid diarization segments');
     }
-    return { text: segment.text.trim(), speaker: segment.speaker, start: segment.start, end: segment.end };
+    return { text: normalizeTranscriptText(segment.text.trim()), speaker: segment.speaker, start: segment.start, end: segment.end };
   }).filter(segment => segment.text);
 
   return {

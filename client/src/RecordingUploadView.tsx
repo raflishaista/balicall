@@ -12,6 +12,20 @@ import './RecordingUpload.css';
 const POLL_MS = 4000;
 const date = (value: string) => new Date(value).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
 
+function formatTimestamp(seconds: number) {
+  if (!Number.isFinite(seconds)) return '00:00';
+  const total = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function normalizeSpeaker(speaker: string) {
+  const match = speaker?.match(/^SPEAKER_(\d+)$/i);
+  if (match) return `Pembicara ${parseInt(match[1], 10) + 1}`;
+  return speaker || 'Pembicara';
+}
+
 function StatusBadge({ item }: { item: RecordingUpload }) {
   return (
     <span className={`rec-status rec-status-${item.status}`}>
@@ -152,17 +166,21 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
               <div className="transcript-heading"><div><h2>Transkrip</h2></div></div>
               {transcript.segments?.length ? (
                 <div className="recap-transcript-list">
-                  {transcript.segments.map((seg, i) => (
-                    <article className="recap-transcript-entry diarized" key={i}>
-                      <div>
-                        <div className="transcript-diarized-row">
-                          <span className="transcript-diarized-speaker">{seg.speaker}</span>
-                          <span className="segment-time-pill">{seg.start.toFixed(1)}s–{seg.end.toFixed(1)}s</span>
+                  {transcript.segments.map((seg, i) => {
+                    const speaker = normalizeSpeaker(seg.speaker);
+                    return (
+                      <article className="recap-transcript-entry diarized" data-speaker={speaker} key={i}>
+                        <time>{formatTimestamp(seg.start)}</time>
+                        <div>
+                          <div className="transcript-diarized-row">
+                            <span className="transcript-diarized-speaker" data-speaker={speaker}>{speaker}</span>
+                            <span className="segment-time-pill">{seg.start.toFixed(1)}s–{seg.end.toFixed(1)}s</span>
+                          </div>
+                          <p>{seg.text}</p>
                         </div>
-                        <p>{seg.text}</p>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               ) : <p style={{ whiteSpace: 'pre-wrap' }}>{transcript.text}</p>}
             </section>
@@ -173,11 +191,20 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
   );
 }
 
-export function RecordingUploadView({ onBack }: { onBack: () => void }) {
+export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRecordingChange }: {
+  onBack: () => void;
+  recordingId?: string | null;
+  onRecordingChange?: (id: string | null) => void;
+}) {
   const [items, setItems] = useState<RecordingUpload[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(propRecordingId || null);
+  const selectedId = propRecordingId !== undefined ? propRecordingId : localSelectedId;
+  const setSelectedId = (id: string | null) => {
+    setLocalSelectedId(id);
+    onRecordingChange?.(id);
+  };
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');

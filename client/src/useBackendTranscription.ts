@@ -7,6 +7,7 @@ export function useBackendTranscription(options: {
   language: string;
   model?: string;
   volume: number;
+  readVolume?: () => number;
   sharedRoomMic?: boolean;
   onAudio: (audio: Blob, language: string, model?: string) => void;
 }) {
@@ -20,7 +21,7 @@ export function useBackendTranscription(options: {
     ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(value => MediaRecorder.isTypeSupported(value));
   const capabilityError = !format ? 'Browser ini tidak dapat merekam audio dalam format yang didukung transkripsi server.' : null;
   const onAudio = useEffectEvent((audio: Blob, language: string, model?: string) => options.onAudio(audio, language, model));
-  const hasVoice = useEffectEvent(() => options.volume > 0.005);
+  const hasVoice = useEffectEvent(() => (options.readVolume?.() ?? options.volume) > 0.005);
   const onError = useEffectEvent((message: string) => setError(message));
   useEffect(() => {
     if (options.muted || changingTrack || !enabled || !options.track || options.track.readyState === 'ended') return;
@@ -56,7 +57,7 @@ export function useBackendTranscription(options: {
   }, []);
   return {
     isListeningSpeechApi: enabled && !options.muted && !changingTrack && Boolean(options.track) && options.track?.readyState !== 'ended' && !error && !capabilityError,
-    interimText: '', speechError: error || (!options.muted && enabled ? capabilityError : null), speechEnabled: enabled,
+    speechWarning: null, interimText: '', speechError: error || (!options.muted && enabled ? capabilityError : null), speechEnabled: enabled,
     toggleSpeechRecognition() {
       if (error || !enabled) { setError(null); setEnabled(true); setAttempt(value => value + 1); }
       else setEnabled(false);

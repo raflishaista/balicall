@@ -55,7 +55,7 @@ if [ "$MODE" = "prod" ] || [ "$MODE" = "production" ] || [ "$MODE" = "deploy" ];
     fi
 
     # Launch LiveKit SFU
-    echo "[1/2] Starting LiveKit SFU Server on Port 7880..."
+    echo "[1/3] Starting LiveKit SFU Server on Port 7880..."
     if [ -f "livekit.yaml" ]; then
         $LIVEKIT_CMD --config livekit.yaml --dev &
     else
@@ -63,8 +63,19 @@ if [ "$MODE" = "prod" ] || [ "$MODE" = "production" ] || [ "$MODE" = "deploy" ];
     fi
     sleep 2
 
+    # Launch SEA Live STT (if enabled)
+    if (echo > /dev/tcp/127.0.0.1/8010) 2>/dev/null; then
+        echo "[2/3] Port 8010 is already active [SEA Live STT]."
+    elif [ -f "$PROJECT_ROOT/server/speech/start_sea_live.sh" ] && grep -E -q '^\s*SEA_LIVE_PILOT_ENABLED\s*=\s*true' "$PROJECT_ROOT/server/.env" 2>/dev/null; then
+        if [ -r "${SEA_ASR_ROOT:-/var/tmp/jds3-sea-asr}/sea-worker.env" ]; then
+            echo "[2/3] Starting SEA Live STT Worker on Port 8010..."
+            bash "$PROJECT_ROOT/server/speech/start_sea_live.sh" &
+            sleep 2
+        fi
+    fi
+
     # Launch Node Backend (serves API + client static assets)
-    echo "[2/2] Starting Backend Server on Port 3001..."
+    echo "[3/3] Starting Backend Server on Port 3001..."
     (cd "$PROJECT_ROOT/server" && NODE_ENV=production node index.js) &
 
     echo ""
@@ -109,20 +120,42 @@ else
         echo "[2/4] ⚠️  Docker tidak berjalan; worker STT dilewati."
     fi
 
-    # [3/4] Backend
-    echo "[3/4] Starting Backend API on Port 3001..."
+    # [3/5] SEA Live STT Worker (Port 8010)
+    if (echo > /dev/tcp/127.0.0.1/8010) 2>/dev/null; then
+        echo "[3/5] Port 8010 is already active [SEA Live STT]."
+    elif [ -f "$PROJECT_ROOT/server/speech/start_sea_live.sh" ] && grep -E -q '^\s*SEA_LIVE_PILOT_ENABLED\s*=\s*true' "$PROJECT_ROOT/server/.env" 2>/dev/null; then
+        if [ -r "${SEA_ASR_ROOT:-/var/tmp/jds3-sea-asr}/sea-worker.env" ]; then
+            echo "[3/5] Starting SEA Live STT Worker on Port 8010..."
+            bash "$PROJECT_ROOT/server/speech/start_sea_live.sh" &
+            for i in $(seq 1 10); do
+                if curl -sf http://127.0.0.1:8010/health >/dev/null 2>&1; then
+                    echo "      SEA Live STT siap."
+                    break
+                fi
+                sleep 1
+            done
+        else
+            echo "[3/5] ⚠️  File secret SEA (/var/tmp/jds3-sea-asr/sea-worker.env) tidak ditemukan; SEA dilewati."
+        fi
+    else
+        echo "[3/5] SEA Live STT dilewati (SEA_LIVE_PILOT_ENABLED belum diaktifkan di server/.env)."
+    fi
+
+    # [4/5] Backend
+    echo "[4/5] Starting Backend API on Port 3001..."
     (cd "$PROJECT_ROOT/server" && npm run dev) &
     sleep 2
 
-    # [4/4] Vite client
-    echo "[4/4] Starting Vite Dev Client on Port 5187..."
+    # [5/5] Vite client
+    echo "[5/5] Starting Vite Dev Client on Port 5187..."
     (cd "$PROJECT_ROOT/client" && npm run dev) &
 
     echo ""
     echo "========================================================"
     echo "  ✅ All services launched!"
-    echo "  Web Client:  http://127.0.0.1:5173"
+    echo "  Web Client:  http://127.0.0.1:5187"
     echo "  Backend API: http://127.0.0.1:3001"
+    (echo > /dev/tcp/127.0.0.1/8010) 2>/dev/null && echo "  SEA Live:    http://127.0.0.1:8010"
     echo "  Press Ctrl+C to stop Node/Vite (Docker worker tetap jalan)."
     echo "  Stop worker: docker compose -f docker-compose.workers.yml down"
     echo "========================================================"

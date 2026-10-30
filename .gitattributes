@@ -1,0 +1,3 @@
+*.sh text eol=lf
+server/speech/start_sea_live.sh text eol=lf
+

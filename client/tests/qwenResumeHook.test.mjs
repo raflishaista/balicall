@@ -36,6 +36,32 @@ test('mute resumes the same signed microphone; explicit device changes start a s
  await act(async()=>f.state.resumeTrackChange());
  assert.notEqual(f.calls.at(-1)[3],id);
 });
+
+test('SEA keeps an Indonesian microphone session across mute and reconnect',async t=>{
+ const f=await fixture(t);
+ await f.update({model:'sea-asr-id-live',language:'id-ID',diarize:false});
+ const id=f.calls.at(-1)[3];
+ assert.ok(id.length>=16);
+ assert.deepEqual(f.calls.at(-1).slice(0,3),['id-ID','sea-asr-id-live',false]);
+ await f.update({muted:true});
+ assert.deepEqual(f.finishes.at(-1),{pause:true});
+ await f.update({muted:false,track:track('mic1')});
+ assert.equal(f.calls.at(-1)[3],id);
+ assert.deepEqual(f.calls.at(-1).slice(0,3),['id-ID','sea-asr-id-live',false]);
+});
+
+test('SEA acoustic mode passes diarize and keeps its speaker cache scope across mute',async t=>{
+ const f=await fixture(t);
+ await f.update({model:'sea-asr-id-live',language:'id-ID',diarize:true});
+ const acoustic=f.calls.at(-1)[3];
+ assert.deepEqual(f.calls.at(-1).slice(0,3),['id-ID','sea-asr-id-live',true]);
+ await f.update({muted:true});await f.update({muted:false,track:track('mic1')});
+ assert.equal(f.calls.at(-1)[3],acoustic);
+ await f.update({diarize:false});
+ // Physical microphone ID stays stable; worker retention keys include diarize.
+ assert.equal(f.calls.at(-1)[3],acoustic);
+ assert.deepEqual(f.calls.at(-1).slice(0,3),['id-ID','sea-asr-id-live',false]);
+});
 test('device change and meeting end explicitly finalize a previously paused controller',async t=>{
  const f=await fixture(t);
  await f.update({muted:true});let count=f.finishes.length;
@@ -46,18 +72,18 @@ test('device change and meeting end explicitly finalize a previously paused cont
  await act(async()=>f.state.finishTranscription());
  assert.equal(f.finishes.length,count+1);assert.equal(f.finishes.at(-1),undefined);
 });
-test('retrying a session-expiry warning keeps transcription enabled',async t=>{
+test('session-expiry warning stays separate from errors and does not prevent pausing',async t=>{
  const f=await fixture(t);
  await act(async()=>f.runs[0].onSession({sessionId:'expired-session-replacement',resumed:false}));
- assert.match(f.state.speechError,/sesi baru/i);
+ assert.match(f.state.speechWarning,/sesi baru/i);assert.equal(f.state.speechError,null);
  await act(async()=>f.state.toggleSpeechRecognition());
- assert.equal(f.state.speechEnabled,true);
+ assert.equal(f.state.speechEnabled,false);
 });
 test('expired speaker state is visible and automatic reconnect stops after three attempts',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});
  const f=await fixture(t);
  await act(async()=>f.runs[0].onSession({sessionId:'new-speaker-session',resumed:false}));
- assert.match(f.state.speechError,/sesi baru/i);
+ assert.match(f.state.speechWarning,/sesi baru/i);assert.equal(f.state.speechError,null);
  for(const wait of [1000,2000,4000]){
   await act(async()=>f.runs.at(-1).onError('Network unavailable'));
   await act(async()=>t.mock.timers.tick(wait));

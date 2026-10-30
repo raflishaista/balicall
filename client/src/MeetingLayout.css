@@ -62,6 +62,9 @@
 .presentation-actions button:disabled { opacity: .5; cursor: default; }
 .presentation-actions button:focus-visible { outline: 2px solid #74c4ff; outline-offset: 2px; }
 .presentation-fit { padding: 4px 7px; font-size: 11px; color: #b2c9dc; }
+.presentation-fit-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 44px; border: 1px solid #439cff; border-radius: 7px; padding: 6px 10px; color: #e5f2ff; background: #18558c; font-size: 12px; cursor: pointer; }
+.presentation-fit-btn:hover { background: #1f6ab0; }
+.presentation-fit-btn svg { color: #74c4ff; }
 .presentation-clock { color: #b2c9dc; font-size: 11px; margin-left: auto; padding: 0 10px; white-space: nowrap; }
 .presentation-focused .meeting-view-toggle,.presentation-focused .call-bottom-note { display: none; }
 .in-call-layout:has(.presentation-focused) .app-header { display: none; }
@@ -87,7 +90,7 @@
 @media (max-width: 580px) {
   .presentation-actions { width: 100%; margin-left: 0; gap: 4px; }
   .presentation-actions button { flex: 1; padding: 5px; font-size: 10px; }
-  .presentation-fit { display: none; }
+  .presentation-fit, .presentation-fit-btn { display: none; }
   .meeting-layout .call-info-bar { padding: 8px 12px; }
   .meeting-view-bar { padding: 0 12px 8px; gap: 6px; }
   .meeting-state-chips { font-size: 9px; gap: 4px; }
