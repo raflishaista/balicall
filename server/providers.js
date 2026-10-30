@@ -51,6 +51,17 @@ export function parseSummary(text, input) {
     'Critical',
   ];
 
+  const taskEditStrings = ['title', 'description', 'emoji', 'startDate', 'dueDate', 'priority', 'type', 'category', 'parent', 'owner'];
+  const taskEditLists = ['assignUsers', 'unassignUsers', 'tags', 'removeTags'];
+  const validTaskEdits = result?.taskEdits === undefined ||
+    (Array.isArray(result.taskEdits) && result.taskEdits.every(item =>
+      item && typeof item.task === 'string' && item.task.trim() &&
+      item.changes && typeof item.changes === 'object' && !Array.isArray(item.changes) &&
+      Object.keys(item.changes).length > 0 &&
+      Object.entries(item.changes).every(([key, value]) =>
+        taskEditStrings.includes(key) ? typeof value === 'string' :
+          taskEditLists.includes(key) && strings(value))));
+
   const validProjectCreations =
     result?.projectCreations === undefined ||
     (Array.isArray(result.projectCreations) &&
@@ -130,6 +141,7 @@ export function parseSummary(text, input) {
           typeof item.task === 'string' &&
           validTaskStatuses.includes(item.status)
         ))) ||
+    !validTaskEdits ||
     !validProjectCreations ||
     !validProjectUpdates
   ) {
@@ -154,13 +166,9 @@ export function parseSummary(text, input) {
       summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
     } catch (error) {
       if (error instanceof SummaryGroundingError) {
-        console.warn(
-          '[SUMMARY] Validasi evidence gagal; notulen tetap digunakan:',
-          error.message
-        );
-      } else {
-        throw error;
+        throw new ServiceError(`Notulen belum dapat diverifikasi: ${error.message} Transkrip tetap tersedia; periksa atau coba buat notulen lagi.`, 422);
       }
+      throw error;
     }
   }
 
@@ -252,7 +260,7 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
         }
         return [`${entry.speakerName}: ${entry.text}`];
       }),
-      decisions: [], actionItems: [], attendanceSummary: attendance,
+      decisions: [], actionItems: [], taskUpdates: [], taskEdits: [], projectCreations: [], projectUpdates: [], attendanceSummary: attendance,
       summaryVersion: SUMMARY_VERSION, provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
   }
