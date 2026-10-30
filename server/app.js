@@ -20,6 +20,7 @@ import { createPostMeetingBatch, publicBatch } from './postMeetingBatch.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady } from './qwenCapabilities.js';
 import { createItProjectClient } from './itproject.js';
+import { createMcpReview } from './mcpReview.js';
 import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
 import {
   isDbConnected,
@@ -61,7 +62,7 @@ const pdfText = value => {
   return String(value);
 };
 
-export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush } = {}) {
+export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, workspaceStore, sendPush, mcpClient } = {}) {
   const app = express();
   const store = new MeetingStore(config.dataFile);
   const workspace=workspaceStore||new WorkspaceStore();
@@ -81,7 +82,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         await saveMeetingSummary(meeting.id, meeting.roomName, result.summary);
       }
       try {
-        await syncActionItemsToItProject(meeting, result.summary);
+        mcpReview.register(meeting, result.summary);
       } catch (error) {
         console.warn('[ITPROJECT] Sinkronisasi action items dari batch gagal:', {
           meetingId: meeting.id,
@@ -91,7 +92,9 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     },
   });
   const webhookLogs = [];
-  const itProject = createItProjectClient(config);
+  const itProject = mcpClient || createItProjectClient(config);
+  const mcpReview = createMcpReview({store,client:itProject,destination:config.itprojectMcpUrl,
+    plan:(meeting,summary,reviewClient,reviewStore)=>syncActionItemsToItProject(meeting,summary,{reviewClient,reviewStore})});
   const itprojectOAuthPending = new Map();
   const escapeHtml = value =>
     String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -209,7 +212,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return previousRow[compactReference.length] <= maxDistance;
   }
 
-  async function syncActionItemsToItProject(meeting, summary) {
+  async function syncActionItemsToItProject(meeting, summary, {reviewClient=itProject,reviewStore=store} = {}) {
 
      const actionItems = Array.isArray(summary.actionItems)
       ? summary.actionItems
@@ -227,7 +230,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       ? summary.projectUpdates
       : [];
 
-    let targetProjectId = itProject.projectId;
+    let targetProjectId = reviewClient.projectId;
     let existingTasks = [];
 
     const existingTaskReferences = [
@@ -243,7 +246,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       existingTaskReferences.length
     ) {
       const projectsById = new Map();
-      for (const sourceMeeting of store.meetings.values()) {
+      for (const sourceMeeting of reviewStore.meetings.values()) {
         for (const dispatch of Object.values(
           sourceMeeting.itProjectProjectDispatch || {}
         )) {
@@ -262,7 +265,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
       for (const project of projectsById.values()) {
         try {
-          const result = await itProject.projectTasks(project.id);
+          const result = await reviewClient.projectTasks(project.id);
           projectTasksById.set(
             project.id,
             flattenTaskTree(result.data?.data || [])
@@ -330,9 +333,103 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         taskReferences: existingTaskReferences,
       });
     }
+    
+    if (!projectCreations.length && actionItems.length && !reviewClient.projectId) {
+      const projectReferences = [
+        ...new Set(
+          actionItems
+            .map(item => normalizeTaskReference(item.project))
+            .filter(Boolean)
+        ),
+      ];
+
+      if (projectReferences.length !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: sebutkan satu project tujuan secara jelas.',
+          {
+            meetingId: meeting.id,
+            projectReferences,
+          }
+        );
+        return;
+      }
+
+      const reference = projectReferences[0];
+      const matches = new Map();
+
+      const addMatchingProject = project => {
+        if (!project?.id) return;
+
+        const title = normalizeTaskReference(project.title);
+        const projectNo = normalizeTaskReference(project.project_no);
+
+        if (title === reference || projectNo === reference) {
+          matches.set(project.id, project);
+        }
+      };
+
+      // Cari dahulu project yang pernah dibuat oleh BaliCall.
+      for (const sourceMeeting of reviewStore.meetings.values()) {
+        for (const dispatch of Object.values(
+          sourceMeeting.itProjectProjectDispatch || {}
+        )) {
+          if (dispatch.status === 'created') {
+            addMatchingProject({
+              id: dispatch.projectId,
+              title: dispatch.title,
+              project_no: dispatch.projectNo,
+            });
+          }
+        }
+      }
+
+      // Jika belum ditemukan secara lokal, cari di daftar project akun MCP.
+      if (matches.size === 0) {
+        try {
+          const result = await reviewClient.userProjects();
+          const projects = result.data?.data;
+
+          if (!Array.isArray(projects)) {
+            throw new Error('Respons daftar project tidak berisi array data.');
+          }
+
+          projects.forEach(addMatchingProject);
+        } catch (error) {
+          console.warn(
+            '[ITPROJECT] Task baru dilewati: daftar project tidak dapat dicari.',
+            {
+              meetingId: meeting.id,
+              projectReference: reference,
+              message: error.message,
+            }
+          );
+          return;
+        }
+      }
+
+      if (matches.size !== 1) {
+        console.warn(
+          '[ITPROJECT] Task baru dilewati: project tujuan tidak ditemukan secara unik.',
+          {
+            meetingId: meeting.id,
+            projectReference: reference,
+            matches: matches.size,
+          }
+        );
+        return;
+      }
+
+      targetProjectId = [...matches.values()][0].id;
+
+      console.info('[ITPROJECT] Project task baru ditemukan secara dinamis.', {
+        meetingId: meeting.id,
+        projectId: targetProjectId,
+        projectReference: reference,
+      });
+    }
 
     if (
-      !itProject.authenticated ||
+      !reviewClient.authenticated ||
       (
         !projectCreations.length &&
         (actionItems.length || taskUpdates.length || taskEdits.length) &&
@@ -341,12 +438,12 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     ) {
       console.warn('[ITPROJECT] Sync dilewati: autentikasi atau project tujuan tidak tersedia.', {
         meetingId: meeting.id,
-        authenticated: itProject.authenticated,
+        authenticated: reviewClient.authenticated,
         hasUrl: Boolean(config.itprojectMcpUrl),
         hasAccessToken: Boolean(config.itprojectMcpToken),
         hasRefreshToken: Boolean(config.itprojectOAuthRefreshToken),
-        hasConfiguredProject: Boolean(itProject.projectId),
-        hasTaskType: Boolean(itProject.taskTypeId),
+        hasConfiguredProject: Boolean(reviewClient.projectId),
+        hasTaskType: Boolean(reviewClient.taskTypeId),
         projectCreations: projectCreations.length,
         projectUpdates: projectUpdates.length,
       });
@@ -382,7 +479,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         .digest('hex');
 
       const previousProjectDispatch =
-        store.get(meeting.id)?.itProjectProjectDispatch?.[projectDispatchKey];
+        reviewStore.get(meeting.id)?.itProjectProjectDispatch?.[projectDispatchKey];
 
       if (previousProjectDispatch?.status === 'created') {
         targetProjectId = previousProjectDispatch.projectId;
@@ -398,7 +495,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         });
         return;
       } else {
-        const projectOptionsResult = await itProject.projectOptions();
+        const projectOptionsResult = await reviewClient.projectOptions();
         const projectOptions = projectOptionsResult.data?.data;
 
         if (!projectOptions?.statuses || !projectOptions?.priorities) {
@@ -466,8 +563,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           throw new Error('Due date project tidak boleh sebelum start date.');
         }
 
-        store.transact(() => {
-          const current = store.get(meeting.id);
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
           current.itProjectProjectDispatch ||= {};
           current.itProjectProjectDispatch[projectDispatchKey] = {
             status: 'creating',
@@ -477,7 +574,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         });
 
         try {
-          const projectResult = await itProject.createProject({
+          const projectResult = await reviewClient.createProject({
             title: requestedProject.title.trim(),
             description: `<p>${escapeHtml(requestedProject.description)}</p>`,
             emoji: requestedProject.emoji,
@@ -498,8 +595,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
           targetProjectId = createdProject.id;
 
-          store.transact(() => {
-            const current = store.get(meeting.id);
+          reviewStore.transact(() => {
+            const current = reviewStore.get(meeting.id);
             current.itProjectProjectDispatch[projectDispatchKey] = {
               status: 'created',
               title: requestedProject.title,
@@ -516,8 +613,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             title: requestedProject.title,
           });
         } catch (error) {
-          store.transact(() => {
-            const current = store.get(meeting.id);
+          reviewStore.transact(() => {
+            const current = reviewStore.get(meeting.id);
             current.itProjectProjectDispatch[projectDispatchKey] = {
               status: 'failed',
               title: requestedProject.title,
@@ -557,7 +654,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     let options = {};
 
     if (hasTaskOperations) {
-      const optionsResult = await itProject.taskOptions(targetProjectId);
+      const optionsResult = await reviewClient.taskOptions(targetProjectId);
       options = optionsResult.data?.data || {};
 
       if (!options.taskStatuses || !options.taskPriorities ||
@@ -571,7 +668,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       (taskUpdates.length || taskEdits.length) &&
       !existingTasks.length
     ) {
-      const existingResult = await itProject.projectTasks(targetProjectId);
+      const existingResult = await reviewClient.projectTasks(targetProjectId);
       existingTasks = flattenTaskTree(existingResult.data?.data || []);
     }
 
@@ -600,11 +697,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (actionItems.length) {
       status = options.taskStatuses.find(
         option => option.name?.trim().toLowerCase() ===
-          itProject.taskStatusName.trim().toLowerCase()
+          reviewClient.taskStatusName.trim().toLowerCase()
       );
 
       defaultType = options.taskTypes.find(
-        option => option.id === itProject.taskTypeId
+        option => option.id === reviewClient.taskTypeId
       );
 
       if (!status || !defaultType) {
@@ -638,7 +735,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return aliases[key] || '';
   };
 
-    for (const item of actionItems) {
+    const orderedActionItems = [
+      ...actionItems.filter(item => !String(item.parent || '').trim()),
+      ...actionItems.filter(item => String(item.parent || '').trim()),
+    ];
+    const createdTaskReferences = [];
+
+    for (const item of orderedActionItems) {
       const title = String(item.task || '').trim();
       if (!title) continue;
       const explicitStatusMatch = title.match(
@@ -698,12 +801,19 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       // Jangan kirim ulang item yang pernah dicoba agar tidak membuat duplikat
       // jika respons server hilang setelah task sebenarnya berhasil dibuat.
       const previousDispatch =
-        store.get(meeting.id)?.itProjectTaskDispatch?.[key];
+        reviewStore.get(meeting.id)?.itProjectTaskDispatch?.[key];
 
-      if (
-        previousDispatch?.status === 'created' ||
-        previousDispatch?.status === 'creating'
-      ) {
+      if (previousDispatch?.status === 'created') {
+        if (previousDispatch.taskId) {
+          createdTaskReferences.push({
+            id: previousDispatch.taskId,
+            title: previousDispatch.title || title,
+          });
+        }
+        continue;
+      }
+
+      if (previousDispatch?.status === 'creating') {
         continue;
       }
 
@@ -717,8 +827,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         : null;
 
       if (!priority) {
-        store.transact(() => {
-          const current = store.get(meeting.id);
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
           current.itProjectTaskDispatch ||= {};
           current.itProjectTaskDispatch[key] = {
             status: 'failed',
@@ -782,8 +892,52 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           ? `${dueDateMatch[3]}-${monthNumbers[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`
           : '';
           
-      store.transact(() => {
-        const current = store.get(meeting.id);
+      const parentReference = String(item.parent || '').trim();
+      let parentId = '';
+
+      if (parentReference) {
+        const parentCandidates = new Map();
+
+        for (const candidate of createdTaskReferences) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        for (const candidate of options.taskParents || []) {
+          if (taskMatchesReference(candidate, parentReference)) {
+            parentCandidates.set(candidate.id, candidate);
+          }
+        }
+
+        if (parentCandidates.size !== 1) {
+          console.warn('[ITPROJECT] Subtask dilewati: parent tidak ditemukan secara unik.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+            matches: parentCandidates.size,
+          });
+          continue;
+        }
+
+        const selectedCategory = (options.taskCategories || []).find(
+          category => category.id === reviewClient.taskCategoryId
+        );
+
+        if (selectedCategory?.name?.trim().toLowerCase() === 'epic') {
+          console.warn('[ITPROJECT] Subtask dilewati: task berkategori Epic tidak boleh menjadi subtask.', {
+            meetingId: meeting.id,
+            title,
+            parentReference,
+          });
+          continue;
+        }
+
+        parentId = [...parentCandidates.keys()][0];
+      }
+
+      reviewStore.transact(() => {
+        const current = reviewStore.get(meeting.id);
         current.itProjectTaskDispatch ||= {};
         current.itProjectTaskDispatch[key] = {
           status: 'creating',
@@ -794,11 +948,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
       try {
         let task = null;
-
-        // Jika percobaan sebelumnya gagal setelah mulai mengirim create-task,
-        // cari task yang mungkin sudah dibuat sebelum mengirim ulang.
         if (previousDispatch?.status === 'failed' && previousDispatch.startedAt) {
-          const existingResult = await itProject.projectTasks(targetProjectId);
+          const existingResult = await reviewClient.projectTasks(targetProjectId);
           const existingTasks = flattenTaskTree(existingResult.data?.data || []);
           const previousStartedAt = Date.parse(previousDispatch.startedAt);
 
@@ -810,13 +961,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         }
 
         if (!task) {
-          const result = await itProject.createTask({
+          const result = await reviewClient.createTask({
             project: targetProjectId,
             title,
             status_id: numericStatusId,
             priority_id: numericPriorityId,
             type_id: numericTypeId,
-            task_category_id: itProject.taskCategoryId,
+            task_category_id: reviewClient.taskCategoryId,
+            ...(parentId ? { parent_id: parentId } : {}),
             assign_users: owner ? [owner.id] : [],
             description,
             start_date: startDate,
@@ -829,6 +981,11 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         if (!task?.id) {
           throw new Error('Respons create-task tidak berisi ID task.');
         }
+
+        createdTaskReferences.push({
+          id: task.id,
+          title,
+        });
 
         let statusUpdate = 'unchanged';
 
@@ -846,7 +1003,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
               requestedStatus: selectedStatus.name,
             });
           } else {
-            await itProject.updateTaskStatus({
+            await reviewClient.updateTaskStatus({
               task: task.id,
               status_id: selectedStatus.id,
               ...(statusDueDate ? { due_date: statusDueDate } : {}),
@@ -859,7 +1016,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
         if (activeSprint?.id) {
           try {
-            await itProject.assignSprintTasks({
+            await reviewClient.assignSprintTasks({
               sprint: activeSprint.id,
               task_ids: [task.id],
             });
@@ -876,8 +1033,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           }
         }
 
-        store.transact(() => {
-          const current = store.get(meeting.id);
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
           current.itProjectTaskDispatch[key] = {
             status: 'created',
             title,
@@ -901,8 +1058,8 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           statusUpdate,
         });
       } catch (error) {
-        store.transact(() => {
-          const current = store.get(meeting.id);
+        reviewStore.transact(() => {
+          const current = reviewStore.get(meeting.id);
           const previous = current.itProjectTaskDispatch?.[key];
           current.itProjectTaskDispatch[key] = {
             status: 'failed',
@@ -975,7 +1132,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         }
 
         try {
-          await itProject.updateTaskStatus({
+          await reviewClient.updateTaskStatus({
             task: existingTask.id,
             status_id: selectedStatus.id,
             ...(existingDueDate ? { due_date: existingDueDate } : {}),
@@ -1320,7 +1477,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             }
           }
 
-          await itProject.updateTask(updateArgs);
+          await reviewClient.updateTask(updateArgs);
 
           console.info('[ITPROJECT] Field task lama berhasil diubah.', {
             meetingId: meeting.id,
@@ -1340,7 +1497,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
 
       if (projectUpdates.length) {
-        const projects = [...store.meetings.values()].flatMap(sourceMeeting =>
+        const projects = [...reviewStore.meetings.values()].flatMap(sourceMeeting =>
           Object.values(sourceMeeting.itProjectProjectDispatch || {})
             .filter(dispatch =>
               dispatch.status === 'created' && dispatch.projectId
@@ -1352,7 +1509,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             }))
         );
 
-        const projectOptionsResult = await itProject.projectOptions();
+        const projectOptionsResult = await reviewClient.projectOptions();
         const projectOptions = projectOptionsResult.data?.data;
 
         if (!projectOptions?.statuses || !projectOptions?.priorities) {
@@ -1440,7 +1597,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
           const changedFields = [];
 
           try {
-            const detailResult = await itProject.projectDetail(existingProject.id);
+            const detailResult = await reviewClient.projectDetail(existingProject.id);
             const projectDetail =
               detailResult.data?.data?.project ||
               detailResult.data?.project ||
@@ -1544,7 +1701,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
               continue;
             }
 
-            await itProject.updateProject(updateArgs);
+            await reviewClient.updateProject(updateArgs);
 
             console.info('[ITPROJECT] Project lama berhasil diubah.', {
               meetingId: meeting.id,
@@ -2176,6 +2333,32 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       message: 'Jadwal rapat berhasil diperbarui.',
       schedule: updated,
     });
+  }));
+
+  async function reviewActor(req, id) {
+    const meeting=store.get(id);
+    if (!meeting) throw new ServiceError('Rapat tidak ditemukan.',404);
+    if (req.auth?.user?.isGuest) throw new ServiceError('Tamu tidak dapat meninjau pengiriman MCP.',403);
+    let actor=req.auth?.user?.employeeId;
+    if (!actor && !config.authEnabled) {
+      const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+      if (!token) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
+      let claims;
+      try { claims=await verifier.verify(token); } catch { throw new ServiceError('Sesi akses rapat tidak valid.',401); }
+      if (claims.video?.room!==meeting.livekitRoom || !claims.video?.roomJoin) throw new ServiceError('Sesi tidak sesuai rapat.',403);
+      actor=claims.sub;
+    }
+    if (!actor) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
+    if (actor!==meeting.hostId && !meeting.participants.has(actor)) throw new ServiceError('Anda tidak memiliki akses tinjauan rapat ini.',403);
+    return actor;
+  }
+  app.get('/api/mcp-reviews/:id',asyncRoute(async(req,res)=>{
+    const actor=await reviewActor(req,req.params.id);
+    res.set('Cache-Control','no-store').json(await mcpReview.review(req.params.id,actor));
+  }));
+  app.post('/api/mcp-reviews/:id/decision',asyncRoute(async(req,res)=>{
+    const actor=await reviewActor(req,req.params.id);
+    res.set('Cache-Control','no-store').json(await mcpReview.decide(req.params.id,actor,req.body || {}));
   }));
 
   // Meeting authorization middleware
@@ -2907,7 +3090,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       meeting.summary.transcriptDigest === summaryTranscriptDigest(meeting)
     ) {
       try {
-        await syncActionItemsToItProject(meeting, meeting.summary);
+        mcpReview.register(meeting, meeting.summary);
       } catch (error) {
         console.warn('[ITPROJECT] Retry sinkronisasi gagal:', {
           meetingId: meeting.id,
@@ -2945,7 +3128,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             console.warn('[DB] Could not persist meeting to database:', dbErr.message);
           }
           try {
-            await syncActionItemsToItProject(snapshot, summary);
+            mcpReview.register(store.get(snapshot.id), summary);
           } catch (error) {
             // Jangan gagalkan ringkasan rapat jika IT Project sedang tidak tersedia.
             console.warn('[ITPROJECT] Sinkronisasi action items dilewati:', {

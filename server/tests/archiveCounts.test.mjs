@@ -1,0 +1,22 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {PGlite} from '@electric-sql/pglite';
+import pg from 'pg';
+process.env.DATABASE_URL='';
+const database=new PGlite();
+const query=(sql,params)=>params?.length?database.query(sql,params):database.exec(sql).then(results=>results.at(-1));
+const original=Object.getOwnPropertyDescriptor(pg,'Pool');
+Object.defineProperty(pg,'Pool',{configurable:true,value:class{on(){} query(sql,params){return query(sql,params)} async connect(){return {query,release(){}}}}});
+const db=await import('../db.js');
+Object.defineProperty(pg,'Pool',original);
+test('archive counts use stored utterances and completed batch revision',async t=>{
+ t.after(()=>database.close());assert.equal(await db.initDb('postgresql://synthetic/in-memory'),true);
+ const meeting={id:'archive-counts-qc',roomName:'QC counts',status:'ended',createdAt:'2026-10-30T01:00:00Z',endedAt:'2026-10-30T02:00:00Z'};
+ const summary={title:'QC counts',executiveSummary:'QC',keyDiscussionPoints:[],decisions:[],actionItems:[],attendanceSummary:[],generatedAt:'2026-10-30T02:00:00Z'};
+ await db.saveMeeting(meeting);await db.saveMeetingSummary(meeting.id,meeting.roomName,summary);
+ assert.equal((await db.getMeetingSummaries())[0].transcript_count,0);
+ await db.saveTranscripts(meeting.id,meeting.roomName,[{id:'count-one',speakerId:'qc',speakerName:'QC',text:'Satu',timestamp:meeting.createdAt},{id:'count-two',speakerId:'qc',speakerName:'QC',text:'Dua',timestamp:meeting.createdAt}]);
+ assert.equal((await db.getMeetingSummaries())[0].transcript_count,2);
+ await db.savePostMeetingBatch(meeting,{status:'done',summary,transcripts:[{text:'Batch satu'}]});
+ assert.equal((await db.getMeetingSummaries())[0].transcript_count,1);
+});

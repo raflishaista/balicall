@@ -19,7 +19,8 @@ import type { MeetingPreferences } from './preferences';
 import { createSaveQueue } from './saveQueue';
 import { createTranscriptDelivery } from './transcriptDelivery';
 import './App.css';
-import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage } from './summaryHistory';
+import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, normalizeArchiveTranscripts, scopedSummaryStorage } from './summaryHistory';
+import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory } from './navigation';
@@ -80,14 +81,16 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       return sanitizeRouteForGuest(parsed, isGuest);
     }
     if (isGuest) return { view: 'lobby', intent: 'join' };
-    if (initialSummaryState.savedActiveView === 'summary') return { view: 'summary' };
     if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
+    if (initialSummaryState.savedActiveView === 'summary') return { view: 'summary' };
     return { view: 'home' };
   });
 
   const routeSummaryRecord = initialRoute.view === 'summary' && initialRoute.meetingId
     ? initialSummaryState.history.find(item => item.meetingId === initialRoute.meetingId)
     : undefined;
+  const initialSession = initialRoute.view === 'summary' && initialRoute.meetingId === initialSummaryState.session?.meetingId ? initialSummaryState.session : null;
+  const selectedInitialSummary = routeSummaryRecord || (initialSession ? initialSummaryState.selected : undefined);
 
   const [inProgressList, setInProgressList] = useState<InProgressRecord[]>(() => readInProgressSummaries());
   const [summaryHistory, setSummaryHistory] = useState(initialSummaryState.history);
@@ -96,12 +99,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
-  const [view, setView] = useState<AppView>(() => {
-    if (isGuest) return 'lobby';
-    if (initialSummaryState.savedActiveView === 'summary') return 'summary';
-    if (initialSummaryState.session) return 'summary';
-    return 'home';
-  });
+  const [view, setView] = useState<AppView>(initialRoute.view);
   const contentRef = useRef<HTMLElement>(null);
   usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
   const [lastMeeting, setLastMeeting] = useState<{ title: string; roomName: string; endedAt: string; transcriptCount: number } | null>(null);
@@ -157,18 +155,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
   
   // Active call state
-  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(initialSummaryState.selected?.transcripts || routeSummaryRecord?.transcripts || initialSummaryState.session?.transcripts || []);
+  const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(selectedInitialSummary?.transcripts || initialSession?.transcripts || []);
   const [activeTab, setActiveTab] = useState<'transcript' | 'attendance'>('transcript');
   const [callDuration, setCallDuration] = useState('00:00');
   const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
-  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialSummaryState.session && !initialSummaryState.selected && !routeSummaryRecord));
+  const [isSummarizing, setIsSummarizing] = useState(Boolean(initialRoute.view === 'summary' && initialRoute.meetingId && !selectedInitialSummary));
   const [batchDiarizing, setBatchDiarizing] = useState(false);
-  const [summary, setSummary] = useState<MeetingSummary | null>(initialSummaryState.selected?.summary || routeSummaryRecord?.summary || null);
+  const [summary, setSummary] = useState<MeetingSummary | null>(selectedInitialSummary?.summary || null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.meetingId || initialSummaryState.session?.meetingId || null);
-  const [summaryToken, setSummaryToken] = useState<string | null>(initialSummaryState.session?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
-  const [summaryRoomName, setSummaryRoomName] = useState<string>(initialSummaryState.session?.roomName || routeSummaryRecord?.roomName || '');
-  const [summaryHasRecording, setSummaryHasRecording] = useState<boolean>(Boolean(initialSummaryState.selected?.hasRecording || routeSummaryRecord?.hasRecording));
+  const [summaryMeetingId, setSummaryMeetingId] = useState<string | null>(initialRoute.view === 'summary' ? initialRoute.meetingId || null : null);
+  const [summaryToken, setSummaryToken] = useState<string | null>(initialSession?.token || (routeSummaryRecord ? summaryTokenFor(routeSummaryRecord.meetingId) : null));
+  const [summaryRoomName, setSummaryRoomName] = useState<string>(selectedInitialSummary?.roomName || initialSession?.roomName || '');
+  const [summaryHasRecording, setSummaryHasRecording] = useState<boolean>(Boolean(selectedInitialSummary?.hasRecording));
   const [copied, setCopied] = useState(false);
   const [transcriptSaveError, setTranscriptSaveError] = useState<string | null>(null);
   const [pendingSaves, setPendingSaves] = useState(0);
@@ -302,6 +300,25 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   }, [initialRoute]);
 
   useEffect(() => {
+    const id = initialRoute.meetingId;
+    if (initialRoute.view !== 'summary' || !id || initialSession || routeSummaryRecord?.transcripts.length) return;
+    const controller = new AbortController();
+    void apiRequest<any>(`/meetings/db-details/${encodeURIComponent(id)}`, {signal:controller.signal})
+      .then(details => {
+        if (controller.signal.aborted || currentRouteRef.current.view !== 'summary' || currentRouteRef.current.meetingId !== id) return;
+        if (!details.summary) throw new Error('Belum ada notulen untuk rapat ini.');
+        const record = normalizeDbSummary({...details,meeting_id:id,room_name:details.meeting?.room_name || routeSummaryRecord?.roomName});
+        setSummary(record.summary); setTranscripts(record.transcripts); setSummaryRoomName(record.roomName);
+        setSummaryHasRecording(Boolean(record.hasRecording)); setIsSummarizing(false);
+      }).catch(error => {
+        if (!controller.signal.aborted && currentRouteRef.current.view === 'summary' && currentRouteRef.current.meetingId === id) {
+          setIsSummarizing(false); setSummaryError(error instanceof Error ? error.message : 'Notulen belum dapat dimuat.');
+        }
+      });
+    return () => controller.abort();
+  }, [initialRoute, initialSession, routeSummaryRecord]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const handlePopState = (event: PopStateEvent) => {
@@ -354,7 +371,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
             ).then(details => {
               if (details?.summary) {
                 setSummary(details.summary);
-                if (details.transcripts) setTranscripts(details.transcripts);
+                if (details.transcripts) setTranscripts(normalizeArchiveTranscripts(details.transcripts));
                 if (details.meeting?.room_name) setSummaryRoomName(details.meeting.room_name);
               }
             }).catch(() => {});
@@ -393,7 +410,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   // Robust reload recovery: poll for in-progress summaries without immediately throwing errors
   useEffect(() => {
-    const session = initialSummaryState.session;
+    const session = initialSession;
     if (!session || initialSummaryState.selected || !session.meetingId) return;
     let cancelled = false;
     const controller = new AbortController();
@@ -495,7 +512,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       controller.abort();
       clearTimeout(pollTimer);
     };
-  }, [initialSummaryState, readSummaryHistory, removeInProgressSummary, saveSummaryHistory, readInProgressSummaries]);
+  }, [initialSession, initialSummaryState, readSummaryHistory, removeInProgressSummary, saveSummaryHistory, readInProgressSummaries]);
 
   const openSavedSummary = (record: SummaryRecord) => {
     summaryGeneration.current++;
@@ -503,7 +520,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setSummaryError(null);
     setCopied(false);
     setSummary(record.summary);
-    setTranscripts(record.transcripts);
+    setTranscripts(normalizeArchiveTranscripts(record.transcripts));
     setSummaryMeetingId(record.meetingId);
     setSummaryRoomName(record.roomName);
     setSummaryHasRecording(Boolean(record.hasRecording));
@@ -513,7 +530,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       meetingId: record.meetingId,
       roomName: record.roomName,
       token: savedToken,
-      transcripts: record.transcripts,
+      transcripts: normalizeArchiveTranscripts(record.transcripts),
       open: true,
       isSummarizing: false,
     });
@@ -525,7 +542,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       apiRequest<{ success: boolean; transcripts: TranscriptEntry[]; hasRecording?: boolean }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
         .then(details => {
           if (details?.transcripts && details.transcripts.length > 0) {
-            setTranscripts(details.transcripts);
+            setTranscripts(normalizeArchiveTranscripts(details.transcripts));
           }
           if (details?.hasRecording) {
             setSummaryHasRecording(true);
@@ -580,10 +597,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (data?.summaries && Array.isArray(data.summaries)) {
         const dbRecords = data.summaries.map(normalizeDbSummary);
         setSummaryHistory(prev => {
-          let merged = [...prev];
-          for (const rec of dbRecords) {
-            merged = upsertSummary(merged, rec);
-          }
+          const merged = mergeSummaryRecords(prev, dbRecords);
           saveSummaryHistory(merged);
           return merged;
         });
@@ -2052,6 +2066,7 @@ function SummaryView({
           </div>
         </header>
 
+        <McpReviewPanel meetingId={meetingId} token={token} summaryVersion={`${summary.summaryVersion || ''}:${summary.generatedAt || ''}`} />
         <SummaryEvidence summary={summary} />
         {summary.note && <div className="summary-note"><AlertCircle size={16} />{summary.note}</div>}
         {!token && <div className="summary-note">Hasil ini dibuka dari riwayat browser. Salin notulen atau unduh JSON; PDF server memerlukan sesi akses rapat yang masih berlaku.</div>}
