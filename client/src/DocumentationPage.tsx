@@ -117,12 +117,19 @@ export function DocumentationPage() {
       <p>Browser memakai Express API untuk akses dan data rapat. LiveKit membawa audio/video antarperangkat; worker STT mengubah audio menjadi teks, PostgreSQL menyimpan data, dan LLM menyusun notulen dari transkrip final.</p>
       <figure className="documentation-figure"><img src={asset + 'architecture.svg'} alt="Diagram arsitektur BaliCall: browser, Express API, LiveKit, Egress, PostgreSQL, worker STT, dan LLM." /><figcaption>Alur komponen BaliCall.</figcaption></figure>
       <div className="documentation-planned-box">
-        <h3>Diarisasi batch seluruh peserta dengan Qwen <span>Perlu konfigurasi server</span></h3>
-        <p>Jika layanan Egress dan worker batch sudah dikonfigurasi, penyelenggara membuka Transkrip → Opsi lalu memilih Rekam audio untuk batch Qwen sebelum percakapan dimulai. Sistem merekam suara seluruh perangkat sebagai satu file OGG; kamera tidak direkam. Setelah seluruh peserta keluar dan Egress selesai menulis file, Nemotron menentukan giliran pembicara dan Qwen3-ASR-0.6B membuat transkrip. Halaman notulen menampilkan status proses dan memuat hasil batch otomatis. Transkrip live tetap disimpan terpisah. Label Pembicara 1/2 berlaku untuk satu rekaman, bukan verifikasi identitas orang; suara bertumpuk ditandai dan hasil perlu ditinjau. Kotak batch lama di preview berbeda dari alur rekaman audio ini.</p>
-        <figure className="documentation-figure"><img src={asset + 'batch-flow.svg'} alt="Alur rekaman audio seluruh peserta, Nemotron, Qwen ASR, transkrip batch, dan notulen." /><figcaption>Batch audio berjalan di server setelah rapat; kesiapan tombol bergantung pada konfigurasi server. Buka kembali hasil rapat untuk melihat status dan hasilnya.</figcaption></figure>
+        <h3>Diarisasi batch seluruh peserta dengan Qwen</h3>
+        <p>Rekam audio ruang rapat untuk membuat transkrip batch dan notulen setelah rapat berakhir. Nemotron menentukan giliran pembicara dan Qwen3-ASR-0.6B mengubah ucapan menjadi teks.</p>
+        <ol className="documentation-steps">
+          <li>Sebagai host, masuk ke rapat, buka <strong>Transkrip → Opsi</strong>, lalu pilih <strong>Rekam audio untuk batch Qwen</strong>. Jika tombol tidak tersedia, hubungi pengelola server untuk memeriksa layanan perekaman dan worker batch.</li>
+          <li>Mulai rekaman sebelum percakapan agar audio yang dibutuhkan tercakup. Sistem merekam audio ruang dari perangkat peserta yang terhubung sebagai satu file OGG; kamera tidak direkam.</li>
+          <li>Setelah semua peserta keluar dan Egress selesai menulis file, server memproses rekaman menggunakan Nemotron dan Qwen3-ASR-0.6B. Buka kembali hasil rapat untuk memeriksa status dan notulen batch.</li>
+        </ol>
+        <p>Transkrip live tetap terpisah. Label Pembicara 1/2 berlaku dalam satu rekaman dan bukan identitas orang yang terverifikasi; tinjau kembali bagian yang ambigu atau bertumpuk.</p>
+        <p><strong>Perbedaan dengan preview:</strong> kotak “Diarisasi Batch Pasca-Rapat” pada preview Qwen Live dinonaktifkan dan bukan tombol perekaman batch seluruh peserta. Gunakan opsi rekam di dalam rapat.</p>
+        <figure className="documentation-figure"><img src={asset + 'batch-flow.svg'} alt="Alur rekaman audio seluruh peserta, Nemotron, Qwen ASR, transkrip batch, dan notulen." /><figcaption>Alur batch dari rekaman audio ruang hingga transkrip dan notulen.</figcaption></figure>
       </div>
       <p className="documentation-caption"><Mic2 size={15} /> Kesiapan server deploy perlu diuji pada lingkungan rapat; panduan ini bukan sertifikasi produksi.</p>
     </section>
-    <footer className="documentation-footer"><FileText size={15} /> Panduan BaliCall · Diperbarui 23 Oktober 2026</footer>
+    <footer className="documentation-footer"><FileText size={15} /> Panduan BaliCall · Diperbarui 29 Oktober 2026</footer>
   </div>;
 }

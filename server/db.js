@@ -92,6 +92,8 @@ export async function initDb(customUrl) {
         );
       `);
 
+      await client.query('ALTER TABLE balicall_summaries ADD COLUMN IF NOT EXISTS source_evidence JSONB');
+
       // 3. Create balicall_transcripts table (individual dialogue lines)
       await client.query(`
         CREATE TABLE IF NOT EXISTS balicall_transcripts (
@@ -277,8 +279,9 @@ export async function saveMeetingSummary(meetingId, roomName, summary) {
       action_items,
       attendance_summary,
       provider,
+      source_evidence,
       created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
     RETURNING *;
   `;
 
@@ -293,6 +296,7 @@ export async function saveMeetingSummary(meetingId, roomName, summary) {
       JSON.stringify(summary.actionItems || []),
       JSON.stringify(summary.attendanceSummary || []),
       summary.provider || 'AI Secretary',
+      summary.sourceEvidence ? JSON.stringify(summary.sourceEvidence) : null,
     ]);
     console.log(`[DB] 💾 Meeting summary persisted for room "${roomName}" (ID: ${res.rows[0].id})`);
     return res.rows[0];
@@ -414,6 +418,7 @@ export async function getMeetingSummaries(limit = 20) {
       s.action_items,
       s.attendance_summary,
       s.provider,
+      s.source_evidence,
       s.created_at,
       m.created_at as meeting_created_at,
       m.ended_at as meeting_ended_at,
@@ -478,6 +483,7 @@ function batchSummaryRow(summary, row) {
   return { ...row, title: summary.title, executive_summary: summary.executiveSummary,
     key_discussion_points: summary.keyDiscussionPoints, decisions: summary.decisions,
     action_items: summary.actionItems, attendance_summary: summary.attendanceSummary,
+    source_evidence: summary.sourceEvidence || null,
     provider: summary.provider, created_at: summary.generatedAt, transcript_source: 'qwen-post-meeting' };
 }
 

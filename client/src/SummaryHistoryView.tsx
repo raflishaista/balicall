@@ -400,7 +400,7 @@ export function SummaryHistoryView({
       <section className="surface-card history-archive-card">
         <header className="card-heading">
           <div>
-            <span className="section-kicker">ARSIP RESMI TERVERIFIKASI</span>
+            <span className="section-kicker">ARSIP NOTULEN RAPAT</span>
             <h2>Daftar Notulen Rapat ({filteredHistory.length})</h2>
           </div>
           <span className="subtle-tag">

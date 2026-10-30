@@ -78,10 +78,13 @@ export function loadConfig(env = process.env) {
     itprojectMcpToken: env.ITPROJECT_MCP_TOKEN || '',
     itprojectProjectId: env.ITPROJECT_PROJECT_ID || '',
     itprojectTaskTypeId: env.ITPROJECT_TASK_TYPE_ID || '',
+    itprojectSprintId: env.ITPROJECT_SPRINT_ID || '',
     itprojectTaskCategoryId: env.ITPROJECT_TASK_CATEGORY_ID || '',
     itprojectTaskStatusName: env.ITPROJECT_TASK_STATUS_NAME || 'To Do',
     itprojectOAuthClientId: env.ITPROJECT_OAUTH_CLIENT_ID || '',
     itprojectOAuthRedirectUri: env.ITPROJECT_OAUTH_REDIRECT_URI || '',
+    itprojectOAuthTokenFile: env.ITPROJECT_OAUTH_TOKEN_FILE ||
+      fileURLToPath(new URL('./data/itproject-oauth.json', import.meta.url)),
     itprojectProjectCreationTestEnabled:
       env.ITPROJECT_PROJECT_CREATION_TEST_ENABLED === 'true' &&
       env.NODE_ENV !== 'production',

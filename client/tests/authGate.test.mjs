@@ -8,7 +8,7 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url);
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 function fixture({enabled=true,user={employeeId:'qc-user',name:'QC'},failLogout=false,failPush=false}={}) {
-  let logoutCalls=0,cleared=0,scope='initial';
+  let logoutCalls=0,cleared=0,scope='initial',appLoads=0;
   globalThis.window={addEventListener(){},removeEventListener(){}};
   function Workspace(props){return React.createElement('button',{onClick:props.onLogout,disabled:props.logoutPending},'Workspace '+(props.authUser?.name||'local'));}
   const dependencies={react:React,'react/jsx-runtime':require('react/jsx-runtime'),'./App':{__esModule:true,default:Workspace},
@@ -21,8 +21,8 @@ function fixture({enabled=true,user={employeeId:'qc-user',name:'QC'},failLogout=
     'lucide-react':{Eye:()=>null,EyeOff:()=>null,Loader2:()=>null,LockKeyhole:()=>null,Mail:()=>null}};
   const source=readFileSync(new URL('../src/AuthGate.tsx',import.meta.url),'utf8');
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-  const exports={};new Function('exports','require',code)(exports,name=>dependencies[name]||{});
-  return {AuthGate:exports.AuthGate,Workspace,get calls(){return logoutCalls},get cleared(){return cleared},get scope(){return scope}};
+  const exports={};new Function('exports','require',code)(exports,name=>{if(name==='./App')appLoads++;return dependencies[name]||{};});
+  return {AuthGate:exports.AuthGate,LoginPage:exports.LoginPage,Workspace,get appLoads(){return appLoads},get calls(){return logoutCalls},get cleared(){return cleared},get scope(){return scope}};
 }
 test('logout revokes the session and returns to login, even when push cleanup fails',async()=>{
   const f=fixture({failPush:true});let root;
@@ -46,4 +46,15 @@ test('authentication disabled keeps local mode without pretending an account is 
   const f=fixture({enabled:false,user:null});let root;
   try{await act(async()=>{root=create(React.createElement(f.AuthGate));});assert.equal(root.root.findByType(f.Workspace).props.onLogout,undefined);}
   finally{await act(async()=>root?.unmount());}
+});
+
+
+test('login defers the workspace module until a session is accepted',async()=>{
+ const f=fixture({user:null});let root;
+ try{
+  await act(async()=>{root=create(React.createElement(f.AuthGate));});
+  assert.equal(f.appLoads,0);assert.ok(root.root.findAllByType('form').length);
+  await act(async()=>root.root.findByType(f.LoginPage).props.onAuthenticated({enabled:true,user:{employeeId:'qc-user',name:'QC'}}));
+  assert.equal(f.appLoads,1);assert.equal(root.root.findAllByType(f.Workspace).length,1);
+ }finally{await act(async()=>root?.unmount());}
 });

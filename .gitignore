@@ -15,6 +15,8 @@ server/data/
 infrastructure/livekit/recordings/*
 !infrastructure/livekit/recordings/.gitkeep
 *.mp4
+!docs/media/record-meeting-motion-v2.mp4
+docs/ITPROJECT_INTEGRATION_ROADMAP.md
 
 # Temporary Egress test credentials
 test/egress/egress-test-token
