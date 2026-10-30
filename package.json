@@ -30,5 +30,8 @@
   "license": "ISC",
   "engines": {
     "node": ">=22.18.0"
+  },
+  "dependencies": {
+    "react-zoom-pan-pinch": "^4.2.0"
   }
 }
