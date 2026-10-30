@@ -436,7 +436,7 @@ export function SummaryHistoryView({
             {filteredHistory.map(record => {
               const decisionsCount = record.summary.decisions?.length || 0;
               const actionsCount = record.summary.actionItems?.length || 0;
-              const transcriptsCount = record.transcripts?.length || record.summary.transcriptCount || 0;
+              const transcriptsCount = record.transcripts?.length || record.summary.transcriptCount;
               const isCopied = copiedId === record.meetingId;
 
               return (
@@ -493,9 +493,9 @@ export function SummaryHistoryView({
                         <ListChecks size={12} />
                         <strong>{actionsCount}</strong> Tindak Lanjut
                       </span>
-                      <span className="history-metric-chip" title={`${transcriptsCount} Ucapan`}>
+                      <span className="history-metric-chip" title={transcriptsCount === undefined ? 'Jumlah ucapan belum tersedia' : `${transcriptsCount} Ucapan`}>
                         <MessageSquare size={12} />
-                        <strong>{transcriptsCount}</strong> Ucapan
+                        <strong>{transcriptsCount ?? '—'}</strong> Ucapan
                       </span>
                       {record.department && (
                         <span className="history-metric-chip dept-chip">

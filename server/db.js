@@ -419,6 +419,7 @@ export async function getMeetingSummaries(limit = 20) {
       s.attendance_summary,
       s.provider,
       s.source_evidence,
+      (SELECT COUNT(*)::int FROM balicall_transcripts t WHERE t.meeting_id = s.meeting_id) AS transcript_count,
       s.created_at,
       m.created_at as meeting_created_at,
       m.ended_at as meeting_ended_at,
@@ -434,7 +435,7 @@ export async function getMeetingSummaries(limit = 20) {
     if (!res.rows.length) return res.rows;
     const batches = await activePool.query('SELECT meeting_id,result FROM balicall_post_meeting_batches WHERE meeting_id = ANY($1::varchar[])', [[...new Set(res.rows.map(row => row.meeting_id))]]);
     const byId = new Map(batches.rows.filter(row => row.result?.status === 'done').map(row => [row.meeting_id, row.result]));
-    return res.rows.map(row => byId.has(row.meeting_id) ? batchSummaryRow(byId.get(row.meeting_id).summary, row) : row);
+    return res.rows.map(row => byId.has(row.meeting_id) ? batchSummaryRow(byId.get(row.meeting_id).summary, {...row,transcript_count:byId.get(row.meeting_id).transcripts.length}) : row);
   } catch (err) {
     console.error('[DB] ❌ Failed to fetch meeting summaries:', err.message);
     return [];

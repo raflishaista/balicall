@@ -65,12 +65,23 @@ function validTranscripts(value: unknown): value is TranscriptEntry[] {
 export function readSummaryHistory(): SummaryRecord[] {
   const value = read(HISTORY_KEY);
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is SummaryRecord => object(item) && typeof item.meetingId === 'string'
+  return newestSummaries(value.filter((item): item is SummaryRecord => object(item) && typeof item.meetingId === 'string'
     && typeof item.roomName === 'string' && typeof item.savedAt === 'string' && Number.isFinite(Date.parse(item.savedAt)) && validSummary(item.summary)
-    && validTranscripts(item.transcripts)).slice(0, HISTORY_LIMIT);
+    && validTranscripts(item.transcripts)));
 }
 export function upsertSummary(records: SummaryRecord[], record: SummaryRecord) {
-  return [record, ...records.filter(item => item.meetingId !== record.meetingId)].slice(0, HISTORY_LIMIT);
+  return newestSummaries([record, ...records.filter(item => item.meetingId !== record.meetingId)]);
+}
+export function newestSummaries(records: SummaryRecord[]) {
+  return [...records].sort((a,b) => (Date.parse(b.savedAt) || 0) - (Date.parse(a.savedAt) || 0)).slice(0,HISTORY_LIMIT);
+}
+export function mergeSummaryRecords(records: SummaryRecord[], incoming: SummaryRecord[]) {
+  const byId = new Map(records.map(record => [record.meetingId,record]));
+  for (const record of incoming) {
+    const existing = byId.get(record.meetingId);
+    if (!existing || Date.parse(record.savedAt) >= Date.parse(existing.savedAt)) byId.set(record.meetingId,record);
+  }
+  return newestSummaries([...byId.values()]);
 }
 export function saveSummaryHistory(records: SummaryRecord[]) {
   // Explicit projection keeps bearer tokens out of persistent localStorage.
@@ -177,6 +188,8 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
       attendanceSummary: Array.isArray(s.attendance_summary || s.attendanceSummary)
         ? (s.attendance_summary || s.attendanceSummary).map(String) : [],
       provider: s.provider ? String(s.provider) : undefined,
+      ...(Number.isInteger(Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count)) && Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count) >= 0
+        ? {transcriptCount:Number(s.transcript_count ?? s.transcriptCount ?? raw.transcript_count)} : {}),
       sourceEvidence: validSourceEvidence(s.source_evidence || s.sourceEvidence) ? (s.source_evidence || s.sourceEvidence) : undefined,
       generatedAt: String(s.created_at || s.createdAt || s.generatedAt || new Date().toISOString()),
       dbSummaryId: typeof raw.id === 'number' ? raw.id : undefined,
