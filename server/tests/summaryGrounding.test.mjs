@@ -29,6 +29,11 @@ test('unknown assignment is allowed without borrowing account name',async()=>{
  assert.equal((await run(value,subject)).actionItems[0].assignee,'');
  value.actionItems[0].assignee='Akun ruang';await assert.rejects(run(value,subject),/PIC/);
 });
+test('action assignee can be verified from identified speaker name even if not in quote',async()=>{
+ const subject={...meeting,transcripts:[{speakerName:'Bima',text:'Saya akan periksa koneksi.',segments:[{speaker:'Bima',attribution:'voice match',sessionId:'session-bima',text:'Saya akan periksa koneksi.'}]}]};
+ const value=response({decisions:[],actionItems:[{task:'Periksa koneksi.',assignee:'Bima',deadline:'',priority:'Medium'}],evidence:{decisions:[],actionItems:[{index:0,sources:[{utteranceId:'U0001',quote:'Saya akan periksa koneksi.'}]}]}});
+ assert.equal((await run(value,subject)).actionItems[0].assignee,'Bima');
+});
 test('summary keeps literal ASR words, negations, corrections, and final utterances in input',async()=>{
  const subject={...meeting,transcripts:[{speakerName:'QC',text:'Enok ikut perlombongan. Belum disepakati. Angka awal 12, koreksi menjadi 13.'},{speakerName:'QC',text:'Terakhir: usulan Jumat masih menunggu persetujuan.'}]};let request;
  await run(response({decisions:[],actionItems:[],evidence:{decisions:[],actionItems:[]}}),subject,body=>request=body);

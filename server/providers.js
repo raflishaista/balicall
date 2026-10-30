@@ -52,18 +52,19 @@ export function parseSummary(text, input) {
   ];
 
   const validProjectCreations =
-    Array.isArray(result?.projectCreations) &&
-    result.projectCreations.length <= 1 &&
-    result.projectCreations.every(project =>
-      project &&
-      typeof project.title === 'string' &&
-      typeof project.description === 'string' &&
-      typeof project.emoji === 'string' &&
-      typeof project.startDate === 'string' &&
-      typeof project.dueDate === 'string' &&
-      validProjectStatuses.includes(project.status) &&
-      validProjectPriorities.includes(project.priority)
-    );
+    result?.projectCreations === undefined ||
+    (Array.isArray(result.projectCreations) &&
+      result.projectCreations.length <= 1 &&
+      result.projectCreations.every(project =>
+        project &&
+        typeof project.title === 'string' &&
+        typeof project.description === 'string' &&
+        typeof project.emoji === 'string' &&
+        typeof project.startDate === 'string' &&
+        typeof project.dueDate === 'string' &&
+        validProjectStatuses.includes(project.status) &&
+        validProjectPriorities.includes(project.priority)
+      ));
   
   const validProjectUpdateFields = [
     'title',
@@ -76,30 +77,31 @@ export function parseSummary(text, input) {
   ];
 
   const validProjectUpdates =
-    Array.isArray(result?.projectUpdates) &&
-    result.projectUpdates.every(item =>
-      item &&
-      typeof item.project === 'string' &&
-      item.project.trim() &&
-      item.changes &&
-      typeof item.changes === 'object' &&
-      !Array.isArray(item.changes) &&
-      Object.keys(item.changes).length > 0 &&
-      Object.keys(item.changes).every(key =>
-        validProjectUpdateFields.includes(key)
-      ) &&
-      Object.values(item.changes).every(value =>
-        typeof value === 'string'
-      ) &&
-      (
-        item.changes.status === undefined ||
-        validProjectStatuses.includes(item.changes.status)
-      ) &&
-      (
-        item.changes.priority === undefined ||
-        validProjectPriorities.includes(item.changes.priority)
-      )
-    );
+    result?.projectUpdates === undefined ||
+    (Array.isArray(result.projectUpdates) &&
+      result.projectUpdates.every(item =>
+        item &&
+        typeof item.project === 'string' &&
+        item.project.trim() &&
+        item.changes &&
+        typeof item.changes === 'object' &&
+        !Array.isArray(item.changes) &&
+        Object.keys(item.changes).length > 0 &&
+        Object.keys(item.changes).every(key =>
+          validProjectUpdateFields.includes(key)
+        ) &&
+        Object.values(item.changes).every(value =>
+          typeof value === 'string'
+        ) &&
+        (
+          item.changes.status === undefined ||
+          validProjectStatuses.includes(item.changes.status)
+        ) &&
+        (
+          item.changes.priority === undefined ||
+          validProjectPriorities.includes(item.changes.priority)
+        )
+      ));
 
   if (
     !result ||
@@ -121,12 +123,13 @@ export function parseSummary(text, input) {
       (item.type === undefined || typeof item.type === 'string') &&
       (item.startDate === undefined || typeof item.startDate === 'string')
     ) ||
-    !Array.isArray(result.taskUpdates) ||
-    !result.taskUpdates.every(item =>
-      item &&
-      typeof item.task === 'string' &&
-      validTaskStatuses.includes(item.status)
-    )||
+    (result.taskUpdates !== undefined &&
+      (!Array.isArray(result.taskUpdates) ||
+        !result.taskUpdates.every(item =>
+          item &&
+          typeof item.task === 'string' &&
+          validTaskStatuses.includes(item.status)
+        ))) ||
     !validProjectCreations ||
     !validProjectUpdates
   ) {
@@ -139,10 +142,10 @@ export function parseSummary(text, input) {
     keyDiscussionPoints: result.keyDiscussionPoints,
     decisions: result.decisions,
     actionItems: result.actionItems,
-    taskUpdates: result.taskUpdates,
-    taskEdits: result.taskEdits,
-    projectCreations: result.projectCreations,
-    projectUpdates: result.projectUpdates,
+    taskUpdates: Array.isArray(result.taskUpdates) ? result.taskUpdates : [],
+    taskEdits: Array.isArray(result.taskEdits) ? result.taskEdits : [],
+    projectCreations: Array.isArray(result.projectCreations) ? result.projectCreations : [],
+    projectUpdates: Array.isArray(result.projectUpdates) ? result.projectUpdates : [],
     attendanceSummary: result.attendanceSummary,
   };
 

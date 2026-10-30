@@ -226,7 +226,7 @@ export function validateSummaryEvidence(raw, summary, input) {
     'projectCreations',
     'projectUpdates',
   ]) {
-    const claims = summary[field];
+    const claims = summary[field] ?? [];
     const entries = raw.evidence?.[field] ?? [];
     if (!Array.isArray(entries) || entries.length !== claims.length) throw new SummaryGroundingError('Rujukan keputusan/tugas tidak lengkap.');
     const seen = new Set();
@@ -265,10 +265,30 @@ export function validateSummaryEvidence(raw, summary, input) {
         if (
           field === 'actionItems' &&
           action.assignee.trim() &&
-          !sources.some(source => containsPhrase(source.quote, action.assignee))
+          !sources.some(
+            source =>
+              containsPhrase(source.quote, action.assignee) ||
+              (source.attribution !== 'unknown' &&
+                (containsPhrase(source.speaker, action.assignee) ||
+                  containsPhrase(action.assignee, source.speaker)))
+          )
         ) {
           throw new SummaryGroundingError(
             'PIC tugas tidak disebutkan dalam kutipan rujukan.'
+          );
+        }
+
+        if (
+          field === 'actionItems' &&
+          action.deadline.trim() &&
+          !sources.some(source =>
+            compact(source.quote)
+              .toLocaleLowerCase('id-ID')
+              .includes(compact(action.deadline).toLocaleLowerCase('id-ID'))
+          )
+        ) {
+          throw new SummaryGroundingError(
+            'Tenggat tugas tidak sesuai kutipan rujukan.'
           );
         }
 
