@@ -11,6 +11,7 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export function loadItProjectOAuthTokens(filePath) {
+  if (!filePath) return null;
   try {
     const tokens = JSON.parse(readFileSync(filePath, 'utf8'));
 

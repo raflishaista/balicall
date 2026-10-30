@@ -161,11 +161,10 @@ export function createItProjectClient(config) {
       });
 
       throw new ServiceError(
-        error.message.includes('Login OAuth') ||
-          error.message.includes('token')
+        error.message?.includes('Login OAuth') || error.message?.includes('token')
           ? error.message
-          : 'IT Project tidak dapat dijangkau atau menolak permintaan.',
-        502
+          : (error.message || 'IT Project tidak dapat dijangkau atau menolak permintaan.'),
+        error.status || 502
       );
     } finally {
       await client.close().catch(() => {});
@@ -254,8 +253,26 @@ export function createItProjectClient(config) {
       return call('get-project-options', {});
     },
 
-    userProjects() {
-      return call('get-user-projects', {});
+    async userProjects() {
+      try {
+        return await call('get-user-projects', {});
+      } catch (error) {
+        // Fallback jika server devitproject mengalami error format tanggal di get-user-projects
+        if (
+          error.message?.includes('format()') ||
+          error.message?.includes('null') ||
+          error.message?.includes('IT Project tidak dapat dijangkau') ||
+          error.message?.includes('menolak permintaan')
+        ) {
+          console.warn('[ITPROJECT] get-user-projects gagal pada server upstream; menggunakan fallback query-data model project.');
+          try {
+            return await call('query-data', { model: 'project' });
+          } catch {
+            // Jika fallback juga gagal, lempar error asli
+          }
+        }
+        throw error;
+      }
     },
 
     projectDetail(project) {
@@ -267,6 +284,17 @@ export function createItProjectClient(config) {
     },
     createProject(arguments_) {
       return call('create-project', arguments_);
+    },
+    createComment(arguments_) {
+      return call('create-comment', arguments_);
+    },
+
+    listQueryableModels() {
+      return call('list-queryable-models', {});
+    },
+
+    queryData(arguments_) {
+      return call('query-data', arguments_);
     },
   };
 }

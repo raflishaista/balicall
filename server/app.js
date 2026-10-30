@@ -369,15 +369,23 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       const matches = new Map();
 
       const addMatchingProject = project => {
-        const cleanedReference = normalizeTaskReference(reference)
-          .replace(/^(project|proyek)\s+/u, '');
+        const rawReference = normalizeTaskReference(reference);
+        const cleanedReference = rawReference.replace(/^(project|proyek)\s+/u, '');
 
         const title = normalizeTaskReference(project.title);
+        const cleanedTitle = title.replace(/^(project|proyek)\s+/u, '');
         const projectNo = normalizeTaskReference(project.project_no);
 
         if (
+          title === rawReference ||
           title === cleanedReference ||
+          cleanedTitle === cleanedReference ||
+          projectNo === rawReference ||
           projectNo === cleanedReference ||
+          taskMatchesReference(
+            { title: project.title || '' },
+            reference
+          ) ||
           taskMatchesReference(
             { title: project.title || '' },
             cleanedReference
