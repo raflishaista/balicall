@@ -137,6 +137,19 @@ export function saveActiveView(view: string): boolean {
   return write(ACTIVE_VIEW_KEY, view, true);
 }
 
+export function normalizeArchiveTranscripts(value: unknown): TranscriptEntry[] {
+  if (!Array.isArray(value)) return [];
+  const name = (...values: unknown[]) => values.find(value => typeof value === 'string' && value.trim()) as string | undefined;
+  return value.filter(object).map(entry => ({
+    ...entry,
+    id: typeof entry.id === 'string' ? entry.id : '',
+    speakerId: name(entry.speakerId, entry.speaker_id) || '',
+    speakerName: name(entry.speakerName, entry.speaker_name) || 'Pembicara tidak diketahui',
+    text: typeof entry.text === 'string' ? entry.text : '',
+    timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : '',
+  } as TranscriptEntry));
+}
+
 export function normalizeDbSummary(raw: any): SummaryRecord {
   const s = raw?.summary || raw || {};
   const rawActions = s.action_items || s.actionItems || [];
@@ -168,7 +181,7 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
       generatedAt: String(s.created_at || s.createdAt || s.generatedAt || new Date().toISOString()),
       dbSummaryId: typeof raw.id === 'number' ? raw.id : undefined,
     },
-    transcripts: Array.isArray(raw.transcripts) ? raw.transcripts : [],
+    transcripts: normalizeArchiveTranscripts(raw.transcripts),
     hostId: raw.host_id || raw.hostId,
     hostName: raw.host_name || raw.hostName,
     department: raw.department,

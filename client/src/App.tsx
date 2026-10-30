@@ -19,7 +19,7 @@ import type { MeetingPreferences } from './preferences';
 import { createSaveQueue } from './saveQueue';
 import { createTranscriptDelivery } from './transcriptDelivery';
 import './App.css';
-import { upsertSummary, validSummary, normalizeDbSummary, scopedSummaryStorage } from './summaryHistory';
+import { upsertSummary, validSummary, normalizeDbSummary, normalizeArchiveTranscripts, scopedSummaryStorage } from './summaryHistory';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
 import { routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory } from './navigation';
@@ -354,7 +354,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
             ).then(details => {
               if (details?.summary) {
                 setSummary(details.summary);
-                if (details.transcripts) setTranscripts(details.transcripts);
+                if (details.transcripts) setTranscripts(normalizeArchiveTranscripts(details.transcripts));
                 if (details.meeting?.room_name) setSummaryRoomName(details.meeting.room_name);
               }
             }).catch(() => {});
@@ -503,7 +503,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setSummaryError(null);
     setCopied(false);
     setSummary(record.summary);
-    setTranscripts(record.transcripts);
+    setTranscripts(normalizeArchiveTranscripts(record.transcripts));
     setSummaryMeetingId(record.meetingId);
     setSummaryRoomName(record.roomName);
     setSummaryHasRecording(Boolean(record.hasRecording));
@@ -513,7 +513,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       meetingId: record.meetingId,
       roomName: record.roomName,
       token: savedToken,
-      transcripts: record.transcripts,
+      transcripts: normalizeArchiveTranscripts(record.transcripts),
       open: true,
       isSummarizing: false,
     });
@@ -525,7 +525,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       apiRequest<{ success: boolean; transcripts: TranscriptEntry[]; hasRecording?: boolean }>(`/meetings/db-details/${encodeURIComponent(record.meetingId)}`)
         .then(details => {
           if (details?.transcripts && details.transcripts.length > 0) {
-            setTranscripts(details.transcripts);
+            setTranscripts(normalizeArchiveTranscripts(details.transcripts));
           }
           if (details?.hasRecording) {
             setSummaryHasRecording(true);
