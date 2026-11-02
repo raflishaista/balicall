@@ -1118,7 +1118,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   const manageParticipant = async (
     participantId: string,
-    action: 'promote' | 'demote' | 'mute' | 'remove' | 'approve-speak'
+    action: 'promote' | 'demote' | 'transfer-host' | 'mute' | 'remove' | 'approve-speak'
   ) => {
     if (!meetingId || !token) return;
 
@@ -1131,14 +1131,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       Authorization: `Bearer ${token}`,
     };
 
-    if (action === 'promote' || action === 'demote') {
+    if (action === 'promote' || action === 'demote' || action === 'transfer-host') {
       headers['Content-Type'] = 'application/json';
 
       await apiRequest(`${participantPath}/role`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify({
-          role: action === 'promote' ? 'co-host' : 'participant',
+          role: action === 'transfer-host' ? 'host' : action === 'promote' ? 'co-host' : 'participant',
         }),
       });
     } else if (action === 'mute') {

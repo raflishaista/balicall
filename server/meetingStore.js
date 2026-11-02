@@ -155,6 +155,23 @@ export class MeetingStore {
       return target;
     });
   }
+  transferHost(id, actorId, targetId) {
+    return this.transact(() => {
+      const meeting = this.get(id);
+      const fail = (message, status) => { const error = new Error(message); error.status = status; throw error; };
+      if (!meeting) fail('Meeting tidak ditemukan.', 404);
+      if (meeting.status !== 'active') fail('Meeting sudah berakhir.', 409);
+      const actor = meeting.participants.get(actorId);
+      if (meeting.hostId !== actorId || !actor || actor.leftAt) fail('Hanya host aktif yang dapat memindahkan host.', 403);
+      const target = meeting.participants.get(targetId);
+      if (!target || target.leftAt) fail('Peserta tidak ditemukan atau sudah keluar.', 404);
+      if (targetId === actorId) fail('Peserta sudah menjadi host.', 400);
+      if (target.guestTokenIssued || targetId.startsWith('GUEST-')) fail('Host harus akun karyawan.', 403);
+      meeting.coHostIds = (meeting.coHostIds || []).filter(id => id !== targetId && id !== actorId);
+      actor.role = 'participant'; target.role = 'host'; meeting.hostId = targetId;
+      return { employeeId: targetId, role: 'host', hostId: targetId, coHostIds: [...meeting.coHostIds] };
+    });
+  }
   setCoHost(id, actorId, targetId, makeCoHost) {
     return this.transact(() => {
       const meeting = this.get(id);

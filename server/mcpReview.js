@@ -93,10 +93,12 @@ export function createMcpReview({store,client,plan,destination=''}) {
         const result=await client[condition.method](...condition.args);
         if(hash(result.data)!==condition.digest){save(id,record.revision,{status:'pending',planDigest:'',operations:[],error:'Data IT Project berubah. Tinjau rencana terbaru.'});throw fail('Data IT Project berubah. Muat ulang untuk meninjau kembali.');}
       }
+      if(store.get(id)?.hostId!==actor)throw fail('Host rapat berubah; persetujuan harus diberikan host saat ini.',403);
       if(revision(store.get(id),summaryOf(store.get(id)))!==record.revision)throw fail('Notulen berubah; perlu persetujuan baru.');
       save(id,record.revision,{status:'sending',decidedBy:actor,decidedAt:new Date().toISOString(),results:[]});sending=true;
       const ids={};
       for(const [index,operation] of record.operations.entries()) {
+        if(store.get(id)?.hostId!==actor)throw fail('Host berubah saat pengiriman. Periksa hasil parsial.');
         if(revision(store.get(id),summaryOf(store.get(id)))!==record.revision)throw fail('Notulen berubah ketika pengiriman berlangsung. Periksa hasil parsial.');
         const args=replace(operation.args,ids);
         if(symbolic(args))throw fail('Target aksi belum terkonfirmasi.');
