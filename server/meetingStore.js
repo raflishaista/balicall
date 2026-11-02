@@ -278,6 +278,9 @@ export class MeetingStore {
           participant.connected = false;
           participant.lastSeen = at;
           // leftAt is the API authorization boundary; do not reject queued STT just because media disconnected.
+          if (participant.employeeId === meeting.hostId) {
+            this.electSuccessorHost(meeting, participant.employeeId);
+          }
         }
       }
       return { meetingId: meeting.id };
@@ -338,6 +341,44 @@ export class MeetingStore {
       return participant;
     });
   }
+  electSuccessorHost(meeting, departingHostId) {
+    const now = Date.now();
+    const activeCandidates = [...meeting.participants.values()].filter(p =>
+      p.employeeId !== departingHostId &&
+      !p.leftAt &&
+      (p.connected || now - Date.parse(p.lastSeen || 0) < 45000)
+    );
+    if (!activeCandidates.length) return null;
+
+    const employees = activeCandidates.filter(p => !p.guestTokenIssued && !p.employeeId.startsWith('GUEST-'));
+    const pool = employees.length ? employees : activeCandidates;
+
+    // Prioritaskan co-host aktif terlebih dahulu jika ada
+    const coHosts = pool.filter(p =>
+      p.role === 'co-host' || (meeting.coHostIds || []).includes(p.employeeId)
+    );
+
+    // Jika ada co-host, pilih di antara co-host; jika tidak, pilih peserta paling awal di pool
+    const candidates = coHosts.length ? coHosts : pool;
+
+    candidates.sort((a, b) => {
+      const timeA = Date.parse(a.joinedAt || a.lastSeen || 0);
+      const timeB = Date.parse(b.joinedAt || b.lastSeen || 0);
+      if (timeA !== timeB) return timeA - timeB;
+      return a.employeeId.localeCompare(b.employeeId);
+    });
+
+    const successor = candidates[0];
+    if (successor) {
+      meeting.hostId = successor.employeeId;
+      successor.role = 'host';
+      meeting.coHostIds = (meeting.coHostIds || []).filter(id => id !== successor.employeeId && id !== departingHostId);
+      const departing = meeting.participants.get(departingHostId);
+      if (departing) departing.role = 'participant';
+      return successor;
+    }
+    return null;
+  }
   leave(id, speakerId) {
     return this.transact(() => {
       const meeting = this.get(id);
@@ -350,6 +391,8 @@ export class MeetingStore {
       if (!remaining) {
         meeting.status = 'ended';
         meeting.endedAt = participant.leftAt;
+      } else if (speakerId === meeting.hostId) {
+        this.electSuccessorHost(meeting, speakerId);
       }
       return meeting;
     });

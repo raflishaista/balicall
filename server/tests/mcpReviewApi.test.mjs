@@ -22,7 +22,9 @@ test('minutes, cached retry and review load never write MCP; host decision is re
  const meeting=ctx.store.get(host.meetingId);
  ctx.store.transact(()=>{meeting.status='ended';meeting.summary={title:'QC',executiveSummary:'QC',decisions:[],actionItems:[{task:'Periksa jaringan',assignee:'Host',deadline:'',priority:'Medium',type:'Task'}],taskUpdates:[],taskEdits:[],projectCreations:[],projectUpdates:[],attendanceSummary:[],keyDiscussionPoints:[]};});
  const read=await request('/mcp-reviews/'+host.meetingId,host.token);assert.equal(read.status,200);assert.equal(calls.length,0);assert.equal(read.data.status,'ready');assert.equal(read.data.operations.length,1);
- assert.equal((await request('/mcp-reviews/'+host.meetingId,other.token)).data.canDecide,false);
+ assert.equal((await request('/mcp-reviews/'+host.meetingId,other.token)).status,403);
+ ctx.store.transact(()=>{meeting.coHostIds=['other'];});
+ assert.equal((await request('/mcp-reviews/'+host.meetingId,other.token)).status,403);
  assert.equal((await request('/mcp-reviews/'+host.meetingId+'/decision',other.token,{decision:true,revision:read.data.revision,planDigest:read.data.planDigest})).status,403);
  const no=await request('/mcp-reviews/'+host.meetingId+'/decision',host.token,{decision:false,revision:read.data.revision,planDigest:read.data.planDigest});assert.equal(no.data.status,'rejected');assert.equal(calls.length,0);
  const yes=await request('/mcp-reviews/'+host.meetingId+'/decision',host.token,{decision:true,revision:read.data.revision,planDigest:read.data.planDigest});assert.equal(yes.data.status,'sent');assert.equal(calls.length,1);
@@ -35,6 +37,9 @@ test('minutes, cached retry and review load never write MCP; host decision is re
  ctx.store.transact(()=>{meeting.summary.actionItems=[{task:'Periksa server',project:'Proyek QC',assignee:'Host',deadline:'',priority:'Medium',type:'Task'}];});
  const dynamic=await request('/mcp-reviews/'+host.meetingId,host.token);assert.equal(dynamic.data.status,'ready');assert.equal(projectReads,1);assert.equal(calls.length,1);assert.equal(dynamic.data.operations[0].args.project,'p-dynamic');
  const approved=await request('/mcp-reviews/'+host.meetingId+'/decision',host.token,{decision:true,revision:dynamic.data.revision,planDigest:dynamic.data.planDigest});assert.equal(approved.data.status,'sent');assert.equal(calls.length,2);assert.equal(projectReads,2);
+ ctx.store.transact(()=>{meeting.hostId='other';meeting.coHostIds=[];});
+ assert.equal((await request('/mcp-reviews/'+host.meetingId,host.token)).status,403);
+ assert.equal((await request('/mcp-reviews/'+host.meetingId,other.token)).status,200);
 
 });
 

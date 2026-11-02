@@ -35,3 +35,70 @@ test('HTTP transfer requires host and revokes old host management rights',async 
  assert.equal((await call(path+'member/role','PATCH',h.token,{role:'co-host'})).status,403);
  assert.equal((await call(path+'host/role','PATCH',p.token,{role:'co-host'})).status,200);
 });
+
+test('host leaving or disconnecting automatically transfers host role to the earliest joining participant',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'balicall-host-auto-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const path=join(dir,'store.json'),store=new MeetingStore(path);
+ const m=store.join('QC',{employeeId:'host',employeeName:'Host'});
+ store.join('QC',{employeeId:'first-joiner',employeeName:'First'});
+ store.join('QC',{employeeId:'second-joiner',employeeName:'Second'});
+ store.transact(()=>{
+  m.participants.get('host').joinedAt='2026-11-02T10:00:00.000Z';
+  m.participants.get('first-joiner').joinedAt='2026-11-02T10:01:00.000Z';
+  m.participants.get('second-joiner').joinedAt='2026-11-02T10:05:00.000Z';
+ });
+ store.leave(m.id,'host');
+ assert.equal(m.hostId,'first-joiner');
+ assert.equal(m.participants.get('first-joiner').role,'host');
+ assert.equal(m.participants.get('host').role,'participant');
+
+ store.applyLivekitEvent({
+  id:'evt-1',
+  event:'participant_left',
+  createdAt:Math.floor(Date.now()/1000),
+  room:{name:m.livekitRoom,sid:'room-sid-1'},
+  participant:{identity:'first-joiner',sid:'p-sid-1'},
+ },10000);
+ assert.equal(m.hostId,'second-joiner');
+ assert.equal(m.participants.get('second-joiner').role,'host');
+});
+
+test('host leaving promotes co-host to host before regular participants',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'balicall-cohost-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const path=join(dir,'store.json'),store=new MeetingStore(path);
+ const m=store.join('QC',{employeeId:'host',employeeName:'Host'});
+ store.join('QC',{employeeId:'early-participant',employeeName:'Early'});
+ store.join('QC',{employeeId:'cohost-1',employeeName:'CoHost 1'});
+ store.join('QC',{employeeId:'cohost-2',employeeName:'CoHost 2'});
+ store.setCoHost(m.id,'host','cohost-1',true);
+ store.setCoHost(m.id,'host','cohost-2',true);
+ store.transact(()=>{
+  m.participants.get('host').joinedAt='2026-11-02T10:00:00.000Z';
+  m.participants.get('early-participant').joinedAt='2026-11-02T10:01:00.000Z';
+  m.participants.get('cohost-1').joinedAt='2026-11-02T10:03:00.000Z';
+  m.participants.get('cohost-2').joinedAt='2026-11-02T10:05:00.000Z';
+ });
+ // When host leaves, cohost-1 (earliest co-host) becomes host over early-participant
+ store.leave(m.id,'host');
+ assert.equal(m.hostId,'cohost-1');
+ assert.equal(m.participants.get('cohost-1').role,'host');
+ assert.equal(m.coHostIds.includes('cohost-1'),false);
+ assert.equal(m.coHostIds.includes('cohost-2'),true);
+
+ // When cohost-1 disconnects, cohost-2 becomes host
+ store.applyLivekitEvent({
+  id:'evt-cohost-left',
+  event:'participant_left',
+  createdAt:Math.floor(Date.now()/1000),
+  room:{name:m.livekitRoom,sid:'room-sid-2'},
+  participant:{identity:'cohost-1',sid:'p-sid-cohost-1'},
+ },10000);
+ assert.equal(m.hostId,'cohost-2');
+ assert.equal(m.participants.get('cohost-2').role,'host');
+ assert.equal(m.coHostIds.includes('cohost-2'),false);
+
+ // When cohost-2 leaves and no co-hosts remain, early-participant becomes host
+ store.leave(m.id,'cohost-2');
+ assert.equal(m.hostId,'early-participant');
+ assert.equal(m.participants.get('early-participant').role,'host');
+});

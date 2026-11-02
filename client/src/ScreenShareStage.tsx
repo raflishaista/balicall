@@ -128,8 +128,8 @@ function ScreenShareVideo({
       doubleClick={{ mode: 'toggle', step: 1.0 }}
       wheel={{ step: 0.15 }}
       panning={{ disabled: !isZoomed, velocityDisabled: false }}
-      onInit={(ref) => onScaleChange(ref.state.scale)}
-      onTransform={(_ref, state) => onScaleChange(state.scale)}
+      onInit={(ref: any) => onScaleChange(ref.state.scale)}
+      onTransform={(_ref: any, state: any) => onScaleChange(state.scale)}
       onPanningStart={() => setIsPanning(true)}
       onPanningStop={() => setIsPanning(false)}
     >

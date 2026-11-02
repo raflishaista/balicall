@@ -8,7 +8,7 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url);
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const exports={};new Function('exports','require',ts.transpileModule(readFileSync(new URL('../src/McpReviewPanel.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText)(exports,name=>name==='./api'?{apiRequest(){throw Error('Must inject fake client')}}:name.endsWith('.css')?{}:require(name));
-const ready={revision:'rev',planDigest:'digest',status:'ready',canDecide:true,operations:[{method:'createTask',args:{title:'Periksa jaringan',project:'p'}}]};
+const ready={revision:'rev',planDigest:'digest',status:'ready',canDecide:true,isHost:true,operations:[{method:'createTask',args:{title:'Periksa jaringan',project:'p'}}]};
 for(const decision of [true,false])test(`host ${decision?'Yes':'No'} requires explicit consent and exact revision`,async()=>{
  const calls=[];let root;
  const request=async(path,options)=>{if(options.method==='POST'){calls.push(JSON.parse(options.body));return {...ready,status:decision?'sent':'rejected',canDecide:!decision};}return ready;};
@@ -18,9 +18,16 @@ for(const decision of [true,false])test(`host ${decision?'Yes':'No'} requires ex
  }finally{await act(async()=>root?.unmount());}
 });
 test('participants have no approval controls; failed load never enables sending',async()=>{
- for(const result of [{...ready,canDecide:false,operations:[]},null]){let root;try{
+ for(const result of [{...ready,isHost:false,canDecide:false,operations:[]},null]){let root;try{
  await act(async()=>{root=create(React.createElement(exports.McpReviewPanel,{meetingId:'m',token:'t',request:async()=>{if(!result)throw Error('Offline');return result;}}));});
- assert.equal(root.root.findAllByType('button').length,1);
- if(!result)assert.match(JSON.stringify(root.toJSON()),/Offline/);
+ assert.equal(root.toJSON(),null);
+
  }finally{await act(async()=>root?.unmount());}}
+});
+
+test('former host panel disappears when refreshed access is revoked',async()=>{
+ let allowed=true,root;const request=async()=>{if(!allowed)throw Object.assign(Error('Forbidden'),{status:403});return ready;};
+ try{await act(async()=>{root=create(React.createElement(exports.McpReviewPanel,{meetingId:'m',token:'t',request}));});assert.notEqual(root.toJSON(),null);allowed=false;
+ await act(async()=>root.root.findAllByType('button').at(-1).props.onClick());assert.equal(root.toJSON(),null);
+ }finally{await act(async()=>root?.unmount());}
 });
