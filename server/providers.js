@@ -51,6 +51,17 @@ export function parseSummary(text, input) {
     'Critical',
   ];
 
+  const taskEditStrings = ['title', 'description', 'emoji', 'startDate', 'dueDate', 'priority', 'type', 'category', 'parent', 'owner'];
+  const taskEditLists = ['assignUsers', 'unassignUsers', 'tags', 'removeTags'];
+  const validTaskEdits = result?.taskEdits === undefined ||
+    (Array.isArray(result.taskEdits) && result.taskEdits.every(item =>
+      item && typeof item.task === 'string' && item.task.trim() &&
+      item.changes && typeof item.changes === 'object' && !Array.isArray(item.changes) &&
+      Object.keys(item.changes).length > 0 &&
+      Object.entries(item.changes).every(([key, value]) =>
+        taskEditStrings.includes(key) ? typeof value === 'string' :
+          taskEditLists.includes(key) && strings(value))));
+
   const validProjectCreations =
     result?.projectCreations === undefined ||
     (Array.isArray(result.projectCreations) &&
@@ -103,6 +114,40 @@ export function parseSummary(text, input) {
         )
       ));
 
+    const validSprintOperations =
+    Array.isArray(result?.sprintOperations) &&
+    result.sprintOperations.every(item =>
+      item &&
+      [
+        'create',
+        'update',
+        'start',
+        'complete',
+        'delete',
+        'assign_tasks',
+        'remove_task',
+      ].includes(item.operation) &&
+      [
+        'project',
+        'sprint',
+        'name',
+        'goal',
+        'startDate',
+        'endDate',
+        'duration',
+        'retrospective',
+        'moveIncompleteTo',
+        'task',
+      ].every(key => typeof item[key] === 'string') &&
+      Array.isArray(item.tasks) &&
+      item.tasks.every(task => typeof task === 'string') &&
+      (
+        !item.duration ||
+        ['1 week', '2 weeks', '3 weeks', '4 weeks', 'Custom']
+          .includes(item.duration)
+      )
+    );
+
   if (
     !result ||
     typeof result.title !== 'string' ||
@@ -132,8 +177,10 @@ export function parseSummary(text, input) {
           typeof item.task === 'string' &&
           validTaskStatuses.includes(item.status)
         ))) ||
+    !validTaskEdits ||
     !validProjectCreations ||
-    !validProjectUpdates
+    !validProjectUpdates ||
+    !validSprintOperations
   ) {
     throw new ServiceError('The summary service returned an invalid summary schema');
   }
@@ -156,8 +203,15 @@ export function parseSummary(text, input) {
     })),
     taskUpdates: Array.isArray(result.taskUpdates) ? result.taskUpdates : [],
     taskEdits: Array.isArray(result.taskEdits) ? result.taskEdits : [],
-    projectCreations: Array.isArray(result.projectCreations) ? result.projectCreations : [],
-    projectUpdates: Array.isArray(result.projectUpdates) ? result.projectUpdates : [],
+    projectCreations: Array.isArray(result.projectCreations)
+      ? result.projectCreations
+      : [],
+    projectUpdates: Array.isArray(result.projectUpdates)
+      ? result.projectUpdates
+      : [],
+    sprintOperations: Array.isArray(result.sprintOperations)
+      ? result.sprintOperations
+      : [],
     attendanceSummary: result.attendanceSummary,
   };
 
@@ -265,7 +319,7 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
         }
         return [`${entry.speakerName}: ${entry.text}`];
       }),
-      decisions: [], actionItems: [], attendanceSummary: attendance,
+      decisions: [], actionItems: [], taskUpdates: [], taskEdits: [], projectCreations: [], projectUpdates: [], attendanceSummary: attendance,
       summaryVersion: SUMMARY_VERSION, provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
   }

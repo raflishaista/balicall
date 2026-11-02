@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 
-const writes=new Set(['createProject','createTask','updateTask','updateTaskStatus','updateProject','assignSprintTasks']);
-const reads=new Set(['taskOptions','projectTasks','projectOptions','userProjects','projectDetail']);
+const writes=new Set(['createProject','createTask','updateTask','updateTaskStatus','updateProject','assignSprintTasks','createSprint','updateSprint','startSprint','completeSprint','deleteSprint','removeSprintTask','createComment']);
+const reads=new Set(['taskOptions','projectTasks','projectOptions','userProjects','projectDetail','projectSprints','listQueryableModels','queryData']);
 const fields=['itProjectTaskDispatch','itProjectProjectDispatch'];
 const canonical=value=>JSON.stringify(value,(_key,item)=>item && typeof item==='object' && !Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
