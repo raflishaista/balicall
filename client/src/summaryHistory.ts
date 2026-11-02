@@ -33,6 +33,10 @@ export interface SummarySession {
   meetingId: string; roomName: string; token: string; transcripts: TranscriptEntry[]; open: boolean;
   isSummarizing?: boolean;
 }
+export interface ActiveCallSession {
+  meetingId: string; roomName: string; token: string; serverUrl: string; joinedAt: number;
+}
+export const CALL_SESSION_KEY = 'balicall.call-session.v1';
 export const HISTORY_KEY = 'balicall.summary-history.v1';
 export const SESSION_KEY = 'balicall.summary-session.v1';
 export const IN_PROGRESS_KEY = 'balicall.summary-in-progress.v1';
@@ -203,6 +207,29 @@ export function normalizeDbSummary(raw: any): SummaryRecord {
   };
 }
 
+export function readCallSession(): ActiveCallSession | null {
+  const data = read(CALL_SESSION_KEY, true);
+  if (!object(data)) return null;
+  if (typeof data.meetingId !== 'string' || typeof data.token !== 'string' || typeof data.roomName !== 'string') return null;
+  return {
+    meetingId: data.meetingId,
+    roomName: data.roomName,
+    token: data.token,
+    serverUrl: typeof data.serverUrl === 'string' ? data.serverUrl : 'ws://127.0.0.1:7880',
+    joinedAt: typeof data.joinedAt === 'number' ? data.joinedAt : Date.now(),
+  };
+}
+export function saveCallSession(session: ActiveCallSession | null): boolean {
+  try {
+    if (!session) {
+      window.sessionStorage.removeItem(accountKey(CALL_SESSION_KEY));
+      return true;
+    }
+    return write(CALL_SESSION_KEY, session, true);
+  } catch {
+    return false;
+  }
+}
 // Bind storage to the account at mount, including late async callbacks from an old session.
 export function scopedSummaryStorage(employeeId: string | null) {
   const bind = <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A): R => withAccountScope(employeeId, () => fn(...args));
@@ -210,11 +237,12 @@ export function scopedSummaryStorage(employeeId: string | null) {
     saveSummaryHistory: bind(saveSummaryHistory), saveSummarySession: bind(saveSummarySession),
     summaryTokenFor: bind(summaryTokenFor), readInProgressSummaries: bind(readInProgressSummaries),
     saveInProgressSummary: bind(saveInProgressSummary), removeInProgressSummary: bind(removeInProgressSummary),
-    readActiveView: bind(readActiveView), saveActiveView: bind(saveActiveView) };
+    readActiveView: bind(readActiveView), saveActiveView: bind(saveActiveView),
+    readCallSession: bind(readCallSession), saveCallSession: bind(saveCallSession) };
 }
 
 export function clearSummarySession() {
   try {
-    for (const key of [SESSION_KEY, IN_PROGRESS_KEY, TOKEN_KEY]) window.sessionStorage.removeItem(accountKey(key));
+    for (const key of [SESSION_KEY, IN_PROGRESS_KEY, TOKEN_KEY, CALL_SESSION_KEY]) window.sessionStorage.removeItem(accountKey(key));
   } catch { /* A revoked server session remains revoked even if browser storage is blocked. */ }
 }

@@ -67,8 +67,15 @@ echo ========================================================
 echo.
 
 :: Launch 1: SFU Server (LiveKit WebRTC)
-netstat -ano -p tcp | findstr ":7880 " | findstr "LISTENING" >nul
+tasklist /fi "imagename eq livekit-server.exe" 2>nul | findstr /i "livekit-server.exe" >nul
 if errorlevel 1 (
+    netstat -ano -p tcp | findstr ":7880 " | findstr "LISTENING" >nul
+    if not errorlevel 1 (
+        echo [1/4] Port 7880 is occupied by an unresponsive process. Freeing port...
+        for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":7880 " ^| findstr "LISTENING"') do (
+            taskkill /F /PID %%a >nul 2>&1
+        )
+    )
     echo [1/4] Starting LiveKit SFU Server on Port 7880...
     if exist "livekit.yaml" (
         start "BaliCall LiveKit SFU" /D "%~dp0" cmd /k "bin\livekit-server.exe --config livekit.yaml --dev"
@@ -81,23 +88,51 @@ if errorlevel 1 (
 )
 
 :: Launch 2: Local Whisper STT + Nemotron-3 Diarization Server
+set NEED_WHISPER=0
 netstat -ano -p tcp | findstr ":8001 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-    echo [2/4] Starting Local Whisper STT + Diarization Server on Port 8001...
-    start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
-    ping -n 3 127.0.0.1 >nul
+    set NEED_WHISPER=1
 ) else (
-    echo [2/4] Port 8001 is already active [Whisper STT Server].
+    curl -s -m 2 http://127.0.0.1:8001/health >nul 2>&1
+    if errorlevel 1 (
+        echo [2/4] Port 8001 is busy but unresponsive. Freeing port...
+        for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8001 " ^| findstr "LISTENING"') do (
+            taskkill /F /PID %%a >nul 2>&1
+        )
+        set NEED_WHISPER=1
+    ) else (
+        echo [2/4] Port 8001 is already active [Whisper STT Server].
+    )
+)
+if "!NEED_WHISPER!"=="1" (
+    if exist "start_whisper.bat" (
+        echo [2/4] Starting Local Whisper STT + Diarization Server on Port 8001...
+        start "BaliCall Whisper STT" /D "%~dp0" cmd /k "start_whisper.bat"
+        ping -n 3 127.0.0.1 >nul
+    )
 )
 
 :: Launch 3: Backend Server
+set NEED_BACKEND=0
 netstat -ano -p tcp | findstr ":3001 " | findstr "LISTENING" >nul
 if errorlevel 1 (
+    set NEED_BACKEND=1
+) else (
+    curl -s -m 2 http://127.0.0.1:3001/api/health >nul 2>&1
+    if errorlevel 1 (
+        echo [3/4] Port 3001 is busy but unresponsive. Freeing port...
+        for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+            taskkill /F /PID %%a >nul 2>&1
+        )
+        set NEED_BACKEND=1
+    ) else (
+        echo [3/4] Port 3001 is already active and healthy [Backend Server].
+    )
+)
+if "!NEED_BACKEND!"=="1" (
     echo [3/4] Starting Backend Server on Port 3001...
     start "BaliCall Backend" /D "%~dp0server" cmd /k "node index.js"
     ping -n 3 127.0.0.1 >nul
-) else (
-    echo [3/4] Port 3001 is already active [Backend Server].
 )
 
 :: Launch 4: Client Workspace
@@ -109,7 +144,6 @@ if errorlevel 1 (
 ) else (
     echo [4/4] Port 5187 is already active [Web Client].
 )
-
 echo.
 echo ========================================================
 echo   All BaliCall services are up and running!

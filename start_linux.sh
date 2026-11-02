@@ -174,7 +174,17 @@ else
 
     # Start Service 3: Node Backend in Development
     if is_port_in_use 3001; then
-        echo "[3/4] Port 3001 is already active [Backend API]."
+        if curl -sf http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+            echo "[3/4] Port 3001 is already active and healthy [Backend API]."
+        else
+            echo "[3/4] Port 3001 is occupied but unresponsive. Freeing port..."
+            fuser -k 3001/tcp 2>/dev/null || true
+            sleep 1
+            echo "[3/4] Starting Backend API on Port 3001..."
+            (cd "$PROJECT_ROOT/server" && npm run dev) < /dev/null &
+            PIDS+=($!)
+            sleep 2
+        fi
     else
         echo "[3/4] Starting Backend API on Port 3001..."
         (cd "$PROJECT_ROOT/server" && npm run dev) < /dev/null &

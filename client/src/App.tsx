@@ -58,7 +58,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [guestInviteCode, setGuestInviteCode] = useState('');
   const [summaryStorage] = useState(() => scopedSummaryStorage(authUser?.employeeId || null));
   const { readSummaryHistory, readSummarySession, saveSummaryHistory, saveSummarySession, summaryTokenFor,
-    readInProgressSummaries, saveInProgressSummary, removeInProgressSummary, readActiveView, saveActiveView } = summaryStorage;
+    readInProgressSummaries, saveInProgressSummary, removeInProgressSummary, readActiveView, saveActiveView,
+    readCallSession, saveCallSession } = summaryStorage;
+  const [initialCallSession] = useState(() => readCallSession());
+  const canRestoreCall = Boolean(
+    initialCallSession?.token &&
+    initialCallSession?.meetingId
+  );
   const [initialSummaryState] = useState(() => {
     const history = readSummaryHistory();
     const session = readSummarySession();
@@ -83,6 +89,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     if (isGuest) return { view: 'lobby', intent: 'join' };
     if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
     if (initialSummaryState.savedActiveView === 'summary') return { view: 'summary' };
+    if (canRestoreCall) return { view: 'in-call', meetingId: initialCallSession!.meetingId };
     return { view: 'home' };
   });
 
@@ -125,8 +132,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [department, setDepartment] = useState(
     authUser?.department || (import.meta.env.DEV ? DEV_EMPLOYEE.department : '')
   );
-  const [roomName, setRoomName] = useState(
-    authUser?.guestRoomName || (import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : '')
+  const shouldRestoreCall = Boolean(
+    canRestoreCall &&
+    (initialRoute.view === 'in-call' && (!initialRoute.meetingId || initialRoute.meetingId === initialCallSession?.meetingId))
+  );
+  const [roomName, setRoomName] = useState(() =>
+    shouldRestoreCall && initialCallSession?.roomName
+      ? initialCallSession.roomName
+      : (authUser?.guestRoomName || (import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : ''))
   );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -141,8 +154,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const endingMeeting = useRef(false);
   
   // Connection state
-  const [token, setToken] = useState<string | null>(null);
-  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => shouldRestoreCall ? initialCallSession!.token : null);
+  const [meetingId, setMeetingId] = useState<string | null>(() => shouldRestoreCall ? initialCallSession!.meetingId : null);
   const [meetingRole, setMeetingRole] = useState<MeetingRole>('participant');
   const [meetingHostId, setMeetingHostId] = useState<string | null>(null);
   const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
@@ -152,13 +165,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [speakRequestPending, setSpeakRequestPending] = useState(false);
 
   const [sttProvider, setSttProvider] = useState<'browser' | 'server'>('browser');
-  const [serverUrl, setServerUrl] = useState('ws://127.0.0.1:7880');
+  const [serverUrl, setServerUrl] = useState(() => shouldRestoreCall ? initialCallSession!.serverUrl : 'ws://127.0.0.1:7880');
   
   // Active call state
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>(selectedInitialSummary?.transcripts || initialSession?.transcripts || []);
   const [activeTab, setActiveTab] = useState<'transcript' | 'attendance'>('transcript');
   const [callDuration, setCallDuration] = useState('00:00');
-  const [meetingStartTime, setMeetingStartTime] = useState<number | null>(null);
+  const [meetingStartTime, setMeetingStartTime] = useState<number | null>(() => shouldRestoreCall ? initialCallSession!.joinedAt : null);
   const [isSummarizing, setIsSummarizing] = useState(Boolean(initialRoute.view === 'summary' && initialRoute.meetingId && !selectedInitialSummary));
   const [batchDiarizing, setBatchDiarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(selectedInitialSummary?.summary || null);
@@ -751,6 +764,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       transcriptDelivery.beginMeeting(data.meetingId);
       const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
       const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : data.sttProvider;
+      if (typeof saveCallSession === 'function') saveCallSession({
+        meetingId: data.meetingId,
+        roomName: roomName.trim(),
+        token: data.token,
+        serverUrl: data.url,
+        joinedAt: Date.now(),
+      });
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
@@ -858,6 +878,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     const capturedTranscripts = [...transcripts];
 
     // 1. Terminate call media session immediately (turns off microphone, camera, and screen share)
+    if (typeof saveCallSession === 'function') saveCallSession(null);
     setToken(null);
     setMeetingStartTime(null);
     setCallDuration('00:00');
@@ -1538,6 +1559,18 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             pendingSpeakRequests={pendingSpeakRequests}
             onRequestToSpeak={requestToSpeak}
           /></Suspense>
+        )}
+
+        {view === 'in-call' && !token && (
+          <div className="call-recovery-card" role="region" aria-label="Sesi rapat" style={{ padding: '32px', textAlign: 'center' }}>
+            <h2>Sesi Rapat Telah Berakhir atau Kedaluwarsa</h2>
+            <p>Tidak ada sesi panggilan aktif atau token rapat telah kedaluwarsa.</p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '20px' }}>
+              <button type="button" className="button-secondary" onClick={() => navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined })}>
+                {isGuest ? 'Kembali ke Lobi' : 'Kembali ke Beranda'}
+              </button>
+            </div>
+          </div>
         )}
         
         {view === 'recordings' && !isGuest && (
