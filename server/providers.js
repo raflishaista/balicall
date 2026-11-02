@@ -115,7 +115,8 @@ export function parseSummary(text, input) {
       ));
 
     const validSprintOperations =
-    Array.isArray(result?.sprintOperations) &&
+    result?.sprintOperations === undefined ||
+    (Array.isArray(result?.sprintOperations) &&
     result.sprintOperations.every(item =>
       item &&
       [
@@ -146,7 +147,7 @@ export function parseSummary(text, input) {
         ['1 week', '2 weeks', '3 weeks', '4 weeks', 'Custom']
           .includes(item.duration)
       )
-    );
+    ));
 
   if (
     !result ||
@@ -158,11 +159,9 @@ export function parseSummary(text, input) {
     !Array.isArray(result.actionItems) ||
     !result.actionItems.every(item =>
       item &&
-      ['task', 'assignee', 'deadline'].every(
+      ['task', 'assignee', 'deadline', 'project', 'parent'].every(
         key => typeof item[key] === 'string'
       ) &&
-      (item.project === undefined || typeof item.project === 'string') &&
-      (item.parent === undefined || typeof item.parent === 'string') &&
       ['High', 'Medium', 'Low'].includes(item.priority) &&
       (item.status === undefined ||
         ['To Do', 'Blocked', 'In Progress', 'Finished', 'In Review', 'Completed']
@@ -190,17 +189,7 @@ export function parseSummary(text, input) {
     executiveSummary: result.executiveSummary,
     keyDiscussionPoints: result.keyDiscussionPoints,
     decisions: result.decisions,
-    actionItems: result.actionItems.map(item => ({
-      task: item.task,
-      assignee: item.assignee,
-      priority: item.priority,
-      deadline: item.deadline,
-      status: item.status || 'To Do',
-      project: item.project || '',
-      parent: item.parent || '',
-      ...(item.type ? { type: item.type } : {}),
-      ...(item.startDate ? { startDate: item.startDate } : {}),
-    })),
+    actionItems: result.actionItems,
     taskUpdates: Array.isArray(result.taskUpdates) ? result.taskUpdates : [],
     taskEdits: Array.isArray(result.taskEdits) ? result.taskEdits : [],
     projectCreations: Array.isArray(result.projectCreations)

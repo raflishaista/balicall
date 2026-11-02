@@ -88,6 +88,23 @@ export function NotificationCenter({ onJoin, onSummary }: { onJoin: (room: strin
   }, [refresh]);
   useEffect(() => { if (open) dialog.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, [open]);
   const close = () => { setOpen(false); button.current?.focus(); };
+  const markAllRead = useCallback(() => {
+    setItems(old => old.map(notice => notice.readAt ? notice : { ...notice, readAt: new Date().toISOString() }));
+    void apiRequest('/notifications/read-all', { method: 'POST' }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (open && items.some(notice => !notice.readAt)) {
+      markAllRead();
+    }
+  }, [open, items, markAllRead]);
+  const toggleOpen = () => {
+    if (!open) {
+      if (items.some(notice => !notice.readAt)) markAllRead();
+      setOpen(true);
+    } else {
+      close();
+    }
+  };
   const choose = async (item: Notice) => {
     if (lock.current) return;
     lock.current = true; setOpening(item.id); setError('');
@@ -101,7 +118,7 @@ export function NotificationCenter({ onJoin, onSummary }: { onJoin: (room: strin
     finally { lock.current = false; if (alive.current) setOpening(null); }
   };
   return <div className="notification-center" onKeyDown={event => { if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); close(); } }}>
-    <button ref={button} className="button-secondary" type="button" aria-label="Notifikasi akun" aria-expanded={open} onClick={() => setOpen(value => !value)}><Bell size={17} />{items.filter(notice => !notice.readAt).length || ''}</button>
+    <button ref={button} className="button-secondary" type="button" aria-label="Notifikasi akun" aria-expanded={open} onClick={toggleOpen}><Bell size={17} />{items.filter(notice => !notice.readAt).length || ''}</button>
     {open && <div ref={dialog} className="notification-inbox" role="region" aria-label="Inbox notifikasi" aria-busy={loading || Boolean(opening)}>
       <h2>Notifikasi</h2><button type="button" className="text-button" onClick={close}>Tutup</button>
       {error && <><p role="status">{error}</p><button type="button" className="button-secondary" disabled={loading || Boolean(opening)} onClick={() => { setLoading(true); refresh(); }}>Coba lagi</button></>}

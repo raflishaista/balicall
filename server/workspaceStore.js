@@ -66,6 +66,7 @@ export class WorkspaceStore {
   async list(id) { return (await this.query(`SELECT id,kind,room_name AS "roomName",meeting_id AS "meetingId",created_at AS "createdAt",read_at AS "readAt"
     FROM balicall_notifications WHERE employee_id=$1 ORDER BY created_at DESC LIMIT 50`,[id])).rows; }
   async read(id,notificationId) { await this.query('UPDATE balicall_notifications SET read_at=NOW() WHERE employee_id=$1 AND id=$2',[id,notificationId]); }
+  async readAll(id) { await this.query('UPDATE balicall_notifications SET read_at=NOW() WHERE employee_id=$1 AND read_at IS NULL',[id]); }
   async claim() {
     return (await this.query(`WITH ready AS (SELECT id FROM balicall_notifications WHERE push_state='pending' AND next_attempt_at<=NOW() AND attempts<4 ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
       UPDATE balicall_notifications n SET attempts=attempts+1,next_attempt_at=NOW()+interval '2 minutes' FROM ready WHERE n.id=ready.id RETURNING n.*`)).rows;

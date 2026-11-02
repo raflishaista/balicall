@@ -72,6 +72,7 @@ test('inbox deduplication, scoped read and device reassignment use persistent Po
   let one=await workspace.list('BT-99001');assert.equal(one.length,1);
   await workspace.read('BT-99002',one[0].id);assert.equal((await workspace.list('BT-99001'))[0].readAt,null);
   await workspace.read('BT-99001',one[0].id);assert.ok((await workspace.list('BT-99001'))[0].readAt);
+  await workspace.notify('BT-99001',{key:'reminder:test',kind:'reminder',roomName:'QA2'});assert.equal((await workspace.list('BT-99001'))[0].readAt,null);await workspace.readAll('BT-99001');assert.ok((await workspace.list('BT-99001'))[0].readAt);
   await workspace.subscribe('BT-99001',subscription());await workspace.subscribe('BT-99002',subscription());
   assert.equal((await workspace.subscriptions('BT-99001')).length,0);assert.equal((await workspace.subscriptions('BT-99002')).length,1);
   await workspace.unsubscribe('BT-99001',subscription().endpoint);assert.equal((await workspace.subscriptions('BT-99002')).length,1);
@@ -103,6 +104,8 @@ test('profile/inbox endpoints enforce employee session, CSRF and payload ownersh
   assert.equal((await request('/profile',{displayName:'Display One',revision:0,employeeId:'BT-99002'})).status,400);
   assert.equal((await request('/profile',{displayName:'Display One',revision:0})).status,200);
   assert.equal((await request('/notifications')).status,200);
+  const post=(path,body={})=>fetch('http://127.0.0.1:'+server.address().port+'/api'+path,{method:'POST',headers:{Cookie:'balicall_session='+cookie,'Content-Type':'application/json','X-CSRF-Token':hashToken('balicall-csrf:'+cookie)},body:JSON.stringify(body)});
+  assert.equal((await post('/notifications/read-all')).status,200);
   assert.equal((await request('/profile/photo')).status,404);
 });
 

@@ -48,6 +48,7 @@ export function attachWorkspaceApi(app,config,workspace) {
     res.set('Content-Type','image/jpeg').set('X-Content-Type-Options','nosniff').send(Buffer.from(photo));
   }));
   router.get('/notifications',wrap(async(req,res)=>res.json({notifications:await workspace.list(req.auth.user.employeeId)})));
+  router.post('/notifications/read-all',wrap(async(req,res)=>{ await workspace.readAll(req.auth.user.employeeId); res.json({success:true}); }));
   router.post('/notifications/:id/read',wrap(async(req,res)=>{
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id))return res.status(400).json({error:'ID notifikasi tidak valid.'});
     await workspace.read(req.auth.user.employeeId,req.params.id);res.json({success:true});

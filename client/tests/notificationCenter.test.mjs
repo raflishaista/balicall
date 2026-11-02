@@ -37,7 +37,7 @@ test('failed push configuration can be retried instead of being reported as unco
 test('opening a notice is locked while marking it read and recovers after failure',async()=>{
  let resolve,reject,reads=0,joins=0,root;
  const item={id:'one',kind:'invitation',roomName:'Room',meetingId:null,readAt:null,createdAt:new Date().toISOString()};
- const {NotificationCenter}=load(async path=>{if(path==='/notifications')return{notifications:[item]};reads++;return new Promise((yes,no)=>{resolve=yes;reject=no;});});
+ const {NotificationCenter}=load(async path=>{if(path==='/notifications')return{notifications:[item]};if(path==='/notifications/read-all')return{success:true};reads++;return new Promise((yes,no)=>{resolve=yes;reject=no;});});
  try{
   await act(async()=>{root=create(React.createElement(NotificationCenter,{onJoin:()=>joins++,onSummary(){}}));});
   await act(async()=>root.root.findByProps({'aria-label':'Notifikasi akun'}).props.onClick());
@@ -48,5 +48,22 @@ test('opening a notice is locked while marking it read and recovers after failur
   choice=root.root.findByProps({className:'notification-item'});assert.equal(choice.props.disabled,false);
   await act(async()=>choice.props.onClick());await act(async()=>resolve({success:true}));
   assert.equal(joins,1);
+ }finally{await act(async()=>root?.unmount());}
+});
+test('opening notification center resets unread count and marks notifications as read',async()=>{
+ let readAllCalled=0,root;
+ const item={id:'one',kind:'invitation',roomName:'Room',meetingId:null,readAt:null,createdAt:new Date().toISOString()};
+ const {NotificationCenter}=load(async path=>{
+  if(path==='/notifications')return{notifications:[item]};
+  if(path==='/notifications/read-all'){readAllCalled++;return{success:true};}
+  return{success:true};
+ });
+ try{
+  await act(async()=>{root=create(React.createElement(NotificationCenter,{onJoin(){},onSummary(){}}));});
+  const button=root.root.findByProps({'aria-label':'Notifikasi akun'});
+  assert.equal(button.children[1],'1');
+  await act(async()=>button.props.onClick());
+  assert.equal(button.children.length,1);assert.equal(button.children[1],undefined);
+  assert.equal(readAllCalled,1);
  }finally{await act(async()=>root?.unmount());}
 });
