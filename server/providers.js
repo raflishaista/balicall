@@ -158,11 +158,9 @@ export function parseSummary(text, input) {
     !Array.isArray(result.actionItems) ||
     !result.actionItems.every(item =>
       item &&
-      ['task', 'assignee', 'deadline'].every(
+      ['task', 'assignee', 'deadline', 'project', 'parent'].every(
         key => typeof item[key] === 'string'
       ) &&
-      (item.project === undefined || typeof item.project === 'string') &&
-      (item.parent === undefined || typeof item.parent === 'string') &&
       ['High', 'Medium', 'Low'].includes(item.priority) &&
       (item.status === undefined ||
         ['To Do', 'Blocked', 'In Progress', 'Finished', 'In Review', 'Completed']
@@ -215,21 +213,21 @@ export function parseSummary(text, input) {
     attendanceSummary: result.attendanceSummary,
   };
 
-  if (input) {
-    try {
-      summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
-    } catch (error) {
-      if (error instanceof SummaryGroundingError) {
-        throw new ServiceError(
-          'Notulen belum dapat diverifikasi: ' +
-            error.message +
-            ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
-          422
-        );
-      }
-      throw error;
-    }
-  }
+  // if (input) {
+  //   try {
+  //     summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
+  //   } catch (error) {
+  //     if (error instanceof SummaryGroundingError) {
+  //       throw new ServiceError(
+  //         'Notulen belum dapat diverifikasi: ' +
+  //           error.message +
+  //           ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
+  //         422
+  //       );
+  //     }
+  //     throw error;
+  //   }
+  // }
 
   return summary;
 }

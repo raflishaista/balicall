@@ -978,7 +978,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       const leavePromise = apiRequest<{ status: string }>(meetingPath(currentMeetingId, 'leave'), {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ endMeeting: true }),
       }).catch(err => {
         console.warn('Leave request note:', err);
         return { status: 'ended' };
