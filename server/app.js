@@ -2800,10 +2800,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
       const { role } = req.body || {};
 
-      if (!['co-host', 'participant'].includes(role)) {
+      if (!['host', 'co-host', 'participant'].includes(role)) {
         return res.status(400).json({
-          error: 'Role harus co-host atau participant.',
+          error: 'Role harus host, co-host, atau participant.',
         });
+      }
+
+      if (role === 'host') {
+        const result = store.transferHost(req.meetingId, req.speakerId, req.params.participantId);
+        return res.json({ success: true, participant: result });
       }
 
       const result = store.setCoHost(

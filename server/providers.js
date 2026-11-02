@@ -115,7 +115,7 @@ export function parseSummary(text, input) {
       ));
 
     const validSprintOperations =
-    Array.isArray(result?.sprintOperations) &&
+    result?.sprintOperations === undefined || (Array.isArray(result.sprintOperations) &&
     result.sprintOperations.every(item =>
       item &&
       [
@@ -146,7 +146,7 @@ export function parseSummary(text, input) {
         ['1 week', '2 weeks', '3 weeks', '4 weeks', 'Custom']
           .includes(item.duration)
       )
-    );
+    ));
 
   if (
     !result ||
@@ -319,7 +319,7 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
         }
         return [`${entry.speakerName}: ${entry.text}`];
       }),
-      decisions: [], actionItems: [], taskUpdates: [], taskEdits: [], projectCreations: [], projectUpdates: [], attendanceSummary: attendance,
+      decisions: [], actionItems: [], taskUpdates: [], taskEdits: [], projectCreations: [], projectUpdates: [], sprintOperations: [], attendanceSummary: attendance,
       summaryVersion: SUMMARY_VERSION, provider: 'Demo (no AI model)', note: 'Mode demo hanya menampilkan transkrip; atur penyedia dan kunci LLM di server untuk ringkasan AI.',
     };
   }

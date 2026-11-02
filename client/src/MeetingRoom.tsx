@@ -67,6 +67,7 @@ type MeetingRole = 'host' | 'co-host' | 'participant';
 type ParticipantAction =
   | 'promote'
   | 'demote'
+  | 'transfer-host'
   | 'mute'
   | 'remove'
   | 'approve-speak';
@@ -1126,6 +1127,8 @@ export function MeetingRoom({
                           {isCoHost ? 'Turunkan co-host' : 'Jadikan co-host'}
                         </button>
                       )}
+
+                      {meetingRole === 'host' && !participant.identity.startsWith('GUEST-') && <button type="button" disabled={busy || !connected} onClick={() => { if (window.confirm(`Pindahkan peran host kepada ${participant.name || participant.identity}? Anda akan menjadi peserta.`)) void handleParticipantAction(participant.identity, 'transfer-host'); }}>Jadikan host</button>}
 
                       <button
                         type="button"

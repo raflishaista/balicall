@@ -85,8 +85,6 @@ export function InCallView({ callDuration,
       onConnected={onConnected}
       audio={joinMedia.microphoneEnabled}
       options={mediaOptions}
-      adaptiveStream={true}
-      dynacast={true}
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
