@@ -1761,7 +1761,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
 
       if (sprintOperations.length) {
-        const sprintResult = await itProject.projectSprints(targetProjectId);
+        const sprintResult = await reviewClient.projectSprints(targetProjectId);
         const sprintData = sprintResult.data?.data;
 
         if (!Array.isArray(sprintData?.sprints)) {
@@ -1778,7 +1778,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         );
 
         const projectTaskResult = needsTaskLookup
-          ? await itProject.projectTasks(targetProjectId)
+          ? await reviewClient.projectTasks(targetProjectId)
           : null;
 
         const projectTaskTree = flattenTaskTree(
@@ -1876,7 +1876,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
             }
 
             if (operation.operation === 'create') {
-              const result = await itProject.createSprint({
+              const result = await reviewClient.createSprint({
                 project: targetProjectId,
                 ...(args.name ? { name: args.name.trim() } : {}),
                 ...(args.goal ? { goal: args.goal } : {}),
@@ -1934,13 +1934,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
                 continue;
               }
 
-              await itProject.updateSprint(updateArgs);
+              await reviewClient.updateSprint(updateArgs);
               console.info('[ITPROJECT] Sprint berhasil diperbarui.', details);
               continue;
             }
 
             if (operation.operation === 'start') {
-              await itProject.startSprint({
+              await reviewClient.startSprint({
                 sprint: sprint.id,
                 ...(args.goal ? { goal: args.goal } : {}),
                 ...(startDate ? { start_date: startDate } : {}),
@@ -1982,7 +1982,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
                 };
               }
 
-              await itProject.completeSprint(completeArgs);
+              await reviewClient.completeSprint(completeArgs);
               console.info('[ITPROJECT] Sprint berhasil diselesaikan.', details);
               continue;
             }
@@ -1993,7 +1993,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
                 continue;
               }
 
-              await itProject.deleteSprint({ sprint: sprint.id });
+              await reviewClient.deleteSprint({ sprint: sprint.id });
               console.info('[ITPROJECT] Sprint berhasil dihapus.', details);
               continue;
             }
@@ -2024,7 +2024,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
                 continue;
               }
 
-              await itProject.assignSprintTasks({
+              await reviewClient.assignSprintTasks({
                 sprint: sprint.id,
                 task_ids: [...taskIds],
               });
@@ -2050,7 +2050,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
                 continue;
               }
 
-              await itProject.removeSprintTask({
+              await reviewClient.removeSprintTask({
                 sprint: sprint.id,
                 task: matches[0].id,
               });

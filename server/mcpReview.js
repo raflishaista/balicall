@@ -92,8 +92,27 @@ export function createMcpReview({store,client,plan,destination=''}) {
     try {
       for(const condition of record.reads){
         const result=await client[condition.method](...condition.args);
-        if(hash(result.data)!==condition.digest){save(id,record.revision,{status:'pending',planDigest:'',operations:[],error:'Data IT Project berubah. Tinjau rencana terbaru.'});throw fail('Data IT Project berubah. Muat ulang untuk meninjau kembali.');}
-      }
+        const currentDigest = hash(result.data);
+
+        if (currentDigest !== condition.digest) {
+          console.warn('[MCP REVIEW] Snapshot MCP berubah saat persetujuan.', {
+            meetingId: id,
+            method: condition.method,
+            args: condition.args,
+            expectedDigest: condition.digest,
+            actualDigest: currentDigest,
+          });
+
+          save(id,record.revision,{
+            status:'pending',
+            planDigest:'',
+            operations:[],
+            error:'Data IT Project berubah. Tinjau rencana terbaru.'
+          });
+
+          throw fail('Data IT Project berubah. Muat ulang untuk meninjau kembali.');
+        }
+        }
       if(store.get(id)?.hostId!==actor)throw fail('Host rapat berubah; persetujuan harus diberikan host saat ini.',403);
       if(revision(store.get(id),summaryOf(store.get(id)))!==record.revision)throw fail('Notulen berubah; perlu persetujuan baru.');
       save(id,record.revision,{status:'sending',decidedBy:actor,decidedAt:new Date().toISOString(),results:[]});sending=true;
@@ -106,7 +125,7 @@ export function createMcpReview({store,client,plan,destination=''}) {
         save(id,record.revision,{activeOperation:index});
         const result=await client[operation.method](args);
         const data=result?.data?.data || result?.data?.project || result?.data;
-        if(['createTask','createProject'].includes(operation.method)){
+        if(['createTask','createProject','createSprint'].includes(operation.method)){
           if(!data?.id)throw fail('Layanan menerima aksi tetapi ID hasil tidak tersedia. Periksa IT Project.');
           ids[operation.ref]=data.id;
         }
@@ -122,9 +141,30 @@ export function createMcpReview({store,client,plan,destination=''}) {
       if(record.note){
         save(id,record.revision,{status:'pending',completedPlans:[...(record.completedPlans || []),{planDigest:record.planDigest,results:record.results,decidedBy:actor,decidedAt:record.decidedAt}],operations:[],reads:[],planDigest:'',error:null});
       } else save(id,record.revision,{status:'sent',sentAt:new Date().toISOString(),activeOperation:null,error:null});
-    } catch(error){
-      if(sending){save(id,record.revision,{status:'needs_check',error:'Hasil pengiriman belum pasti. Periksa IT Project sebelum tindakan selanjutnya.'});}
-      else throw error;
+    } catch (error) {
+      if (sending) {
+        const failedIndex = record.activeOperation ?? null;
+        const failedOperation = Number.isInteger(failedIndex)
+          ? record.operations[failedIndex]
+          : null;
+
+        console.error('[MCP REVIEW] Operasi pengiriman gagal.', {
+          meetingId: id,
+          operationIndex: failedIndex,
+          method: failedOperation?.method || null,
+          message: error.message,
+        });
+
+        save(id, record.revision, {
+          status: 'needs_check',
+          error: 'Pengiriman berhenti pada ' +
+            (failedOperation?.method || 'operasi MCP') +
+            ': ' + error.message +
+            '. Periksa IT Project sebelum mencoba lagi.',
+        });
+      } else {
+        throw error;
+      }
     } finally{locks.delete(id);}
     return publicRecord(record,actor,meeting);
   }
