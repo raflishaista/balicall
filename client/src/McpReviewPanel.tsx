@@ -4,7 +4,7 @@ import {apiRequest} from './api';
 import './McpReviewPanel.css';
 
 export interface McpReview {
-  revision:string;planDigest:string;status:string;canDecide:boolean;
+  isHost:boolean;revision:string;planDigest:string;status:string;canDecide:boolean;
   operations:{method:string;args:Record<string,unknown>}[];
   evidence?:{field:string;index:number;sources:{utteranceId:string;speaker?:string;quote:string}[]}[];
   error?:string|null;note?:string|null;decidedBy?:string|null;
@@ -22,19 +22,19 @@ export function McpReviewPanel({meetingId,token,summaryVersion,request=apiReques
     try {
       const result=await request<McpReview>(`/mcp-reviews/${encodeURIComponent(meetingId)}`,{headers:token?{Authorization:`Bearer ${token}`}:{},signal},60000);
       if(!signal?.aborted)setReview(result);
-    } catch(e){if(!signal?.aborted)setError(e instanceof Error?e.message:'Status persetujuan belum dapat dimuat.');}
+    } catch(e){if(!signal?.aborted){setReview(null);setError(e instanceof Error?e.message:'Status persetujuan belum dapat dimuat.');}}
     finally{if(!signal?.aborted)setLoading(false);}
   },[meetingId,token,request]);
-  useEffect(()=>{const controller=new AbortController();void load(controller.signal);return()=>controller.abort();},[load,summaryVersion]);
+  useEffect(()=>{const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;const refresh=async()=>{await load(controller.signal);if(!controller.signal.aborted)timer=setTimeout(refresh,5000);};void refresh();return()=>{controller.abort();clearTimeout(timer);};},[load,summaryVersion]);
   const decide=async(decision:boolean)=>{
     if(!review || busy)return;setBusy(true);setError(null);
     try {
       const result=await request<McpReview>(`/mcp-reviews/${encodeURIComponent(meetingId)}/decision`,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({decision,revision:review.revision,planDigest:review.planDigest})},120000);
       setReview(result);if(result.status==='pending')await load();
-    }catch(e){setError(e instanceof Error?e.message:'Keputusan belum dapat disimpan. Periksa status sebelum mencoba lagi.');}
+    }catch(e){if((e as {status?:number})?.status===403)setReview(null);setError(e instanceof Error?e.message:'Keputusan belum dapat disimpan. Periksa status sebelum mencoba lagi.');}
     finally{setBusy(false);}
   };
-  if(!meetingId)return null;
+  if(!meetingId || !review?.isHost)return null;
   return <section className="mcp-review" aria-label="Persetujuan pengiriman MCP" aria-busy={loading||busy}>
     <header><ShieldCheck size={25}/><div><h2>Tinjau sebelum kirim ke MCP</h2><p>Periksa perubahan berikut sebelum dikirim ke IT Project.</p></div><span className="mcp-review-status" role="status">{loading?'Memuat tinjauan…':review?labels[review.status] || review.status:'Status belum tersedia'}</span></header>
     {error&&<p role="alert" className="mcp-review-error">{error}</p>}

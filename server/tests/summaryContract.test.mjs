@@ -11,10 +11,9 @@ test('absent MCP extensions normalize to empty lists, malformed supplied extensi
  const value=parse(base());for(const field of ['taskUpdates','taskEdits','projectCreations','projectUpdates'])assert.deepEqual(value[field],[]);
  for(const field of ['taskUpdates','taskEdits','projectCreations','projectUpdates'])for(const bad of [null,{},'invalid',1])assert.throws(()=>parse({...base(),[field]:bad}),/schema/);
 });
-test('action contract normalizes omitted routing fields and rejects mistyped values',()=>{
- const value={...base(),actionItems:[action()]};assert.deepEqual(parse(value).actionItems,[{...action(),status:'To Do'}]);
- assert.equal(parse({...base(),actionItems:[{...action(),project:undefined,parent:undefined}]}).actionItems[0].project,'');
- for(const field of ['project','parent'])for(const bad of [null,42,{}])assert.throws(()=>parse({...base(),actionItems:[{...action(),[field]:bad}]}),/schema/);
+test('action contract preserves explicit project/parent and rejects missing or mistyped routing fields',()=>{
+ const value={...base(),actionItems:[action()]};assert.deepEqual(parse(value).actionItems,value.actionItems);
+ for(const field of ['project','parent'])for(const bad of [undefined,null,42,{}])assert.throws(()=>parse({...base(),actionItems:[{...action(),[field]:bad}]}),/schema/);
 });
 test('task edit contract accepts only supported typed changes and nonempty task references',()=>{
  const valid={task:'Periksa jaringan',changes:{title:'Periksa router',assignUsers:['Rafli'],removeTags:['Urgent']}};

@@ -32,8 +32,9 @@ export function createMcpReview({store,client,plan,destination=''}) {
   }
   const save=(id,key,update)=>store.transact(()=>Object.assign(store.get(id).mcpReviews[key],update));
   function publicRecord(record,actor,meeting) {
-    const host=actor===meeting.hostId;
-    return {revision:record.revision,planDigest:record.planDigest || '',status:record.status,
+    const host=actor===store.get(meeting.id)?.hostId;
+    if(!host)throw fail('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
+    return {isHost:true,revision:record.revision,planDigest:record.planDigest || '',status:record.status,
       canDecide:host && ['pending','ready','rejected','blocked'].includes(record.status),
       operations:host?record.operations:[],evidence:host?(summaryOf(meeting)?.sourceEvidence?.items || []):[],error:record.error || null,
       decidedBy:record.decidedBy || null,decidedAt:record.decidedAt || null,
@@ -41,7 +42,7 @@ export function createMcpReview({store,client,plan,destination=''}) {
   }
   async function prepare(id,actor) {
     const {meeting,summary,record}=current(id);
-    if(actor!==meeting.hostId)return publicRecord(record,actor,meeting);
+    if(actor!==meeting.hostId)throw fail('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
     if(record.status==='sending' && !locks.has(id)) save(id,record.revision,{status:'needs_check',error:'Pengiriman terputus. Periksa hasil di IT Project; sistem tidak mengirim ulang otomatis.'});
     if(record.status==='blocked')save(id,record.revision,{status:'pending'});
     if(record.status!=='pending')return publicRecord(record,actor,meeting);
