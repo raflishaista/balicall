@@ -365,12 +365,143 @@ input::placeholder { color: #a1b1c6; }
 .transcription-bar-header:hover .transcription-options-btn { border-color: #bcd4f5; color: #0865ed; }
 .transcription-dropdown[open] .dropdown-chevron { transform: rotate(180deg); }
 .dropdown-chevron { transition: transform .2s ease; }
-.transcription-dropdown-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; background: #fff; border-top: 1px solid #f0f4f8; }
-.transcription-dropdown-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.transcription-dropdown-field label { color: #64748b; font-size: 11px; font-weight: 500; flex-shrink: 0; }
-.transcription-dropdown-field select { flex: 1; max-width: 175px; padding: 4px 7px; border: 1px solid #dee8f4; border-radius: 5px; color: #334155; background: #f8fafc; font-size: 11px; }
-.transcription-hint-text { margin: 4px 0 0; color: #94a3b8; font-size: 10px; line-height: 1.4; }
-.transcription-hint-error { margin: 4px 0 0; color: #e11d48; font-size: 10px; line-height: 1.4; }
+.transcription-dropdown-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  background: #fff;
+  border-top: 1px solid #f0f4f8;
+  max-height: 250px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.transcription-dropdown-panel::-webkit-scrollbar {
+  width: 5px;
+}
+.transcription-dropdown-panel::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+.transcription-dropdown-panel::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.transcription-dropdown-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transcription-dropdown-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+.transcription-dropdown-field label {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.transcription-dropdown-field select {
+  flex: 1;
+  max-width: 180px;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #1e293b;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 500;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.transcription-dropdown-field select:focus {
+  border-color: #3b82f6;
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.transcription-model-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #f0f7ff;
+  border: 1px solid #bae0fd;
+  color: #0369a1;
+  font-size: 10px;
+  line-height: 1.4;
+  max-height: 60px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.transcription-notice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #0284c7;
+}
+.transcription-notice-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+.transcription-dropdown-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.transcription-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #1e293b;
+  font-size: 11px;
+  font-weight: 600;
+}
+.transcription-card-icon {
+  color: #7c3aed;
+  flex-shrink: 0;
+}
+.transcription-card-desc {
+  margin: 0;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.4;
+  max-height: 48px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.transcription-card-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 5px 10px;
+  font-size: 10.5px;
+  border-radius: 5px;
+}
+
+.transcription-hint-text {
+  margin: 2px 0 0;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.transcription-hint-error {
+  margin: 2px 0 0;
+  color: #e11d48;
+  font-size: 10px;
+  line-height: 1.4;
+}
 .transcription-settings { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 11px; padding: 17px 17px 13px; border-bottom: 1px solid #f1f4f8; }
 .transcription-settings select { max-width: 145px; padding: 5px 7px; border: 1px solid #dee8f4; border-radius: 5px; color: #5c7a9c; background: #f9fbff; font-size: 8px; }
 .transcription-settings label { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex: 1 0 100%; color: #9aaabe; font-size: 8px; }
