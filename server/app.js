@@ -2688,13 +2688,14 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (!meeting) throw new ServiceError('Rapat tidak ditemukan.',404);
     if (req.auth?.user?.isGuest) throw new ServiceError('Tamu tidak dapat meninjau pengiriman MCP.',403);
     let actor=req.auth?.user?.employeeId;
-    if (!actor && !config.authEnabled) {
+    if (!actor) {
       const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-      if (!token) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
-      let claims;
-      try { claims=await verifier.verify(token); } catch { throw new ServiceError('Sesi akses rapat tidak valid.',401); }
-      if (claims.video?.room!==meeting.livekitRoom || !claims.video?.roomJoin) throw new ServiceError('Sesi tidak sesuai rapat.',403);
-      actor=claims.sub;
+      if (token) {
+        let claims;
+        try { claims=await verifier.verify(token); } catch { throw new ServiceError('Sesi akses rapat tidak valid.',401); }
+        if (claims.video?.room!==meeting.livekitRoom || !claims.video?.roomJoin) throw new ServiceError('Sesi tidak sesuai rapat.',403);
+        actor=claims.sub;
+      }
     }
     if (!actor) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
     if (actor!==meeting.hostId) throw new ServiceError('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
@@ -3278,7 +3279,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }));
 
   app.post('/api/meetings/:id/leave', asyncRoute(async (req, res) => {
-    const updated = store.leave(req.meetingId, req.speakerId);
+    const updated = store.leave(req.meetingId, req.speakerId, req.body?.endMeeting);
 
     if (
       updated.status === 'ended' &&

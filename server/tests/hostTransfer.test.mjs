@@ -102,3 +102,14 @@ test('host leaving promotes co-host to host before regular participants',t=>{
  assert.equal(m.hostId,'early-participant');
  assert.equal(m.participants.get('early-participant').role,'host');
 });
+
+test('when host explicitly ends meeting to summarize, host identity is preserved and meeting ends',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'balicall-end-meeting-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const path=join(dir,'store.json'),store=new MeetingStore(path);
+ const m=store.join('QC',{employeeId:'host',employeeName:'Host'});
+ store.join('QC',{employeeId:'member',employeeName:'Member'});
+ store.leave(m.id,'host',true);
+ assert.equal(m.status,'ended');
+ assert.equal(m.hostId,'host');
+ assert.equal(store.get('meeting-'+m.id).hostId,'host');
+});

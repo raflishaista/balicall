@@ -104,7 +104,9 @@ export class MeetingStore {
     });
     
   }
-  get(id) { return this.meetings.get(id); }
+  get(id) {
+    return this.meetings.get(id) || (typeof id === 'string' && id.startsWith('meeting-') ? this.meetings.get(id.replace(/^meeting-/, '')) : undefined);
+  }
 
   setModeratorMute(meetingId, targetId, muted) {
     return this.transact(() => {
@@ -278,7 +280,7 @@ export class MeetingStore {
           participant.connected = false;
           participant.lastSeen = at;
           // leftAt is the API authorization boundary; do not reject queued STT just because media disconnected.
-          if (participant.employeeId === meeting.hostId) {
+          if (participant.employeeId === meeting.hostId && meeting.status === 'active') {
             this.electSuccessorHost(meeting, participant.employeeId);
           }
         }
@@ -342,6 +344,7 @@ export class MeetingStore {
     });
   }
   electSuccessorHost(meeting, departingHostId) {
+    if (meeting.status !== 'active') return null;
     const now = Date.now();
     const activeCandidates = [...meeting.participants.values()].filter(p =>
       p.employeeId !== departingHostId &&
@@ -379,7 +382,7 @@ export class MeetingStore {
     }
     return null;
   }
-  leave(id, speakerId) {
+  leave(id, speakerId, endMeeting = false) {
     return this.transact(() => {
       const meeting = this.get(id);
       const participant = meeting.participants.get(speakerId);
@@ -387,11 +390,17 @@ export class MeetingStore {
       participant.leftAt = new Date().toISOString();
       participant.lastSeen = participant.leftAt;
       // Pending/reconnecting participants keep their session for a short grace period.
+      const isHost = speakerId === meeting.hostId;
+      if (endMeeting && isHost) {
+        meeting.status = 'ended';
+        meeting.endedAt = participant?.leftAt || new Date().toISOString();
+        return meeting;
+      }
       const remaining = [...meeting.participants.values()].some(value => !value.leftAt && Date.now() - Date.parse(value.lastSeen) < 45000);
       if (!remaining) {
         meeting.status = 'ended';
-        meeting.endedAt = participant.leftAt;
-      } else if (speakerId === meeting.hostId) {
+        meeting.endedAt = participant?.leftAt || new Date().toISOString();
+      } else if (speakerId === meeting.hostId && meeting.status === 'active') {
         this.electSuccessorHost(meeting, speakerId);
       }
       return meeting;
