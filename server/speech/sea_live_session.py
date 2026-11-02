@@ -29,7 +29,7 @@ class SeaLiveSession:
                 self.voiced=True
                 self.last_voice=self.total
             if not self.voiced:
-                self._trim(max(self.base,self.total-3200))
+                self._trim(max(self.base,self.total-4800))
                 continue
             if self.total-self.last_voice>=12800:
                 frames+=await self._decode(final=True)

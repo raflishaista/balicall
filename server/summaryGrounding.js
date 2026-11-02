@@ -41,8 +41,8 @@ Return ONLY JSON, using this shape:
       "assignee": "string",
       "priority": "High|Medium|Low",
       "deadline": "string",
-      "status": "To Do|Blocked|In Progress|Finished|In Review|Completed"
-      "parent": "parent task title or reference, or empty string for a root task",
+      "status": "To Do|Blocked|In Progress|Finished|In Review|Completed",
+      "parent": "parent task title or reference, or empty string for a root task"
     }
   ],
   "taskUpdates": [
@@ -200,6 +200,8 @@ function quantities(value) {
   });
 }
 
+const restrictedContext = /\b(?:belum|tidak|bukan|jangan|ditolak|menolak|dilarang|ditunda|dibatalkan|rencana|direncanakan|usulan|diusulkan|menunggu|tentatif|mungkin|koreksi|ralat|not|never|pending|proposal|proposed|tentative|awaiting|correction|rejected|reject|unapproved|undecided|unresolved|cancelled|canceled|don't|no\s+(?:agreement|approval|decision))\b/iu;
+const literalClaim = value => compact(value).toLocaleLowerCase('id-ID').replace(/[.!?]+$/u,'');
 function validateClaim(text, sources, utterances) {
   const available = sources.flatMap(source => quantities(source.quote));
   if (quantities(text).some(claim => !available.some(source => source.number === claim.number && source.scale === claim.scale
@@ -210,6 +212,9 @@ function validateClaim(text, sources, utterances) {
   const contexts = [...utterances.values()]
     .filter(source => ids.has(source.utteranceId))
     .map(source => source.text);
+  if (contexts.some(source => restrictedContext.test(source)) && literalClaim(text) !== literalClaim(contexts.join(' '))) {
+    throw new SummaryGroundingError('Konteks negasi, status belum pasti atau koreksi harus dipertahankan utuh pada keputusan/tugas.');
+  }
   for (const context of contexts) {
     for (const condition of context.matchAll(/\b(?:tanpa|without)\s+[^.;!?\n]+/giu)) {
       if (!compact(text).toLocaleLowerCase('id-ID').includes(compact(condition[0]).toLocaleLowerCase('id-ID'))) {
@@ -268,6 +273,7 @@ export function validateSummaryEvidence(raw, summary, input) {
         
         if (
           field === 'actionItems' &&
+          action.project &&
           action.project.trim() &&
           !sources.some(source =>
             containsPhrase(source.quote, action.project)
@@ -280,6 +286,7 @@ export function validateSummaryEvidence(raw, summary, input) {
         
         if (
           field === 'actionItems' &&
+          action.parent &&
           action.parent.trim() &&
           !sources.some(source =>
             containsPhrase(source.quote, action.parent)

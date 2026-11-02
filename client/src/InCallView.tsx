@@ -52,8 +52,20 @@ export function InCallView({ callDuration,
   onToggleBatchDiarization,
 }: any) {
   const [mediaOptions] = useState(() => ({
-    audioCaptureDefaults: { deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId } },
-    videoCaptureDefaults: { deviceId: joinMedia.cameraId === 'default' ? undefined : { exact: joinMedia.cameraId } },
+    audioCaptureDefaults: {
+      deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+    videoCaptureDefaults: {
+      deviceId: joinMedia.cameraId === 'default' ? undefined : { exact: joinMedia.cameraId },
+    },
+    publishDefaults: {
+      simulcast: true,
+    },
+    adaptiveStream: true,
+    dynacast: true,
   }));
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const onRoomError = useCallback((error: Error) => {
@@ -73,6 +85,8 @@ export function InCallView({ callDuration,
       onConnected={onConnected}
       audio={joinMedia.microphoneEnabled}
       options={mediaOptions}
+      adaptiveStream={true}
+      dynacast={true}
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
     >
       <RoomAudioRenderer />
