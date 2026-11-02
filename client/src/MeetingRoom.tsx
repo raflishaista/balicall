@@ -29,6 +29,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   ShieldCheck,
+  Info,
 } from 'lucide-react';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
@@ -816,13 +817,28 @@ export function MeetingRoom({
               </summary>
 
               <div className="transcription-dropdown-panel">
-                {meetingRole === 'host' && qwenBatchConfigured && <div className="transcription-dropdown-field">
-                  <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
-                  <p>Rekam audio seluruh peserta sejak awal; kamera tidak direkam. Batch dimulai otomatis setelah semua peserta keluar. Label pembicara berlaku untuk rekaman ini; suara bertumpuk ditandai.</p>
-                  <button type="button" className="button-secondary" disabled={recording || recordingPending || !connected} onClick={() => {
-                    if (!callPreferences?.recordingConsentPrompt || window.confirm('Mulai rekaman audio seluruh peserta untuk batch Qwen + Nemotron setelah rapat?')) void onToggleRecording(true, true);
-                  }}>{recording ? 'Rekaman sedang berjalan' : 'Rekam audio untuk batch Qwen'}</button>
-                </div>}
+                {meetingRole === 'host' && qwenBatchConfigured && (
+                  <div className="transcription-dropdown-card">
+                    <div className="transcription-card-header">
+                      <Sparkles size={13} className="transcription-card-icon" aria-hidden="true" />
+                      <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
+                    </div>
+                    <p className="transcription-card-desc">
+                      Rekam audio seluruh peserta sejak awal; kamera tidak direkam. Batch dimulai otomatis setelah semua peserta keluar. Label pembicara berlaku untuk rekaman ini; suara bertumpuk ditandai.
+                    </p>
+                    <button
+                      type="button"
+                      className="button-secondary transcription-card-btn"
+                      disabled={recording || recordingPending || !connected}
+                      onClick={() => {
+                        if (!callPreferences?.recordingConsentPrompt || window.confirm('Mulai rekaman audio seluruh peserta untuk batch Qwen + Nemotron setelah rapat?')) void onToggleRecording(true, true);
+                      }}
+                    >
+                      {recording ? 'Rekaman sedang berjalan' : 'Rekam audio untuk batch Qwen'}
+                    </button>
+                  </div>
+                )}
+
                 <div className="transcription-dropdown-field">
                   <label htmlFor="stt-lang-select">Bahasa</label>
                   <select
@@ -855,27 +871,36 @@ export function MeetingRoom({
                   </select>
                 </div>
 
-                <div className="transcription-dropdown-field">
-                  <label htmlFor="stt-model-select">Model</label>
-                  {sttModel === 'qwen3-asr-0.6b' && <p role="status">{qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
-                  {sttModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
-                  {sttModel === SEA_LIVE_MODEL && <p role="status">{SEA_LIVE_NOTICE}</p>}
-                  <select
-                    id="stt-model-select"
-                    value={sttModel}
-                    disabled={
-                      busy ||
-                      devicePending ||
-                      microphonePending ||
-                      sttProvider !== 'server' ||
-                      !sttConfigured ||
-                      !sttModels.length
-                    }
-                    onChange={event => void onChangeSttModel(event.target.value)}
-                  >
-                    {!sttModels.length && <option value="">Belum tersedia</option>}
-                    <TranscriptionModelOptions models={sttModels} />
-                  </select>
+                <div className="transcription-dropdown-group">
+                  <div className="transcription-dropdown-field">
+                    <label htmlFor="stt-model-select">Model</label>
+                    <select
+                      id="stt-model-select"
+                      value={sttModel}
+                      disabled={
+                        busy ||
+                        devicePending ||
+                        microphonePending ||
+                        sttProvider !== 'server' ||
+                        !sttConfigured ||
+                        !sttModels.length
+                      }
+                      onChange={event => void onChangeSttModel(event.target.value)}
+                    >
+                      {!sttModels.length && <option value="">Belum tersedia</option>}
+                      <TranscriptionModelOptions models={sttModels} />
+                    </select>
+                  </div>
+                  {(sttModel === 'qwen3-asr-0.6b' || sttModel === 'qwen3-asr-0.6b-live' || sttModel === SEA_LIVE_MODEL) && (
+                    <div className="transcription-model-notice" role="status">
+                      <Info size={12} className="transcription-notice-icon" aria-hidden="true" />
+                      <div className="transcription-notice-text">
+                        {sttModel === 'qwen3-asr-0.6b' && (qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE)}
+                        {sttModel === 'qwen3-asr-0.6b-live' && QWEN_LIVE_DIARIZATION_NOTICE}
+                        {sttModel === SEA_LIVE_MODEL && SEA_LIVE_NOTICE}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {sttProvider === 'browser' && (
