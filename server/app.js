@@ -2697,7 +2697,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       actor=claims.sub;
     }
     if (!actor) throw new ServiceError('Masuk sebagai host untuk meninjau.',401);
-    if (actor!==meeting.hostId && !meeting.participants.has(actor)) throw new ServiceError('Anda tidak memiliki akses tinjauan rapat ini.',403);
+    if (actor!==meeting.hostId) throw new ServiceError('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
     return actor;
   }
   app.get('/api/mcp-reviews/:id',asyncRoute(async(req,res)=>{
