@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, Search, Settings, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
@@ -126,7 +126,7 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
           </div>
         )}
 
-        <form className="quick-join" onSubmit={event => { event.preventDefault(); if (code.trim()) onJoin(code.trim()); }}><label htmlFor="quick-meeting-code">Sudah punya kode ruang?</label><div><input id="quick-meeting-code" value={code} onChange={event => setCode(event.target.value)} placeholder="Masukkan kode / nama ruang" required /><button className="button-primary" type="submit">Gabung <ArrowRight size={15} /></button></div></form>
+        <form className="quick-join" onSubmit={event => { event.preventDefault(); if (code.trim()) onJoin(code.trim()); }}><label htmlFor="quick-meeting-code">Sudah punya kode ruang?</label><div><input id="quick-meeting-code" value={code} onChange={event => setCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5))} placeholder="5 digit kode (misal: K9X2P)" maxLength={5} required /><button className="button-primary" type="submit">Gabung <ArrowRight size={15} /></button></div></form>
       </section>
 
       <section className="surface-card assistant-card"><header className="card-heading"><div><span className="section-kicker">MEETING ASSISTANT</span><h2>Fokus pada percakapan.</h2></div><span className="assistant-symbol"><AudioLines size={23} /></span></header><p className="assistant-intro">Bawa hasil rapat menjadi langkah nyata, tanpa kehilangan konteks.</p>
@@ -139,21 +139,82 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
   </div>;
 }
 
-export function LobbyView({ intent, onIntentChange, employeeId, setEmployeeId, employeeName, setEmployeeName, department, setDepartment, roomName, setRoomName, isJoining, joinError, onJoin, mediaPreview, personas, identityLocked = false, isGuest = false }: {
+export function LobbyView({
+  intent, onIntentChange,
+  employeeId, setEmployeeId,
+  employeeName, setEmployeeName,
+  department, setDepartment,
+  roomName, setRoomName,
+  roomCode, setRoomCode, onRegenerateCode,
+  isJoining, joinError, onJoin,
+  mediaPreview, personas,
+  identityLocked = false, isGuest = false
+}: {
   intent: 'create' | 'join'; onIntentChange: (intent: 'create' | 'join') => void;
   employeeId: string; setEmployeeId: (value: string) => void; employeeName: string; setEmployeeName: (value: string) => void;
   department: string; setDepartment: (value: string) => void; roomName: string; setRoomName: (value: string) => void;
+  roomCode?: string; setRoomCode?: (value: string) => void; onRegenerateCode?: () => void;
   isJoining: boolean; joinError: string | null; onJoin: () => void; mediaPreview: ReactNode;
   identityLocked?: boolean; isGuest?: boolean;
   personas: {id: string; name: string; dept: string}[];
 }) {
   return <div className="lobby-page"><div className="lobby-page-heading"><span className="page-kicker">LET'S CONNECT</span><h1>{intent === 'create' ? 'Mulai percakapan baru.' : 'Tim kamu sudah menunggu.'}</h1><p>Siapkan identitas, periksa kamera dan mikrofon, lalu masuk ke ruang rapat.</p></div>
     <div className="lobby-layout"><section className="lobby-preview"><div className="preview-photo" /><div className="preview-heading"><span className="preview-live-dot" /> SIAPKAN RUANG KOLABORASI</div>{mediaPreview}<div className="preview-footer"><Mic size={15} /><span>Gunakan headset untuk suara yang lebih jernih.</span></div></section>
-      <section className="lobby-card">{!isGuest && <div className="lobby-switch" role="group" aria-label="Pilih aksi rapat"><button className={intent === 'create' ? 'selected' : ''} onClick={() => onIntentChange('create')}><Plus size={16} />Buat rapat</button><button className={intent === 'join' ? 'selected' : ''} onClick={() => onIntentChange('join')}><LogIn size={16} />Gabung rapat</button></div>}<h2>{intent === 'create' ? 'Buat ruang untuk timmu' : 'Gabung ke ruang rapat'}</h2><p className="lobby-intro">{intent === 'create' ? 'Peserta dapat bergabung menggunakan nama ruang yang sama.' : 'Masukkan nama ruang yang dibagikan penyelenggara.'}</p>
+      <section className="lobby-card">{!isGuest && <div className="lobby-switch" role="group" aria-label="Pilih aksi rapat"><button className={intent === 'create' ? 'selected' : ''} onClick={() => onIntentChange('create')}><Plus size={16} />Buat rapat</button><button className={intent === 'join' ? 'selected' : ''} onClick={() => onIntentChange('join')}><LogIn size={16} />Gabung rapat</button></div>}<h2>{intent === 'create' ? 'Buat ruang untuk timmu' : 'Gabung ke ruang rapat'}</h2><p className="lobby-intro">{intent === 'create' ? 'Peserta dapat bergabung menggunakan 5 digit kode ruang yang dihasilkan di bawah.' : 'Masukkan 5 digit kode ruang yang dibagikan oleh penyelenggara.'}</p>
         <form onSubmit={event => { event.preventDefault(); onJoin(); }}>
           <div className="form-grid">{!isGuest && <label>NIK / ID pengguna<input autoComplete="username" readOnly={identityLocked} value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Contoh: BT-10492 atau ID apa saja" required /></label>}<label>Nama lengkap<input autoComplete="name" readOnly={identityLocked} value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Masukkan nama kamu" required /></label></div>
           {!isGuest && <label className="form-field">Departemen<select disabled={identityLocked} value={department} onChange={event => setDepartment(event.target.value)}><option value="">Pilih departemen (opsional)</option>{identityLocked && <option value={department}>{department}</option>}<option value="General">General</option><option>NOC & Core Network</option><option>Field Transmission</option><option>Fiber Infrastructure</option><option>Project Management</option><option>IT Operations</option></select></label>}
-          <label className="form-field">{intent === 'create' ? 'Nama ruang rapat' : 'Kode / nama ruang'}<input readOnly={isGuest} value={roomName} onChange={event => setRoomName(event.target.value)} placeholder={intent === 'create' ? 'Contoh: koordinasi-jaringan' : 'Masukkan nama ruang dari tim'} required /></label>
+          {intent === 'create' ? (
+            <>
+              <label className="form-field">Nama ruang rapat<input readOnly={isGuest} value={roomName} onChange={event => setRoomName(event.target.value)} placeholder="Contoh: koordinasi-jaringan" required /></label>
+              <div className="form-field room-code-field">
+                <label htmlFor="create-room-code">Kode Ruang Rapat (5 Digit Alfanumerik)</label>
+                <div className="room-code-display-wrap">
+                  <input
+                    id="create-room-code"
+                    className="room-code-input"
+                    type="text"
+                    readOnly
+                    value={roomCode || ''}
+                    aria-label="Kode ruang rapat otomatis"
+                  />
+                  {onRegenerateCode && (
+                    <button
+                      type="button"
+                      className="button-ghost room-code-refresh-btn"
+                      onClick={onRegenerateCode}
+                      title="Acak ulang kode ruang"
+                      aria-label="Acak ulang kode ruang"
+                    >
+                      <RefreshCw size={15} />
+                    </button>
+                  )}
+                </div>
+                <span className="field-hint">Bagikan 5 digit kode ini kepada peserta untuk bergabung.</span>
+              </div>
+            </>
+          ) : (
+            <label className="form-field" htmlFor="join-room-code">
+              Kode ruang rapat (5 digit)
+              <input
+                id="join-room-code"
+                className="room-code-join-input"
+                readOnly={isGuest}
+                value={roomCode ?? roomName}
+                onChange={event => {
+                  const cleaned = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+                  if (setRoomCode) setRoomCode(cleaned);
+                  setRoomName(cleaned);
+                }}
+                placeholder="Contoh: K9X2P"
+                maxLength={5}
+                pattern="[A-Za-z0-9]{5}"
+                required
+                autoFocus
+              />
+              <span className="field-hint">Masukkan 5 digit kode alfanumerik yang dibagikan oleh penyelenggara rapat.</span>
+            </label>
+          )}
           <div className="form-note"><AudioLines size={18} /><span>Pilihan perangkat dan status mic/kamera di preview dipakai saat masuk. Preview berhenti sebelum koneksi dimulai. Kamu bisa bergabung dengan kamera atau mikrofon nonaktif.</span></div>
           {joinError && <div className="form-error" role="alert">{joinError}</div>}
           <button className="button-primary full-width lobby-submit" disabled={isJoining} type="submit" aria-busy={isJoining}>{isJoining ? <><Loader2 className="ui-spinner" size={16} aria-hidden="true" />Menghubungkan...</> : <>{intent === 'create' ? 'Mulai rapat' : 'Gabung rapat'}<ArrowRight size={17} /></>}</button>

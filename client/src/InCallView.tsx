@@ -34,6 +34,7 @@ export function InCallView({ callDuration,
   token,
   serverUrl,
   roomName,
+  roomCode,
   employeeId,
   employeeName,
   transcripts,
@@ -106,6 +107,7 @@ export function InCallView({ callDuration,
         pendingSaves={pendingSaves}
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
+        roomCode={roomCode}
         employeeId={employeeId}
         employeeName={employeeName}
         transcripts={transcripts}
@@ -153,6 +155,7 @@ function RoomContent({
   onAddAudio,
   onPresence,
   roomName,
+  roomCode,
   meetingRole,
   meetingHostId,
   meetingCoHostIds,
@@ -293,6 +296,7 @@ function RoomContent({
         pendingSpeakRequests={pendingSpeakRequests}
         participants={participants}
         roomName={roomName}
+        roomCode={roomCode}
         employeeId={employeeId}
         cameraTracks={cameraTracks}
         isCameraEnabled={isCameraEnabled}
