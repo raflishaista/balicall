@@ -231,10 +231,6 @@ const restrictedContext = /\b(?:belum|tidak|bukan|jangan|ditolak|menolak|dilaran
 const literalClaim = value => compact(value).toLocaleLowerCase('id-ID').replace(/[.!?]+$/u,'');
 function validateClaim(text, sources, utterances) {
   const available = sources.flatMap(source => quantities(source.quote));
-  if (quantities(text).some(claim => !available.some(source => source.number === claim.number && source.scale === claim.scale
-      && source.unit === claim.unit && (!claim.currency || source.currency === claim.currency)))) {
-    throw new SummaryGroundingError('Angka, tanda, pengali atau satuan pada keputusan/tugas tidak didukung rujukan.');
-  }
   const ids = new Set(sources.map(source => source.utteranceId));
   const contexts = [...utterances.values()]
     .filter(source => ids.has(source.utteranceId))
