@@ -45,20 +45,46 @@ export class MeetingStore {
       throw error;
     }
   }
+  generateUniqueRoomCode() {
+    const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    for (let attempt = 0; attempt < 100; attempt++) {
+      let code = '';
+      for (let i = 0; i < 5; i++) {
+        code += chars[Math.floor(Math.random() * chars.length)];
+      }
+      const collision = [...this.meetings.values()].some(m => m.status === 'active' && m.roomCode === code);
+      if (!collision) return code;
+    }
+    return Math.random().toString(36).substring(2, 7).toUpperCase();
+  }
   join(roomName, participant) {
     return this.transact(() => {
-      let meeting = [...this.meetings.values()].find(value => value.roomName === roomName && value.status === 'active' && !value.attendanceFinalization);
+      const roomCode = participant.roomCode ? String(participant.roomCode).trim().toUpperCase() : null;
+      let meeting = [...this.meetings.values()].find(value => {
+        if (value.status !== 'active' || value.attendanceFinalization) return false;
+        if (roomCode && value.roomCode && value.roomCode.toUpperCase() === roomCode) return true;
+        if (value.roomName === roomName) return true;
+        if (value.roomCode && value.roomCode.toUpperCase() === String(roomName).trim().toUpperCase()) return true;
+        return false;
+      });
       if (meeting && [...meeting.participants.values()].every(person => person.leftAt || Date.now() - Date.parse(person.lastSeen) >= 45000)) {
         meeting.status = 'ended';
         meeting.endedAt = new Date().toISOString();
         meeting = undefined;
       }
       if (!meeting) {
+        if (participant.intent === 'join') {
+          const error = new Error('Ruang rapat dengan kode tersebut tidak ditemukan atau sudah berakhir.');
+          error.status = 404;
+          throw error;
+        }
         const id = randomUUID();
+        const code = roomCode && /^[A-Za-z0-9]{5}$/.test(roomCode) ? roomCode : this.generateUniqueRoomCode();
 
         meeting = {
           id,
           roomName,
+          roomCode: code,
           livekitRoom: `meeting-${id}`,
           status: 'active',
           createdAt: new Date().toISOString(),
@@ -82,6 +108,9 @@ export class MeetingStore {
         };
 
         this.meetings.set(id, meeting);
+      }
+      if (!meeting.roomCode) {
+        meeting.roomCode = this.generateUniqueRoomCode();
       }
       const previous = meeting.participants.get(participant.employeeId);
       meeting.participants.set(participant.employeeId, {

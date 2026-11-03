@@ -2396,8 +2396,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   // 3. Generate LiveKit token with database employee verification
   app.post('/api/token', asyncRoute(async (req, res) => {
     if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
-    let { roomName, employeeId, employeeName, department = 'General' } = req.body || {};
+    let { roomName, employeeId, employeeName, department = 'General', roomCode, intent } = req.body || {};
     if (!nonEmpty(department)) department = 'General';
+
+    let targetCode = roomCode ? String(roomCode).trim().toUpperCase() : null;
+    if (intent === 'join') {
+      if (!targetCode && roomName && /^[A-Za-z0-9]{5}$/.test(String(roomName).trim())) {
+        targetCode = String(roomName).trim().toUpperCase();
+      }
+      if (!roomName && targetCode) {
+        roomName = targetCode;
+      }
+    }
 
     if (![roomName, employeeId, employeeName].every(value => nonEmpty(value))) {
       return res.status(400).json({ error: 'Room, employee ID, and name must be non-empty strings (max 160 characters)' });
@@ -2405,7 +2415,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
     const cleanId = employeeId.trim();
     const guestMeeting = req.auth?.user.isGuest ? store.get(req.auth.user.guestMeetingId) : null;
-    if (req.auth?.user.isGuest && (!guestMeeting || guestMeeting.status !== 'active' || guestMeeting.attendanceFinalization || guestMeeting.closingForUploads || roomName.trim() !== guestMeeting.roomName)) return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
+    if (req.auth?.user.isGuest && (!guestMeeting || guestMeeting.status !== 'active' || guestMeeting.attendanceFinalization || guestMeeting.closingForUploads || (roomName.trim() !== guestMeeting.roomName && (!targetCode || targetCode !== guestMeeting.roomCode)))) return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
 
     // Verify employee ID format and database registration
     if (config.verifyEmployeeId && !req.auth?.user.isGuest) {
@@ -2440,7 +2450,20 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       if(req.auth)employeeName=req.auth.user.name;
     }
 
-    const active = [...store.meetings.values()].find(meeting => meeting.roomName === roomName.trim() && meeting.status === 'active');
+    const active = [...store.meetings.values()].find(meeting => {
+      if (meeting.status !== 'active' || meeting.attendanceFinalization) return false;
+      if (targetCode && meeting.roomCode && meeting.roomCode.toUpperCase() === targetCode) return true;
+      if (roomName && meeting.roomName === roomName.trim()) return true;
+      if (roomName && meeting.roomCode && meeting.roomCode.toUpperCase() === roomName.trim().toUpperCase()) return true;
+      return false;
+    });
+
+    if (intent === 'join' && !active && !guestMeeting) {
+      return res.status(404).json({
+        error: 'Ruang rapat dengan kode tersebut tidak ditemukan atau sudah berakhir. Periksa kembali 5 digit kode ruang Anda.'
+      });
+    }
+
     const duplicate = active?.participants.get(cleanId);
     if (duplicate && !duplicate.leftAt && (!req.auth?.user.isGuest || duplicate.guestTokenIssued) && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
@@ -2462,11 +2485,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       scheduledHostId = scheduled?.hostId || '';
     }
 
-    const meeting = guestMeeting || store.join(roomName.trim(), {
+    const meeting = guestMeeting || store.join(active ? active.roomName : roomName.trim(), {
       employeeId: cleanId,
       employeeName: employeeName.trim(),
       department: department.trim(),
       hostId: scheduledHostId || cleanId,
+      roomCode: targetCode || (active ? active.roomCode : undefined),
+      intent,
     });
     if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
     
@@ -2507,6 +2532,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       token: await at.toJwt(),
       url: config.livekitUrl,
       roomName: meeting.roomName,
+      roomCode: meeting.roomCode,
       meetingId: meeting.id,
       sttProvider: config.sttProvider,
     });

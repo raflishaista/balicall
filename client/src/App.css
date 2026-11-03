@@ -204,6 +204,78 @@ input::placeholder { color: #a1b1c6; }
 .persona-list button { display: grid; gap: 5px; height: auto; padding: 10px; border: 1px solid #e3eaf5; border-radius: 6px; background: #f7faff; text-align: left; color: #6683a5; font-size: 9px; cursor: pointer; }
 .persona-list button span { font-size: 8px; color: #91a4ba; }
 
+/* Room code styles for Lobby & Call */
+.room-code-display-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.room-code-input {
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: 3px;
+  text-align: center;
+  text-transform: uppercase;
+  background: #f4f8fd !important;
+  color: #0b4594 !important;
+  border: 1px solid #c0d8f6 !important;
+}
+.room-code-join-input {
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: 3px;
+  text-align: center;
+  text-transform: uppercase;
+  border: 1.5px solid #0865ed !important;
+}
+.room-code-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #dce6f2;
+  background: #fff;
+  color: #4a88d9;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.room-code-refresh-btn:hover {
+  background: #f0f6ff;
+  color: #0865ed;
+  border-color: #bcd4f5;
+}
+.field-hint {
+  display: block;
+  font-size: 11px;
+  color: #7a97bb;
+  margin-top: 4px;
+  line-height: 1.4;
+  font-weight: 400;
+}
+.room-code-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #e1ebf4;
+  font-size: 11px;
+  font-family: monospace, ui-monospace, Consolas, sans-serif;
+  letter-spacing: 1px;
+}
+.room-code-badge strong {
+  color: #61b5ff;
+  font-weight: 700;
+}
+
 .in-call-layout { display: block; background: #0b2235; }
 .app-header-call { min-height: 76px; background: #0b2235; border-color: #254258; color: #fff; }
 .call-brand { display: flex; align-items: center; gap: 24px; }

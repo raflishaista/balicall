@@ -28,6 +28,7 @@ import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
+import { generateRoomCode } from './roomCode';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
 import { supportsSharedMicrophone, qwenDiarizationForModel } from './preferences';
@@ -140,6 +141,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     shouldRestoreCall && initialCallSession?.roomName
       ? initialCallSession.roomName
       : (authUser?.guestRoomName || (import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : ''))
+  );
+  const [roomCode, setRoomCode] = useState(() =>
+    shouldRestoreCall && (initialCallSession as any)?.roomCode
+      ? (initialCallSession as any).roomCode
+      : generateRoomCode()
   );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -723,8 +729,20 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleJoin = async () => {
     if (joinPending.current) return;
     const userDept = department.trim() || 'General';
-    if (!employeeId.trim() || !employeeName.trim() || !roomName.trim()) {
-      setJoinError('Lengkapi identitas dan nama ruang.'); return;
+    const currentIntent = typeof meetingIntent !== 'undefined' ? meetingIntent : 'create';
+    const currentRoomCode = (typeof roomCode !== 'undefined' ? roomCode : '').trim().toUpperCase();
+
+    if (!employeeId.trim() || !employeeName.trim()) {
+      setJoinError('Lengkapi identitas.'); return;
+    }
+    if (currentIntent === 'create') {
+      if (!roomName.trim()) {
+        setJoinError('Lengkapi identitas dan nama ruang.'); return;
+      }
+    } else {
+      if (!currentRoomCode && !roomName.trim()) {
+        setJoinError('Masukkan 5 digit kode ruang rapat.'); return;
+      }
     }
     const cleanId = employeeId.trim();
 
@@ -744,9 +762,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     joinPending.current = true;
     setJoinError(null); setCallError(null); setSyncError(null); setIsJoining(true);
     try {
-      const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server' }>('/token', {
+      const payload: Record<string, any> = {
+        roomName: roomName.trim() || currentRoomCode,
+        employeeId: cleanId,
+        employeeName: employeeName.trim(),
+        department: userDept,
+        intent: currentIntent,
+      };
+      if (currentRoomCode) {
+        payload.roomCode = currentRoomCode;
+      }
+      const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server'; roomName?: string; roomCode?: string }>('/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: roomName.trim(), employeeId: cleanId, employeeName: employeeName.trim(), department: userDept }),
+        body: JSON.stringify(payload),
       });
       if (generation !== joinGeneration.current) return;
       endingMeeting.current = false;
@@ -764,9 +792,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       transcriptDelivery.beginMeeting(data.meetingId);
       const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
       const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : data.sttProvider;
+      const activeRoomName = data.roomName || roomName.trim();
+      const activeRoomCode = data.roomCode || currentRoomCode;
+      if (data.roomName) setRoomName(data.roomName);
+      if (data.roomCode) setRoomCode(data.roomCode);
       if (typeof saveCallSession === 'function') saveCallSession({
         meetingId: data.meetingId,
-        roomName: roomName.trim(),
+        roomName: activeRoomName,
+        roomCode: activeRoomCode,
         token: data.token,
         serverUrl: data.url,
         joinedAt: Date.now(),
@@ -1312,9 +1345,13 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
     preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
-    setMeetingIntent(isGuest ? 'join' : intent);
+    const targetIntent = isGuest ? 'join' : intent;
+    setMeetingIntent(targetIntent);
+    if (targetIntent === 'create') {
+      setRoomCode(generateRoomCode());
+    }
     setJoinError(null);
-    navigateTo({ view: 'lobby', intent: isGuest ? 'join' : intent });
+    navigateTo({ view: 'lobby', intent: targetIntent });
   };
 
   return (
@@ -1411,7 +1448,16 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           lastMeeting={lastMeeting}
           employeeName={employeeName}
           onCreate={() => openLobby('create')}
-          onJoin={(code?: string) => { if (code) setRoomName(code); openLobby('join'); }}
+          onJoin={(code?: string) => {
+            if (code) {
+              const clean = code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+              setRoomCode(clean);
+              setRoomName(clean);
+            } else {
+              setRoomCode('');
+            }
+            openLobby('join');
+          }}
           onSchedule={openSchedule}
           upcomingSchedules={schedules}
         />}
@@ -1466,7 +1512,14 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <LobbyView
             isGuest={isGuest}
             intent={meetingIntent}
-            onIntentChange={setMeetingIntent}
+            onIntentChange={nextIntent => {
+              setMeetingIntent(nextIntent);
+              if (nextIntent === 'create') {
+                setRoomCode(generateRoomCode());
+              } else {
+                setRoomCode('');
+              }
+            }}
             employeeId={employeeId}
             setEmployeeId={setEmployeeId}
             employeeName={employeeName}
@@ -1475,6 +1528,9 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             setDepartment={setDepartment}
             roomName={roomName}
             setRoomName={setRoomName}
+            roomCode={roomCode}
+            setRoomCode={setRoomCode}
+            onRegenerateCode={() => setRoomCode(generateRoomCode())}
             isJoining={isJoining}
             joinError={joinError}
             onJoin={handleJoin}
@@ -1544,6 +1600,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onPresence={handlePresence}
             serverUrl={serverUrl}
             roomName={roomName}
+            roomCode={roomCode}
             employeeId={employeeId}
             employeeName={employeeName}
             transcripts={transcripts}

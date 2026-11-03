@@ -80,6 +80,7 @@ interface MeetingRoomProps {
 
   participants: Participant[];
   roomName: string;
+  roomCode?: string;
   employeeId: string;
   connected: boolean;
   isMuted: boolean;
@@ -178,6 +179,7 @@ export function MeetingRoom({
   callDuration,
   participants,
   roomName,
+  roomCode,
   employeeId,
   connected,
   isMuted,
@@ -503,6 +505,11 @@ export function MeetingRoom({
         <div className="call-info-bar">
           <div>
             <span className="room-label">#{roomName}</span>
+            {roomCode && (
+              <span className="room-code-badge" title="5 digit kode ruang rapat">
+                Kode: <strong>{roomCode}</strong>
+              </span>
+            )}
             <span className="call-connection" role="status">
               <i className={connected ? 'status-dot online' : 'status-dot offline'} />
               {connectionLabel}
