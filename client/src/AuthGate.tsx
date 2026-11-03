@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react';
 import { apiRequest, setAuthCsrfToken, AUTH_EXPIRED_EVENT } from './api';
 import { setAccountScope } from './accountScope';
 import devices from './assets/login/balicall-connected-devices.webp';
@@ -22,6 +22,12 @@ export function AuthGate() {
   const accept = useCallback((next: Session) => {
     setAuthCsrfToken(next.csrfToken || null); setAccountScope(next.user?.employeeId || null);
     setSession(next); setError(null);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        if (next.user) localStorage.setItem('balicall_active_session', JSON.stringify({ id: next.user.employeeId, t: Date.now() }));
+        else localStorage.removeItem('balicall_active_session');
+      } catch {}
+    }
   }, []);
   const check = useCallback(() => {
     const own = ++generation.current.value;
@@ -34,8 +40,16 @@ export function AuthGate() {
     const lifecycle = generation.current;
     void check();
     const expired = () => { lifecycle.value++; setAuthCsrfToken(null); setAccountScope(null); setSession({ enabled: true, user: null }); setChecking(false); setError('Sesi sudah berakhir. Silakan masuk kembali.'); };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'balicall_active_session') void check();
+    };
     window.addEventListener(AUTH_EXPIRED_EVENT, expired);
-    return () => { lifecycle.value++; window.removeEventListener(AUTH_EXPIRED_EVENT, expired); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      lifecycle.value++;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
+      window.removeEventListener('storage', onStorage);
+    };
   }, [check]);
   const logout = async () => {
     if (logoutLock.current) return;
@@ -74,10 +88,11 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [code,setCode]=useState('');
   const [show,setShow]=useState(false), [pending,setPending]=useState(false);
   const [error,setError]=useState<string|null>(null), [notice,setNotice]=useState<string|null>(null);
+  const [conflictModal,setConflictModal]=useState<{email:string;name?:string;message:string}|null>(null);
   const lock=useRef(false);
-  const switchMode=(next:'login'|'activate'|'guest')=>{setMode(next);setError(null);setNotice(null);setPassword('');setCode('');setShow(false);};
-  const submit=async(event:React.SubmitEvent<HTMLFormElement>)=>{
-    event.preventDefault();
+  const switchMode=(next:'login'|'activate'|'guest')=>{setMode(next);setError(null);setNotice(null);setConflictModal(null);setPassword('');setCode('');setShow(false);};
+  const submit=async(event:React.SyntheticEvent|{preventDefault?:()=>void},force=false)=>{
+    if('preventDefault' in event && typeof event.preventDefault==='function')event.preventDefault();
     if(lock.current||checking||unavailable)return;
     lock.current=true;setPending(true);setError(null);setNotice(null);
     try {
@@ -88,11 +103,16 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
         await apiRequest('/auth/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,activationCode:code.trim()})});
         switchMode('login');setNotice('Kata sandi tersimpan. Silakan masuk.');
       } else {
-        const next=await apiRequest<Session>('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
-        setPassword('');onAuthenticated(next);
+        const next=await apiRequest<Session>('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,...(force?{force:true}:{})})});
+        setPassword('');setConflictModal(null);onAuthenticated(next);
       }
-    } catch(err) {setError(err instanceof Error?err.message:'Permintaan gagal. Coba lagi.');}
-    finally {lock.current=false;setPending(false);}
+    } catch(err:any) {
+      if(err?.status===409 || err?.code==='ACCOUNT_ALREADY_LOGGED_IN' || err?.data?.alreadyLoggedIn) {
+        setConflictModal({email,name:err?.data?.employeeName,message:err instanceof Error?err.message:'Akun ini sedang aktif di sesi atau perangkat lain.'});
+      } else {
+        setError(err instanceof Error?err.message:'Permintaan gagal. Coba lagi.');
+      }
+    } finally {lock.current=false;setPending(false);}
   };
   const disabled=checking||pending||unavailable;
   return <main className="login-page">
@@ -128,5 +148,41 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
       <p className="login-admin-help">Butuh bantuan? Hubungi admin IT perusahaan untuk aktivasi akun.</p></div>
       <footer className="login-form-footer">BaliCall · Bali Tower Sentra</footer>
     </section>
+    {conflictModal && (
+      <div className="login-conflict-backdrop" role="dialog" aria-modal="true" aria-labelledby="conflict-title">
+        <div className="login-conflict-dialog">
+          <div className="login-conflict-header">
+            <div className="login-conflict-icon" aria-hidden="true">
+              <AlertCircle size={26} />
+            </div>
+            <div>
+              <h3 id="conflict-title">Akun Sedang Digunakan</h3>
+              <p className="login-conflict-subtitle">Sesi login aktif terdeteksi</p>
+            </div>
+          </div>
+          <p className="login-conflict-body">
+            Akun <strong>{conflictModal.email}</strong> saat ini sedang aktif di sesi atau perangkat lain. Untuk menjaga integritas data rapat dan keamanan akun, Anda dibatasi untuk masuk ke akun yang sedang aktif.
+          </p>
+          <div className="login-conflict-actions">
+            <button
+              type="button"
+              className="login-conflict-cancel"
+              onClick={() => { setConflictModal(null); setError('Masuk dibatalkan. Akun masih aktif di sesi lain.'); }}
+              disabled={pending}
+            >
+              Batalkan
+            </button>
+            <button
+              type="button"
+              className="login-conflict-force"
+              onClick={() => void submit({ preventDefault: () => {} }, true)}
+              disabled={pending}
+            >
+              {pending ? <><Loader2 size={16} className="ui-spinner" /> Memproses…</> : 'Keluarkan Sesi Lain & Masuk'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </main>;
 }
