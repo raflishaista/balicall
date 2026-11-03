@@ -44,8 +44,12 @@ export function createMcpReview({store,client,plan,destination=''}) {
     const {meeting,summary,record}=current(id);
     if(actor!==meeting.hostId)throw fail('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
     if(record.status==='sending' && !locks.has(id)) save(id,record.revision,{status:'needs_check',error:'Pengiriman terputus. Periksa hasil di IT Project; sistem tidak mengirim ulang otomatis.'});
-    if(record.status==='blocked')save(id,record.revision,{status:'pending'});
-    if(record.status!=='pending')return publicRecord(record,actor,meeting);
+    if (record.status === 'blocked') {
+      return publicRecord(record, actor, meeting);
+    }
+    if (record.status !== 'pending') {
+      return publicRecord(record, actor, meeting);
+    }
     if(locks.has(id))return publicRecord(record,actor,meeting);
     if(!client.authenticated) {save(id,record.revision,{status:'blocked',error:'Koneksi akun IT Project belum tersedia.'});return publicRecord(record,actor,meeting);}
     locks.add(id);

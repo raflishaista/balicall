@@ -250,18 +250,30 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       existingTaskReferences.length
     ) {
       const projectsById = new Map();
-      for (const sourceMeeting of reviewStore.meetings.values()) {
-        for (const dispatch of Object.values(
-          sourceMeeting.itProjectProjectDispatch || {}
-        )) {
-          if (dispatch.status === 'created' && dispatch.projectId) {
-            projectsById.set(dispatch.projectId, {
-              id: dispatch.projectId,
-              title: dispatch.title,
-              projectNo: dispatch.projectNo || null,
-            });
-          }
+
+      try {
+        const projectResult = await reviewClient.userProjects();
+        const projects = projectResult.data?.data;
+
+        if (!Array.isArray(projects)) {
+          throw new Error('Respons daftar project tidak berisi array data.');
         }
+
+        for (const project of projects) {
+          if (!project?.id) continue;
+
+          projectsById.set(project.id, {
+            id: project.id,
+            title: project.title || '',
+            projectNo: project.project_no || null,
+          });
+        }
+      } catch (error) {
+        console.warn('[ITPROJECT] Daftar project aktif gagal diperiksa.', {
+          meetingId: meeting.id,
+          message: error.message,
+        });
+        return;
       }
 
       const projectTasksById = new Map();
@@ -1786,6 +1798,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         );
 
         const createdSprints = new Map();
+        const sprintAliases = new Map();
         const normalizeSprintReference = value =>
           normalizeTaskReference(value).replace(
             /\b(nol|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\b/g,
@@ -1807,8 +1820,10 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
         const findSprint = reference => {
           const normalized = normalizeSprintReference(reference);
           const created = createdSprints.get(normalized);
+          const alias = sprintAliases.get(normalized);
 
           if (created) return [created];
+          if (alias) return [alias];
 
           return sprints.filter(sprint =>
             taskMatchesReference(
@@ -1935,6 +1950,18 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
               }
 
               await reviewClient.updateSprint(updateArgs);
+              sprintAliases.set(
+                normalizeSprintReference(args.sprint),
+                sprint
+              );
+
+              if (args.name) {
+                sprintAliases.set(
+                  normalizeSprintReference(args.name),
+                  sprint
+                );
+                sprint.name = args.name.trim();
+              }
               console.info('[ITPROJECT] Sprint berhasil diperbarui.', details);
               continue;
             }

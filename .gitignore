@@ -17,6 +17,7 @@ infrastructure/livekit/recordings/*
 *.mp4
 !docs/media/record-meeting-motion-v2.mp4
 docs/ITPROJECT_INTEGRATION_ROADMAP.md
+docs/Membuat dan edit projek dari transkrip.docx
 
 # Temporary Egress test credentials
 test/egress/egress-test-token
