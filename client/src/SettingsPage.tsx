@@ -9,7 +9,7 @@ import { ProfileEditor, UserAvatar } from './ProfileEditor';
 import { PushSettings } from './NotificationCenter';
 import { AIServicesPanel } from './AIServicesPanel';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, modelPreferencePatch } from './modelSelection';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE, modelPreferencePatch } from './modelSelection';
 import type { useBackendHealth } from './useBackendHealth';
 import { accountKey } from './accountScope';
 import { HISTORY_KEY } from './summaryHistory';
@@ -193,9 +193,10 @@ function AISettings({ draft, update, transcription, aiStatus }: {
   return <>
     {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
     <fieldset className="settings-fields"><legend>Transkripsi default</legend>
-      <label className="settings-device-field"><span>Bahasa transkripsi</span><select aria-label="Bahasa transkripsi" value={draft.speechLanguage} disabled={[SEA_LIVE_MODEL].includes(draft.transcriptionModel)} onChange={event => update({ speechLanguage: event.target.value as MeetingPreferences['speechLanguage'] })}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select></label>
+      <label className="settings-device-field"><span>Bahasa transkripsi</span><select aria-label="Bahasa transkripsi" value={draft.speechLanguage} disabled={[MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel)} onChange={event => update({ speechLanguage: event.target.value as MeetingPreferences['speechLanguage'] })}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select></label>
       <label className="settings-device-field"><span>Layanan transkripsi</span><select aria-label="Layanan transkripsi" value={draft.transcriptionProvider} onChange={event => update({ transcriptionProvider: event.target.value as MeetingPreferences['transcriptionProvider'] })}><option value="auto">Otomatis — ikuti default server</option><option value="browser">Browser</option><option value="server" disabled={!transcription?.configured}>Server{!transcription?.configured ? ' · belum tersedia' : ''}</option></select></label>
-      <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update(modelPreferencePatch(event.target.value))}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && ![SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}<TranscriptionModelOptions models={models} /></select></label>
+      <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update(modelPreferencePatch(event.target.value))}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && ![MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}<TranscriptionModelOptions models={models} /></select></label>
+      {draft.transcriptionModel === MING_LIVE_MODEL && <p role="status">{MING_LIVE_NOTICE}</p>}
       {draft.transcriptionModel === SEA_LIVE_MODEL && !(draft.sharedRoomMic && sharedMicSupported) && <p role="status">{SEA_LIVE_NOTICE}</p>}
       <PreferenceToggle
         label="Mode Mikrofon Ruang Rapat (Diarization)"
@@ -204,9 +205,10 @@ function AISettings({ draft, update, transcription, aiStatus }: {
         disabled={!sharedMicSupported}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
-      {!sharedMicSupported && ![SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {!sharedMicSupported && ![MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
       {isQwen && sharedMicSupported && <p role="status">{QWEN_DIARIZATION_NOTICE}</p>}
       {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
+      {draft.transcriptionModel === QWEN_GGUF_LIVE_MODEL && <p role="status">{QWEN_GGUF_LIVE_NOTICE}</p>}
       {sharedMicSupported && draft.sharedRoomMic && (
         <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
           <PreferenceToggle

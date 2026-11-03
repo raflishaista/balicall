@@ -1,11 +1,13 @@
 import { SEA_LIVE_MODEL } from './seaLiveConfig.js';
 import { fileURLToPath } from 'node:url';
+import { MING_LIVE_MODEL } from './mingLiveConfig.js';
 
 export const QWEN_STT_MODEL = 'qwen3-asr-0.6b';
+export const QWEN_GGUF_MODEL = 'qwen3-asr-0.6b-gguf-q8';
 export function availableSttModels(config) {
   const models = config.sttModels?.length ? config.sttModels : (config.sttModel ? [config.sttModel] : []);
-  return [...new Set([...models.filter(model => model !== SEA_LIVE_MODEL && (model !== QWEN_STT_MODEL || config.qwenSttBaseUrl)),
-    ...(config.qwenSttBaseUrl ? [QWEN_STT_MODEL] : [])])];
+  return [...new Set([...models.filter(model => model !== SEA_LIVE_MODEL && model !== MING_LIVE_MODEL && (model !== QWEN_STT_MODEL || config.qwenSttBaseUrl) && (model !== QWEN_GGUF_MODEL || config.qwenGgufSttBaseUrl)),
+    ...(config.qwenSttBaseUrl ? [QWEN_STT_MODEL] : []), ...(config.qwenGgufSttBaseUrl ? [QWEN_GGUF_MODEL] : [])])];
 }
 
 export function loadConfig(env = process.env) {
@@ -41,11 +43,17 @@ export function loadConfig(env = process.env) {
     qwenLiveSttUrl: env.QWEN_LIVE_STT_URL || '',
     qwenLiveSttSecret: env.QWEN_LIVE_STT_SECRET || '',
     qwenLiveHealthUrl: env.QWEN_LIVE_HEALTH_URL || 'http://127.0.0.1:8008/health',
+    qwenGgufLiveUrl: env.QWEN_GGUF_LIVE_URL || '',
+    qwenGgufLiveSecret: env.QWEN_GGUF_LIVE_SECRET || '',
+    qwenGgufLiveHealthUrl: env.QWEN_GGUF_LIVE_HEALTH_URL || 'http://127.0.0.1:8013/health',
     seaLiveSttUrl: env.SEA_LIVE_STT_URL || '',
     seaLiveSttSecret: env.SEA_LIVE_STT_SECRET || '',
     seaLiveHealthUrl: env.SEA_LIVE_HEALTH_URL || 'http://127.0.0.1:8010/health',
     seaLiveUpstreamUrl: env.SEA_LIVE_UPSTREAM_URL || 'ws://127.0.0.1:8010/asr',
     seaLivePilotEnabled: env.SEA_LIVE_PILOT_ENABLED === 'true',
+    mingLiveSttUrl: env.MING_LIVE_STT_URL || '',
+    mingLiveSttSecret: env.MING_LIVE_STT_SECRET || '',
+    mingLiveHealthUrl: env.MING_LIVE_HEALTH_URL || 'http://127.0.0.1:8011/health',
     sttDiarization: env.STT_DIARIZATION === 'true',
     sttTimeoutMs: Number(env.STT_TIMEOUT_MS || 20000),
 
@@ -64,6 +72,7 @@ export function loadConfig(env = process.env) {
     livekitRecordingsDir: env.LIVEKIT_RECORDINGS_DIR || fileURLToPath(new URL('../infrastructure/livekit/recordings', import.meta.url)),
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
+    qwenGgufSttBaseUrl: env.QWEN_GGUF_STT_BASE_URL || '',
     qwenBatchEnabled: env.QWEN_BATCH_ENABLED === 'true',
     qwenBatchEgressMode: env.QWEN_BATCH_EGRESS_MODE || 'web',
     qwenBatchRecordingsDir: env.QWEN_BATCH_RECORDINGS_DIR || '',
@@ -110,6 +119,9 @@ export function loadConfig(env = process.env) {
   const seaUpstream = new URL(config.seaLiveUpstreamUrl);
   if (!['ws:', 'wss:'].includes(seaUpstream.protocol) || seaUpstream.username || seaUpstream.password || seaUpstream.search || seaUpstream.hash || seaUpstream.pathname !== '/asr') throw new Error('SEA upstream must be a ws/wss /asr URL without credentials or query');
   if (config.sttModel === SEA_LIVE_MODEL) throw new Error('SEA is an optional live model; retain a batch STT_MODEL default');
+  if (Boolean(config.mingLiveSttUrl) !== Boolean(config.mingLiveSttSecret) || (config.mingLiveSttSecret && config.mingLiveSttSecret.length < 32)) throw new Error('Ming streaming requires paired URL and secret of at least 32 characters');
+  if (config.mingLiveSttUrl && !/^\/[\w/-]+$/.test(config.mingLiveSttUrl)) throw new Error('Ming streaming URL must be a same-origin path');
+  if (config.sttModel === MING_LIVE_MODEL) throw new Error('Ming streaming is an optional live model; keep STT_MODEL set to a batch default');
   for (const field of ['llmTimeoutMs', 'sttTimeoutMs', 'qwenSttTimeoutMs']) {
     if (!Number.isFinite(config[field]) || config[field] < 100 || config[field] > 120000) throw new Error(`${field} must be 100–120000 milliseconds`);
   }
@@ -119,6 +131,10 @@ export function loadConfig(env = process.env) {
   if (!['office', 'gemini', 'demo'].includes(config.llmProvider)) throw new Error('Unknown LLM_PROVIDER');
   if (!['browser', 'server'].includes(config.sttProvider)) throw new Error('STT_PROVIDER must be browser or server');
   if (config.sttModel === QWEN_STT_MODEL && !config.qwenSttBaseUrl) throw new Error('Qwen requires QWEN_STT_BASE_URL');
+  if (Boolean(config.qwenGgufLiveUrl) !== Boolean(config.qwenGgufLiveSecret) || (config.qwenGgufLiveSecret && config.qwenGgufLiveSecret.length < 32)) throw new Error('Q8 live requires a paired URL and secret of at least 32 characters');
+  if (config.qwenGgufLiveUrl && !/^\/[\w/-]+$/.test(config.qwenGgufLiveUrl)) throw new Error('Q8 live URL must be a same-origin path');
+  if (config.qwenGgufLiveUrl) { const health = new URL(config.qwenGgufLiveHealthUrl); if (health.protocol !== 'http:' || !['127.0.0.1','localhost','[::1]'].includes(health.hostname) || health.username || health.password || health.search || health.hash) throw new Error('Q8 live health must use a local HTTP address'); }
+  if (config.qwenGgufSttBaseUrl) { const url = new URL(config.qwenGgufSttBaseUrl); if (url.protocol !== 'http:' || !['127.0.0.1','localhost','[::1]'].includes(url.hostname)) throw new Error('Qwen GGUF worker must use a local HTTP address'); }
   if (config.sttProvider === 'server' && (!config.sttModel || !(config.sttModel === QWEN_STT_MODEL ? config.qwenSttBaseUrl : config.sttBaseUrl))) throw new Error('Server STT requires its endpoint and STT_MODEL');
   if (config.sttModel && !config.sttModels.includes(config.sttModel)) throw new Error('STT_MODELS must include STT_MODEL');
   for (const [field, protocols] of [['livekitUrl', ['ws:', 'wss:']], ['llmBaseUrl', ['http:', 'https:']], ['sttBaseUrl', ['http:', 'https:']], ['qwenSttBaseUrl', ['http:', 'https:']]]) {

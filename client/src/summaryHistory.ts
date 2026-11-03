@@ -35,6 +35,7 @@ export interface SummarySession {
 }
 export interface ActiveCallSession {
   meetingId: string; roomName: string; token: string; serverUrl: string; joinedAt: number;
+  roomCode?: string;
 }
 export const CALL_SESSION_KEY = 'balicall.call-session.v1';
 export const HISTORY_KEY = 'balicall.summary-history.v1';
@@ -213,6 +214,7 @@ export function readCallSession(): ActiveCallSession | null {
   if (typeof data.meetingId !== 'string' || typeof data.token !== 'string' || typeof data.roomName !== 'string') return null;
   return {
     meetingId: data.meetingId,
+    roomCode: typeof data.roomCode === 'string' ? data.roomCode : undefined,
     roomName: data.roomName,
     token: data.token,
     serverUrl: typeof data.serverUrl === 'string' ? data.serverUrl : 'ws://127.0.0.1:7880',

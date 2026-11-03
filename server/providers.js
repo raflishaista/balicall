@@ -341,22 +341,24 @@ export async function summarize(meeting, config, fetchImpl = fetch) {
 
 export async function transcribeAudio(audio, mimeType, language, config, fetchImpl = fetch) {
   const qwen = config.sttModel === 'qwen3-asr-0.6b';
-  const baseUrl = qwen ? config.qwenSttBaseUrl : config.sttBaseUrl;
-  const key = qwen ? config.qwenSttKey : config.sttKey;
+  const gguf = config.sttModel === 'qwen3-asr-0.6b-gguf-q8';
+  const baseUrl = gguf ? config.qwenGgufSttBaseUrl : qwen ? config.qwenSttBaseUrl : config.sttBaseUrl;
+  const key = gguf ? '' : qwen ? config.qwenSttKey : config.sttKey;
   if (!baseUrl || !config.sttModel) throw new ServiceError('Backend speech-to-text is not configured', 503);
+  if (gguf && config.sttDiarization) throw new ServiceError('Qwen GGUF belum mendukung diarization dalam integrasi ini.', 400);
   if (qwen && config.sttDiarization && !config.qwenDiarizationEnabled) throw new ServiceError('Qwen diarization belum diaktifkan untuk pengujian. Nonaktifkan mode mikrofon ruang rapat atau pilih model lain.', 400);
   const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' };
   const extension = extensions[mimeType.split(';')[0]];
   if (!extension) throw new ServiceError('Unsupported audio format', 415);
   const form = new FormData();
   form.append('file', new Blob([audio], { type: mimeType }), `speech.${extension}`);
-  form.append('model', config.sttModel);
+  form.append('model', gguf ? 'qwen3' : config.sttModel);
   form.append('language', language);
   form.append('response_format', 'json');
   if (config.sttDiarization) form.append('diarize', 'true');
   const data = await fetchJson(`${baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
     method: 'POST', headers: key ? { Authorization: `Bearer ${key}` } : {}, body: form,
-  }, qwen ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
+  }, qwen || gguf ? config.qwenSttTimeoutMs : config.sttTimeoutMs, fetchImpl);
   if (typeof data.text !== 'string') throw new ServiceError('The speech service returned no text field');
   const text = normalizeTranscriptText(data.text.trim());
   if (!config.sttDiarization) return { text };

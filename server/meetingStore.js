@@ -57,7 +57,7 @@ export class MeetingStore {
     }
     return Math.random().toString(36).substring(2, 7).toUpperCase();
   }
-  join(roomName, participant) {
+  join(roomName, participant, { requireExisting = participant.intent === 'join' } = {}) {
     return this.transact(() => {
       const roomCode = participant.roomCode ? String(participant.roomCode).trim().toUpperCase() : null;
       let meeting = [...this.meetings.values()].find(value => {
@@ -73,8 +73,8 @@ export class MeetingStore {
         meeting = undefined;
       }
       if (!meeting) {
-        if (participant.intent === 'join') {
-          const error = new Error('Ruang rapat dengan kode tersebut tidak ditemukan atau sudah berakhir.');
+        if (requireExisting) {
+          const error = new Error('Ruang rapat belum tersedia. Periksa nama ruang atau minta penyelenggara memulai rapat.');
           error.status = 404;
           throw error;
         }
