@@ -91,3 +91,19 @@ test('guest admission has a bounded attempt limit', async t => {
   for(let i=0;i<31;i++)last=await f.request('/auth/guest',{name:'Tester',inviteCode:'a'.repeat(22)});
   assert.equal(last.status,429);
 });
+
+test('guest can join with 5-character alphanumeric roomCode', async t => {
+  const f = await fixture(t);
+  const meeting = f.store.get(f.meetingId);
+  assert.ok(meeting.roomCode);
+  assert.match(meeting.roomCode, /^[A-Z0-9]{5}$/);
+  const joined = await f.request('/auth/guest', { name: 'Five Char Guest', inviteCode: meeting.roomCode.toLowerCase() });
+  assert.equal(joined.status, 200);
+  assert.equal(joined.data.user.isGuest, true);
+  assert.equal(joined.data.user.guestMeetingId, f.meetingId);
+  assert.equal(joined.data.user.guestRoomCode, meeting.roomCode);
+  const cookie = joined.response.headers.getSetCookie().find(c=>c.startsWith('balicall_guest=')).split(';')[0];
+  const tokenRes = await f.request('/token', { roomCode: meeting.roomCode }, { cookie, csrfToken: joined.data.csrfToken });
+  assert.equal(tokenRes.status, 200);
+  assert.equal(tokenRes.data.roomName, 'Guest QC');
+});

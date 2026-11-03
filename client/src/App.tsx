@@ -145,7 +145,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [roomCode, setRoomCode] = useState(() =>
     shouldRestoreCall && (initialCallSession as any)?.roomCode
       ? (initialCallSession as any).roomCode
-      : generateRoomCode()
+      : (authUser?.guestRoomCode || generateRoomCode())
   );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -1403,8 +1403,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();navigateTo({ view: 'summary', meetingId: null });}}/>}
           {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
-            void apiRequest<{inviteCode:string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
-              .then(data => setGuestInviteCode(data.inviteCode)).catch(error => setCallError(featureError('Membuat undangan tamu',error)));
+            void apiRequest<{inviteCode:string; roomCode?: string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
+              .then(data => setGuestInviteCode(data.roomCode || data.inviteCode)).catch(error => setCallError(featureError('Membuat undangan tamu',error)));
           }}>Undang tamu</button>}
           {isGuest && <span className="service-status">Akses tamu</span>}
           {view === 'in-call' ? <div className="call-clock"><Clock size={15} />{callDuration}</div> : (

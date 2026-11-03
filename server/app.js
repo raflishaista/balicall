@@ -2400,7 +2400,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (!nonEmpty(department)) department = 'General';
 
     let targetCode = roomCode ? String(roomCode).trim().toUpperCase() : null;
-    if (intent === 'join') {
+    if (intent === 'join' || !roomName) {
       if (!targetCode && roomName && /^[A-Za-z0-9]{5}$/.test(String(roomName).trim())) {
         targetCode = String(roomName).trim().toUpperCase();
       }
@@ -2409,13 +2409,26 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
     }
 
+    const guestMeeting = req.auth?.user.isGuest ? store.get(req.auth.user.guestMeetingId) : null;
+    if (req.auth?.user.isGuest) {
+      if (!guestMeeting || guestMeeting.status !== 'active' || guestMeeting.attendanceFinalization || guestMeeting.closingForUploads) {
+        return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
+      }
+      const matchByName = roomName && roomName.trim() === guestMeeting.roomName;
+      const matchByCode = targetCode && guestMeeting.roomCode && targetCode.toUpperCase() === guestMeeting.roomCode.toUpperCase();
+      const matchByRoomNameAsCode = roomName && guestMeeting.roomCode && roomName.trim().toUpperCase() === guestMeeting.roomCode.toUpperCase();
+      if (roomName && !matchByName && !matchByCode && !matchByRoomNameAsCode) {
+        return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
+      }
+      roomName = guestMeeting.roomName;
+      targetCode = guestMeeting.roomCode || targetCode;
+    }
+
     if (![roomName, employeeId, employeeName].every(value => nonEmpty(value))) {
       return res.status(400).json({ error: 'Room, employee ID, and name must be non-empty strings (max 160 characters)' });
     }
 
     const cleanId = employeeId.trim();
-    const guestMeeting = req.auth?.user.isGuest ? store.get(req.auth.user.guestMeetingId) : null;
-    if (req.auth?.user.isGuest && (!guestMeeting || guestMeeting.status !== 'active' || guestMeeting.attendanceFinalization || guestMeeting.closingForUploads || (roomName.trim() !== guestMeeting.roomName && (!targetCode || targetCode !== guestMeeting.roomCode)))) return res.status(403).json({ error: 'Undangan tamu tidak berlaku untuk ruang ini.' });
 
     // Verify employee ID format and database registration
     if (config.verifyEmployeeId && !req.auth?.user.isGuest) {
@@ -3096,7 +3109,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     const meeting = store.get(req.meetingId);
     // This endpoint is excluded from guest authorization above.
     store.transact(() => { meeting.guestInviteCode ||= randomBytes(16).toString('base64url'); });
-    res.json({ inviteCode: meeting.guestInviteCode });
+    res.json({ inviteCode: meeting.guestInviteCode, roomCode: meeting.roomCode });
   });
   app.post('/api/meetings/:id/employee-invites',asyncRoute(async(req,res)=>{
     if(!req.auth?.user||req.auth.user.isGuest)return res.status(403).json({error:'Masuk dengan akun karyawan untuk mengundang.'});
