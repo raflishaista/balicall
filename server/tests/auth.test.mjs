@@ -108,3 +108,68 @@ test('authenticated meeting identity and schedule ownership cannot be forged', a
   assert.equal((await request('/schedules/'+schedule.id,null,'b','DELETE')).status,403);
   assert.equal((await request('/schedules/'+schedule.id,null,'a','DELETE')).status,200);
 });
+
+test('concurrent login is barred with 409 conflict, allowing force takeover to revoke previous sessions', async t => {
+  const password = 'Akun pengujian bersama 2026';
+  const account = { employee_id: 'BT-88001', name: 'Multi Tester', department: 'IT', position: 'Engineer', login_email: 'multitester@example.test', status: 'active', password_hash: await hashPassword(password) };
+  const sessions = new Map();
+  const counts = new Map();
+  const store = {
+    async account() { return account; },
+    async session(hash) { return sessions.get(hash) || null; },
+    async createSession(hash, employeeId) { sessions.set(hash, { employeeId, name: account.name, email: account.login_email }); },
+    async revoke(hash) { sessions.delete(hash); },
+    async consumeLimit(key, max) { const c = (counts.get(key) || 0) + 1; counts.set(key, c); return c <= max; },
+    async hasActiveSession(employeeId, exceptHash) {
+      for (const [hash, sess] of sessions) {
+        if (sess.employeeId === employeeId && hash !== exceptHash) return true;
+      }
+      return false;
+    },
+    async revokeAllForEmployee(employeeId) {
+      for (const [hash, sess] of [...sessions]) {
+        if (sess.employeeId === employeeId) sessions.delete(hash);
+      }
+    }
+  };
+
+  const app = express();
+  app.use(express.json());
+  attachAuth(app, loadConfig({ AUTH_ENABLED: 'true' }), store);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(r => server.once('listening', r));
+  t.after(() => new Promise(r => server.close(r)));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const loginReq = (body, cookie) => fetch(base + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+    body: JSON.stringify(body)
+  });
+
+  // 1. First login succeeds
+  const first = await loginReq({ email: account.login_email, password });
+  assert.equal(first.status, 200);
+  const firstCookie = first.headers.get('set-cookie').split(';')[0];
+  const firstTokenHash = hashToken(firstCookie.split('=')[1]);
+  assert.equal(sessions.has(firstTokenHash), true);
+
+  // 2. Second login attempt from another tab/device (no cookie) is barred with 409
+  const second = await loginReq({ email: account.login_email, password });
+  assert.equal(second.status, 409);
+  const secondData = await second.json();
+  assert.equal(secondData.code, 'ACCOUNT_ALREADY_LOGGED_IN');
+  assert.equal(secondData.alreadyLoggedIn, true);
+
+  // 3. Re-login from the same session (passing same cookie) is permitted
+  const relogin = await loginReq({ email: account.login_email, password }, firstCookie);
+  assert.equal(relogin.status, 200);
+
+  // 4. Force login from another tab revokes previous session and creates new one
+  const forced = await loginReq({ email: account.login_email, password, force: true });
+  assert.equal(forced.status, 200);
+  const forcedCookie = forced.headers.get('set-cookie').split(';')[0];
+  const forcedTokenHash = hashToken(forcedCookie.split('=')[1]);
+
+  assert.equal(sessions.has(firstTokenHash), false, 'Previous session must be revoked');
+  assert.equal(sessions.has(forcedTokenHash), true, 'Forced new session must exist');
+});

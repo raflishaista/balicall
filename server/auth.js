@@ -100,8 +100,26 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
     const account=await store.account(email);
     const verified=await verifyPassword(password,account?.password_hash);
     if(!verified||account?.status!=='active')return res.status(401).json({error:invalidLogin});
+    const force=Boolean(req.body?.force);
     const previous=cookieToken(req);
-    if(previous)await store.revoke(hashToken(previous));
+    const previousHash=previous?hashToken(previous):null;
+    if(typeof store.hasActiveSession==='function'){
+      const alreadyLoggedIn=await store.hasActiveSession(account.employee_id,previousHash);
+      if(alreadyLoggedIn&&!force){
+        return res.status(409).json({
+          error:'Akun ini sedang aktif di sesi atau perangkat lain. Keluar terlebih dahulu dari sesi aktif untuk dapat masuk kembali.',
+          code:'ACCOUNT_ALREADY_LOGGED_IN',
+          alreadyLoggedIn:true,
+          employeeId:account.employee_id,
+          employeeName:account.display_name||account.name
+        });
+      }
+    }
+    if(force&&typeof store.revokeAllForEmployee==='function'){
+      await store.revokeAllForEmployee(account.employee_id);
+    }else if(previous){
+      await store.revoke(hashToken(previous));
+    }
     const token=randomBytes(32).toString('base64url');
     await store.createSession(hashToken(token),account.employee_id,8);
     const guestToken=cookieToken(req,guestCookie);

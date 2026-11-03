@@ -65,6 +65,18 @@ export class PgAuthStore {
     await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');
     await this.query('INSERT INTO balicall_auth_sessions(token_hash,employee_id,expires_at) VALUES($1,$2,NOW()+$3*interval \'1 hour\')',[tokenHash,employeeId,hours]);
   }
+  async hasActiveSession(employeeId, exceptTokenHash = null) {
+    await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');
+    const sql = exceptTokenHash
+      ? 'SELECT 1 FROM balicall_auth_sessions WHERE employee_id=$1 AND expires_at>NOW() AND token_hash<>$2 LIMIT 1'
+      : 'SELECT 1 FROM balicall_auth_sessions WHERE employee_id=$1 AND expires_at>NOW() LIMIT 1';
+    const params = exceptTokenHash ? [employeeId, exceptTokenHash] : [employeeId];
+    const {rows} = await this.query(sql, params);
+    return Boolean(rows[0]);
+  }
+  async revokeAllForEmployee(employeeId) {
+    await this.query('DELETE FROM balicall_auth_sessions WHERE employee_id=$1', [employeeId]);
+  }
   async revoke(tokenHash) { await this.query('DELETE FROM balicall_auth_sessions WHERE token_hash=$1',[tokenHash]); }
   async consumeLimit(bucket, max, minutes) {
     // Persistent across API restarts; raw emails/IPs are not stored in these buckets.

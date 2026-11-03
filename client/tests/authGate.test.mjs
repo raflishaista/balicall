@@ -18,7 +18,7 @@ function fixture({enabled=true,user={employeeId:'qc-user',name:'QC'},failLogout=
     }},'./accountScope':{setAccountScope:value=>{scope=value;}},
     './summaryHistory':{clearSummarySession:()=>{cleared++;}},
     './pushNotifications':{disablePush:async()=>{if(failPush)throw Error('Push unavailable');}},
-    'lucide-react':{Eye:()=>null,EyeOff:()=>null,Loader2:()=>null,LockKeyhole:()=>null,Mail:()=>null}};
+    'lucide-react':{AlertCircle:()=>null,Eye:()=>null,EyeOff:()=>null,Loader2:()=>null,LockKeyhole:()=>null,Mail:()=>null}};
   const source=readFileSync(new URL('../src/AuthGate.tsx',import.meta.url),'utf8');
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   const exports={};new Function('exports','require',code)(exports,name=>{if(name==='./App')appLoads++;return dependencies[name]||{};});
@@ -57,4 +57,85 @@ test('login defers the workspace module until a session is accepted',async()=>{
   await act(async()=>root.root.findByType(f.LoginPage).props.onAuthenticated({enabled:true,user:{employeeId:'qc-user',name:'QC'}}));
   assert.equal(f.appLoads,1);assert.equal(root.root.findAllByType(f.Workspace).length,1);
  }finally{await act(async()=>root?.unmount());}
+});
+
+test('duplicate login attempt triggers active session popup, allowing cancel or force takeover', async () => {
+  let loginPayloads = [];
+  let simulateConflict = true;
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, localStorage: { setItem() {}, removeItem() {} } };
+  const dependencies = {
+    react: React,
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    './App': { __esModule: true, default: () => null },
+    './api': {
+      AUTH_EXPIRED_EVENT: 'expired',
+      setAuthCsrfToken() {},
+      apiRequest: async (path, options) => {
+        if (path === '/auth/session') return { enabled: true, user: null };
+        if (path === '/auth/login') {
+          const body = JSON.parse(options.body);
+          loginPayloads.push(body);
+          if (simulateConflict && !body.force) {
+            const err = new Error('Akun ini sedang aktif di sesi atau perangkat lain.');
+            err.status = 409;
+            err.code = 'ACCOUNT_ALREADY_LOGGED_IN';
+            err.data = { alreadyLoggedIn: true, employeeName: 'Tester' };
+            throw err;
+          }
+          return { enabled: true, user: { employeeId: 'BT-99001', name: 'Tester' }, csrfToken: 'tok' };
+        }
+        throw new Error('Unknown path ' + path);
+      }
+    },
+    './accountScope': { setAccountScope() {} },
+    './summaryHistory': { clearSummarySession() {} },
+    './pushNotifications': { disablePush: async () => {} },
+    'lucide-react': { AlertCircle: () => null, Eye: () => null, EyeOff: () => null, Loader2: () => null, LockKeyhole: () => null, Mail: () => null }
+  };
+  const source = readFileSync(new URL('../src/AuthGate.tsx', import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const exports = {};
+  new Function('exports', 'require', code)(exports, name => dependencies[name] || {});
+
+  let root;
+  try {
+    await act(async () => { root = create(React.createElement(exports.AuthGate)); });
+    const inputs = root.root.findAllByType('input');
+    const emailInput = inputs.find(i => i.props.type === 'email');
+    const passInput = inputs.find(i => i.props.type === 'password');
+    const form = root.root.findByType('form');
+
+    // Enter credentials
+    await act(async () => {
+      emailInput.props.onChange({ target: { value: 'user@balitower.co.id' } });
+      passInput.props.onChange({ target: { value: 'SecretPassword123' } });
+    });
+
+    // Submit form -> triggers 409 conflict
+    await act(async () => {
+      form.props.onSubmit({ preventDefault() {} });
+    });
+
+    assert.equal(loginPayloads.length, 1);
+    assert.equal(loginPayloads[0].email, 'user@balitower.co.id');
+    assert.equal(loginPayloads[0].force, undefined);
+
+    // Popup modal should appear
+    const dialog = root.root.findByProps({ role: 'dialog' });
+    assert.ok(dialog, 'Conflict dialog must be rendered');
+    assert.ok(dialog.props['aria-modal'], 'Should be a modal dialog');
+
+    const forceBtn = root.root.findByProps({ className: 'login-conflict-force' });
+    assert.ok(forceBtn, 'Force takeover button should be present');
+
+    // Click force takeover button
+    await act(async () => {
+      await forceBtn.props.onClick();
+    });
+
+    assert.equal(loginPayloads.length, 2);
+    assert.equal(loginPayloads[1].force, true);
+  } finally {
+    await act(async () => root?.unmount());
+  }
 });

@@ -6,7 +6,15 @@ export function setAuthCsrfToken(token: string | null) { csrfToken = token; }
 export class ApiError extends Error {
   status: number;
   requestId?: string;
-  constructor(message: string, status = 0, requestId?: string) { super(message); this.status = status; this.requestId=requestId; }
+  code?: string;
+  data?: unknown;
+  constructor(message: string, status = 0, requestId?: string, code?: string, data?: unknown) {
+    super(message);
+    this.status = status;
+    this.requestId = requestId;
+    this.code = code;
+    this.data = data;
+  }
   get retryable() { return this.status === 0 || this.status === 408 || this.status === 429 || this.status >= 500; }
 }
 
@@ -35,7 +43,8 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tim
     const message=response.status>=500
       ? `Layanan mengalami gangguan (HTTP ${response.status}). Coba lagi atau hubungi admin.${requestId?` Referensi: ${requestId}.`:''}`
       : data?.error || `Layanan mengembalikan HTTP ${response.status}`;
-    throw new ApiError(message, response.status,requestId);
+    const code = typeof data?.code === 'string' ? data.code : undefined;
+    throw new ApiError(message, response.status, requestId, code, data);
   }
   if (!data) throw new ApiError('Respons layanan tidak valid', 502);
   return data as T;
