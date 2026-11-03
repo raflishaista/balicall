@@ -3,8 +3,8 @@ import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
-import { isChromiumBrowser, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE } from './modelSelection';
+import { isChromiumBrowser, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE, QWEN_GGUF_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
@@ -105,8 +105,8 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
         <small>Opsi untuk mengidentifikasi dan memisahkan ucapan pembicara saat mikrofon digunakan bersama oleh beberapa orang dalam satu ruangan.</small>
       </div>
     </label>
-    {!sharedMicSupported && <p className="prejoin-error" role="status">{transcriptionModel === SEA_LIVE_MODEL ? SEA_LIVE_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
-    {isQwen && sharedMicSupported && <p role="status">{transcriptionModel === 'qwen3-asr-0.6b-live' ? QWEN_LIVE_DIARIZATION_NOTICE : QWEN_DIARIZATION_NOTICE}</p>}
+    {!sharedMicSupported && <p className="prejoin-error" role="status">{transcriptionModel === 'qwen3-asr-0.6b-gguf-q8' ? QWEN_GGUF_NOTICE : transcriptionModel === MING_LIVE_MODEL ? MING_LIVE_NOTICE : transcriptionModel === SEA_LIVE_MODEL ? SEA_LIVE_NOTICE : QWEN_TRANSCRIPTION_NOTICE}</p>}
+    {isQwen && sharedMicSupported && <p role="status">{transcriptionModel === QWEN_GGUF_LIVE_MODEL ? QWEN_GGUF_LIVE_NOTICE : transcriptionModel === 'qwen3-asr-0.6b-live' ? QWEN_LIVE_DIARIZATION_NOTICE : QWEN_DIARIZATION_NOTICE}</p>}
     {Boolean(sharedMicSupported && media.choices.sharedRoomMic) && (
       <div style={{ paddingLeft: '28px', marginTop: '6px', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>

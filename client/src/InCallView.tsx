@@ -15,7 +15,7 @@ import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
 import { supportsSharedMicrophone } from './preferences';
-import { SEA_LIVE_MODEL, isLiveTranscriptionModel } from './modelSelection';
+import { SEA_LIVE_MODEL, MING_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL, isLiveTranscriptionModel } from './modelSelection';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
@@ -219,7 +219,7 @@ function RoomContent({
   const liveSpeech = useWhisperLiveTranscription({ language: speechLanguage,
     muted: paused || sttProvider !== 'server' || !isLiveModel,
     track: microphoneTrack?.track?.mediaStreamTrack, createSession: onCreateLiveSession, onFinal: value => onAddSpeechLine(value, sttModel),
-    model: sttModel, diarize: ['qwen3-asr-0.6b-live',SEA_LIVE_MODEL].includes(sttModel) && Boolean(callPreferences.sharedRoomMic) && (callPreferences.liveDiarization ?? true) });
+    model: sttModel, diarize: ['qwen3-asr-0.6b-live',QWEN_GGUF_LIVE_MODEL,SEA_LIVE_MODEL].includes(sttModel) && Boolean(callPreferences.sharedRoomMic) && (callPreferences.liveDiarization ?? true) });
   const serverSpeech = isLiveModel ? liveSpeech : backendSpeech;
   const changeSttModel = async (model: string) => {
     if (modelPending || finishing || isSummarizing || microphone.pending || model === sttModel || !sttModels.includes(model)) return;
@@ -227,6 +227,7 @@ function RoomContent({
     try {
       await serverSpeech.prepareTrackChange();
       setSelectedSttModel(model);
+      if (model === MING_LIVE_MODEL) setSpeechLanguage('en-US');
       if (model === SEA_LIVE_MODEL) setSpeechLanguage('id-ID');
       onSttModelChanged?.(model);
       setTranscriptionNotice(null);
@@ -342,7 +343,9 @@ function RoomContent({
         }
         speechLanguage={speechLanguage}
         setSpeechLanguage={language =>
-          sttModel === SEA_LIVE_MODEL && language !== 'id-ID'
+          sttModel === MING_LIVE_MODEL && language !== 'en-US'
+            ? setModelError('Ming Live hanya mendukung bahasa Inggris. Pilih model lain untuk Bahasa Indonesia.')
+            : sttModel === SEA_LIVE_MODEL && language !== 'id-ID'
               ? setModelError('SEA Live hanya mendukung Bahasa Indonesia.')
               : void changeSpeechSettings(() => setSpeechLanguage(language))
         }
@@ -391,7 +394,7 @@ function RoomContent({
           )}
           sharedRoomMic={callPreferences.sharedRoomMic}
           sharedMicSupported={sttProvider === 'server' && supportsSharedMicrophone(sttModel, qwenDiarizationReady)}
-          batchSupported={!sttModel.startsWith('qwen3-asr-') && sttModel !== SEA_LIVE_MODEL}
+          batchSupported={!sttModel.startsWith('qwen3-asr-') && sttModel !== SEA_LIVE_MODEL && sttModel !== MING_LIVE_MODEL}
           onToggleSharedMic={onToggleSharedMic}
           liveDiarization={callPreferences.liveDiarization ?? true}
           onToggleLiveDiarization={onToggleLiveDiarization}

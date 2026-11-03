@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
 import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE } from './modelSelection';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE } from './modelSelection';
 import { speakerDisplayLabel } from './transcriptSpeakers';
 import { SpeakerNameEditor } from './SpeakerNameEditor';
 import type { SpeakerNameChange } from './SpeakerNameEditor';
@@ -898,13 +898,15 @@ export function MeetingRoom({
                       <TranscriptionModelOptions models={sttModels} />
                     </select>
                   </div>
-                  {(sttModel === 'qwen3-asr-0.6b' || sttModel === 'qwen3-asr-0.6b-live' || sttModel === SEA_LIVE_MODEL) && (
+                  {(sttModel === 'qwen3-asr-0.6b' || sttModel === 'qwen3-asr-0.6b-live' || sttModel === QWEN_GGUF_LIVE_MODEL || sttModel === MING_LIVE_MODEL || sttModel === SEA_LIVE_MODEL) && (
                     <div className="transcription-model-notice" role="status">
                       <Info size={12} className="transcription-notice-icon" aria-hidden="true" />
                       <div className="transcription-notice-text">
                         {sttModel === 'qwen3-asr-0.6b' && (qwenDiarizationReady ? QWEN_DIARIZATION_NOTICE : QWEN_TRANSCRIPTION_NOTICE)}
                         {sttModel === 'qwen3-asr-0.6b-live' && QWEN_LIVE_DIARIZATION_NOTICE}
+                        {sttModel === QWEN_GGUF_LIVE_MODEL && QWEN_GGUF_LIVE_NOTICE}
                         {sttModel === SEA_LIVE_MODEL && SEA_LIVE_NOTICE}
+                        {sttModel === MING_LIVE_MODEL && MING_LIVE_NOTICE}
                       </div>
                     </div>
                   )}

@@ -15,15 +15,15 @@ from streaming_diarization import DiarizationClient,diarization_ready
 logger=logging.getLogger('uvicorn.error')
 
 
-def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
+def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None,*,model_id=MODEL,native_streaming=True,diarization_check=diarization_ready,readiness_check=lambda:True,engine_factory=QwenEngine,enforce_readiness=False,session_factory=None):
     @asynccontextmanager
     async def lifespan(app):
         key=secret if secret is not None else os.getenv('QWEN_LIVE_STT_SECRET','')
         if len(key)<32: raise RuntimeError('QWEN_LIVE_STT_SECRET must contain at least 32 characters')
-        app.state.verifier=TicketVerifier(key,MODEL)
+        app.state.verifier=TicketVerifier(key,model_id)
         limit=max_sessions if max_sessions is not None else int(os.getenv('QWEN_LIVE_MAX_SESSIONS','2'))
         app.state.sessions=RetainedSessions(limit=limit)
-        app.state.engine=engine if engine is not None else QwenEngine()
+        app.state.engine=engine if engine is not None else engine_factory()
         app.state.active=0
         async def reap():
             while True:
@@ -43,8 +43,8 @@ def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
 
     @app.get('/health')
     def health():
-        return dict(ready=hasattr(app.state,'engine'),streaming=True,native=True,model=MODEL,
-            diarization=diarization_ready(),activeSessions=app.state.active,maxSessions=app.state.sessions.limit,
+        return dict(ready=hasattr(app.state,'engine') and readiness_check(),streaming=True,native=native_streaming,model=model_id,
+            diarization=diarization_check(),activeSessions=app.state.active,maxSessions=app.state.sessions.limit,
             retainedSessions=len(app.state.sessions.slots)-app.state.sessions.active,resumeGraceSeconds=45)
 
     @app.websocket('/asr')
@@ -63,12 +63,14 @@ def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
             for frame in frames: await socket.send_json(frame)
             await socket.send_json(dict(type='ready_to_stop'))
             await socket.close();return
+        if enforce_readiness and (not readiness_check() or (ticket.get('diarize') and not diarization_check())):
+            await socket.close(code=4503);return
         slot=None; receiver=None; get=None; retain=False
         try:
             async def create_session():
                 factory=diarizer_factory or DiarizationClient.connect
                 diarizer=await factory() if ticket.get('diarize') else None
-                return QwenLiveSession(app.state.engine,ticket,diarizer)
+                return session_factory(app.state.engine,ticket,diarizer,socket.query_params.get('ticket','')) if session_factory else QwenLiveSession(app.state.engine,ticket,diarizer)
             try: slot,resumed=await app.state.sessions.acquire(ticket,create_session)
             except ValueError as error:
                 capacity=str(error)=='Streaming capacity exceeded'
@@ -79,7 +81,7 @@ def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
             session=slot.session
             app.state.active+=1
             await socket.accept()
-            await socket.send_json(dict(type='config',sampleRate=16000,model=MODEL,
+            await socket.send_json(dict(type='config',sampleRate=16000,model=model_id,
                 diarization=bool(session.diarizer),sessionId=session.ticket['nonce'],resumed=resumed,resumeGraceSeconds=45))
             if resumed and slot.finals:
                 await socket.send_json(dict(type='transcript',interim='',final=list(slot.finals)))
