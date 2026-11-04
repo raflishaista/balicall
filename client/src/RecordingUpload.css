@@ -3,7 +3,31 @@
 .rec-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .rec-field > span { font-weight: 600; }
 .rec-field input[type='text'], .rec-field select { padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+.rec-field-file { grid-column: 1 / -1; min-width: 0; }
+.rec-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 14px;
+  border: 1px dashed #8da7c4;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #183b62;
+  text-align: center;
+  font: inherit;
+  cursor: pointer;
+}
+.rec-drop-zone span { color: #475569; font-size: 12px; }
+.rec-drop-zone:not(:disabled):hover, .rec-drop-zone.is-dragging {
+  border-color: #2563eb;
+  background: #eaf3ff;
+}
+.rec-drop-zone:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.rec-drop-zone:disabled { cursor: not-allowed; opacity: 0.65; }
 .rec-file-info, .rec-hint { margin: 0; font-size: 13px; color: #475569; display: flex; align-items: center; gap: 6px; }
+.rec-file-info svg { flex: 0 0 auto; }
+.rec-file-info span { overflow-wrap: anywhere; }
 .rec-date { font-size: 12px; color: #64748b; }
 .rec-status { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .rec-status-queued { background: #f1f5f9; color: #475569; }
