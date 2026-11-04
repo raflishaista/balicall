@@ -660,6 +660,8 @@ export function MeetingRoom({
               fullscreen={fullScreen.fullscreen}
               fullscreenPending={fullScreen.pending}
               fullscreenSupported={fullScreen.supported}
+              screenShareResolution={screenShareResolution}
+              onSelectScreenShareResolution={onSelectScreenShareResolution}
               onFocus={presentation.toggleFocus}
               onThumbnails={presentation.toggleThumbnails}
               onFullscreen={() => void fullScreen.toggle()}

@@ -1,15 +1,41 @@
 import { VideoTrack } from '@livekit/components-react';
 import type { TrackReference } from '@livekit/components-react';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { VideoQuality } from 'livekit-client';
 import type { ScreenShareResolution } from './preferences';
-import { MonitorUp, Maximize, Minimize, PanelTop, Users, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { MonitorUp, Maximize, Minimize, PanelTop, Users, ZoomIn, ZoomOut, RotateCcw, Check } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import type { ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch';
 import { useTrackUnavailable } from './useTrackUnavailable';
 
+export type ReceiveQuality = '1080p' | '720p' | '540p' | '360p' | 'auto' | 'high' | 'med' | 'low';
+
 function screenShareKey(track: TrackReference) {
   return `${track.participant.identity}:${track.publication.trackSid}`;
+}
+
+export function getQualityLabel(q: string): string {
+  switch (q) {
+    case '1080p':
+    case 'high':
+      return '1080p';
+    case '720p':
+    case 'med':
+      return '720p';
+    case '540p':
+      return '540p';
+    case '360p':
+    case 'low':
+      return '360p';
+    case '1440p':
+      return '1440p';
+    case 'original':
+      return 'Asli';
+    case 'auto':
+      return 'Otomatis';
+    default:
+      return q;
+  }
 }
 
 export function ScreenShareStage({
@@ -29,13 +55,58 @@ export function ScreenShareStage({
   const activeKey = active ? screenShareKey(active) : null;
 
   const transformRef = useRef<ReactZoomPanPinchContentRef | null>(null);
-  const [receiveQuality, setReceiveQuality] = useState<'high' | 'med' | 'low'>('high');
+  const [receiveQuality, setReceiveQuality] = useState<ReceiveQuality>('1080p');
+  const [qualityApplying, setQualityApplying] = useState(false);
+  const [qualityApplied, setQualityApplied] = useState(false);
+  const [appliedLabel, setAppliedLabel] = useState('');
+  const applyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [scale, setScale] = useState(1);
   const [prevActiveKey, setPrevActiveKey] = useState(activeKey);
   if (prevActiveKey !== activeKey) {
     setPrevActiveKey(activeKey);
     setScale(1);
   }
+
+  const triggerQualityFeedback = useCallback((target: string) => {
+    if (applyTimer.current) clearTimeout(applyTimer.current);
+    if (finishTimer.current) clearTimeout(finishTimer.current);
+
+    setQualityApplying(true);
+    setQualityApplied(false);
+    setAppliedLabel(getQualityLabel(target));
+
+    // Display circular loading progress, then sign completion after transition
+    applyTimer.current = setTimeout(() => {
+      setQualityApplying(false);
+      setQualityApplied(true);
+
+      finishTimer.current = setTimeout(() => {
+        setQualityApplied(false);
+      }, 1800);
+    }, 700);
+  }, []);
+
+  const finishQualityEarly = useCallback(() => {
+    if (applyTimer.current) {
+      clearTimeout(applyTimer.current);
+      applyTimer.current = null;
+      setQualityApplying(false);
+      setQualityApplied(true);
+      if (finishTimer.current) clearTimeout(finishTimer.current);
+      finishTimer.current = setTimeout(() => {
+        setQualityApplied(false);
+      }, 1800);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (applyTimer.current) clearTimeout(applyTimer.current);
+      if (finishTimer.current) clearTimeout(finishTimer.current);
+    };
+  }, []);
 
   if (!active) return null;
   const presenter = active.participant.name || active.participant.identity;
@@ -54,6 +125,16 @@ export function ScreenShareStage({
     }
   };
 
+  const handleViewerQualityChange = (q: ReceiveQuality) => {
+    setReceiveQuality(q);
+    triggerQualityFeedback(q);
+  };
+
+  const handlePresenterResolutionChange = (res: ScreenShareResolution) => {
+    onSelectScreenShareResolution?.(res);
+    triggerQualityFeedback(res);
+  };
+
   return <section className="screen-share-stage" aria-label="Layar yang dibagikan" tabIndex={0} onKeyDown={handleKeyDown}>
     <header className="screen-share-header">
       <span role="status"><MonitorUp size={17} /><strong>{presenter}{active.participant.isLocal ? ' (Kamu)' : ''}</strong> membagikan layar{active.participant.isLocal && onSelectScreenShareResolution && (
@@ -61,7 +142,8 @@ export function ScreenShareStage({
           <select
             aria-label="Pilih resolusi berbagi layar"
             value={screenShareResolution}
-            onChange={event => onSelectScreenShareResolution(event.target.value as ScreenShareResolution)}
+            disabled={qualityApplying}
+            onChange={event => handlePresenterResolutionChange(event.target.value as ScreenShareResolution)}
           >
             <option value="1080p">1080p</option>
             <option value="720p">720p</option>
@@ -70,6 +152,14 @@ export function ScreenShareStage({
             <option value="1440p">1440p</option>
             <option value="original">Asli</option>
           </select>
+          {qualityApplying && (
+            <span className="circular-spinner-inline" title="Menerapkan resolusi..." aria-hidden="true">
+              <svg className="circular-progress-svg" viewBox="0 0 36 36" width="14" height="14">
+                <circle className="circular-progress-bg" cx="18" cy="18" r="14" fill="none" strokeWidth="4" />
+                <circle className="circular-progress-meter" cx="18" cy="18" r="14" fill="none" strokeWidth="4" strokeDasharray="65 100" strokeLinecap="round" />
+              </svg>
+            </span>
+          )}
         </label>
       )}</span>
       {tracks.length > 1 && <label>Presenter<select aria-label="Pilih presenter layar" value={screenShareKey(active)} onChange={event => setSelected(event.target.value)}>
@@ -81,12 +171,23 @@ export function ScreenShareStage({
             <select
               aria-label="Pilih kualitas penerimaan video"
               value={receiveQuality}
-              onChange={event => setReceiveQuality(event.target.value as 'high' | 'med' | 'low')}
+              disabled={qualityApplying}
+              onChange={event => handleViewerQualityChange(event.target.value as ReceiveQuality)}
             >
-              <option value="high">Kualitas: Maksimal</option>
-              <option value="med">Kualitas: Sedang</option>
-              <option value="low">Kualitas: Rendah</option>
+              <option value="1080p">1080p (Maksimal)</option>
+              <option value="720p">720p (HD)</option>
+              <option value="540p">540p (Standar)</option>
+              <option value="360p">360p (Hemat Kuota)</option>
+              <option value="auto">Otomatis</option>
             </select>
+            {qualityApplying && (
+              <span className="circular-spinner-inline" title="Menerapkan resolusi..." aria-hidden="true">
+                <svg className="circular-progress-svg" viewBox="0 0 36 36" width="14" height="14">
+                  <circle className="circular-progress-bg" cx="18" cy="18" r="14" fill="none" strokeWidth="4" />
+                  <circle className="circular-progress-meter" cx="18" cy="18" r="14" fill="none" strokeWidth="4" strokeDasharray="65 100" strokeLinecap="round" />
+                </svg>
+              </span>
+            )}
           </label>
         )}
         {isZoomed ? (
@@ -110,6 +211,32 @@ export function ScreenShareStage({
         </button>
       </div>
     </header>
+
+    {(qualityApplying || qualityApplied) && (
+      <div
+        className={`screen-share-resolution-pill ${qualityApplying ? 'is-loading' : 'is-finished'}`}
+        role="status"
+        aria-live="polite"
+      >
+        {qualityApplying ? (
+          <>
+            <svg className="circular-progress-svg" viewBox="0 0 36 36" width="20" height="20" aria-hidden="true">
+              <circle className="circular-progress-bg" cx="18" cy="18" r="14" fill="none" strokeWidth="3.5" />
+              <circle className="circular-progress-meter" cx="18" cy="18" r="14" fill="none" strokeWidth="3.5" strokeDasharray="60 100" strokeLinecap="round" />
+            </svg>
+            <span className="resolution-pill-text">Menerapkan resolusi {appliedLabel}...</span>
+          </>
+        ) : (
+          <>
+            <span className="circular-finish-icon" aria-hidden="true">
+              <Check size={14} />
+            </span>
+            <span className="resolution-pill-text">Resolusi {appliedLabel} diterapkan</span>
+          </>
+        )}
+      </div>
+    )}
+
     <ScreenShareVideo
       key={activeKey}
       track={active}
@@ -118,6 +245,7 @@ export function ScreenShareStage({
       scale={scale}
       receiveQuality={receiveQuality}
       onScaleChange={setScale}
+      onVideoResized={finishQualityEarly}
     />
   </section>;
 }
@@ -127,15 +255,17 @@ function ScreenShareVideo({
   presenter,
   transformRef,
   scale,
-  receiveQuality = 'high',
+  receiveQuality = '1080p',
   onScaleChange,
+  onVideoResized,
 }: {
   track: TrackReference;
   presenter: string;
   transformRef: React.RefObject<ReactZoomPanPinchContentRef | null>;
   scale: number;
-  receiveQuality?: 'high' | 'med' | 'low';
+  receiveQuality?: ReceiveQuality;
   onScaleChange: (scale: number) => void;
+  onVideoResized?: () => void;
 }) {
   const native = track.publication.track?.mediaStreamTrack;
   const [failedTrack, setFailedTrack] = useState<MediaStreamTrack>();
@@ -143,11 +273,44 @@ function ScreenShareVideo({
   const unavailable = useTrackUnavailable(native);
 
   useEffect(() => {
-    if (track.publication && typeof track.publication.setVideoQuality === 'function') {
-      try {
-        const q = receiveQuality === 'low' ? VideoQuality.LOW : receiveQuality === 'med' ? VideoQuality.MEDIUM : VideoQuality.HIGH;
-        track.publication.setVideoQuality(q);
-      } catch {}
+    const pub = track.publication as any;
+    if (!pub) return;
+    try {
+      if (receiveQuality === 'low' || receiveQuality === '360p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.LOW);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 640, height: 360 });
+        }
+      } else if (receiveQuality === '540p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.MEDIUM);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 960, height: 540 });
+        }
+      } else if (receiveQuality === 'med' || receiveQuality === '720p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.MEDIUM);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 1280, height: 720 });
+        }
+      } else if (receiveQuality === 'high' || receiveQuality === '1080p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.HIGH);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 1920, height: 1080 });
+        }
+      } else if (receiveQuality === 'auto') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.HIGH);
+        }
+      }
+    } catch {
+      // Ignore if publication methods are unavailable
     }
   }, [track.publication, receiveQuality]);
 
@@ -193,6 +356,7 @@ function ScreenShareVideo({
           playsInline
           muted
           aria-label={`Layar ${presenter}`}
+          onResize={() => onVideoResized?.()}
           onError={() => setFailedTrack(native)}
         />
       </TransformComponent>
