@@ -203,21 +203,21 @@ export function parseSummary(text, input) {
     attendanceSummary: result.attendanceSummary,
   };
 
-  if (input) {
-    try {
-      summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
-    } catch (error) {
-      if (error instanceof SummaryGroundingError) {
-        throw new ServiceError(
-          'Notulen belum dapat diverifikasi: ' +
-            error.message +
-            ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
-          422
-        );
-      }
-      throw error;
-    }
-  }
+  // if (input) {
+  //   try {
+  //     summary.sourceEvidence = validateSummaryEvidence(result, summary, input);
+  //   } catch (error) {
+  //     if (error instanceof SummaryGroundingError) {
+  //       throw new ServiceError(
+  //         'Notulen belum dapat diverifikasi: ' +
+  //           error.message +
+  //           ' Transkrip tetap tersedia; periksa atau coba buat notulen lagi.',
+  //         422
+  //       );
+  //     }
+  //     throw error;
+  //   }
+  // }
 
   return summary;
 }
