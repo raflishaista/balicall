@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Film, HardDrive, Info, Lock, LockKeyhole, LogOut, Mic, Monitor, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserRound, Video, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Film, HardDrive, Info, Lock, LockKeyhole, LogOut, Mic, Monitor, MonitorUp, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserRound, Video, Volume2 } from 'lucide-react';
 import { initials } from './presentation';
 import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, qwenDiarizationForModel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
-import type { MeetingPreferences } from './preferences';
+import type { MeetingPreferences, ScreenShareResolution } from './preferences';
 import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
 import { ProfileEditor, UserAvatar } from './ProfileEditor';
@@ -145,6 +145,7 @@ export function SettingsPage({ section: propSection, onSectionChange, preference
               <PreferenceDevice label="Mikrofon default" Icon={Mic} kind="audioinput" value={draft.microphoneId} devices={devices} disabled={loading} onChange={microphoneId => update({ microphoneId })} />
               <PreferenceDevice label="Kamera default" Icon={Video} kind="videoinput" value={draft.cameraId} devices={devices} disabled={loading} onChange={cameraId => update({ cameraId })} />
               <PreferenceDevice label="Speaker / headset default" Icon={Volume2} kind="audiooutput" value={draft.outputId} devices={devices} disabled={loading || !outputSupported} onChange={outputId => update({ outputId })} />
+              <label className="settings-device-field"><span><MonitorUp size={17} />Resolusi berbagi layar default</span><select aria-label="Resolusi berbagi layar default" value={draft.screenShareResolution || '1080p'} onChange={event => update({ screenShareResolution: event.target.value as ScreenShareResolution })}><option value="1080p">1080p (Full HD - Tajam • Default)</option><option value="720p">720p (HD - Seimbang)</option><option value="540p">540p (Standar - Hemat data)</option><option value="360p">360p (Hemat kuota)</option><option value="1440p">1440p (2K Quad HD)</option><option value="original">Asli (Resolusi layar penuh)</option></select><small>Resolusi tangkapan layar awal saat kamu membagikan layar.</small></label>
               {!outputSupported && <p className="settings-field-help">Pemilihan output belum didukung browser ini. Suara mengikuti output sistem.</p>}
               {deviceError && <p className="settings-notice" role="alert">{deviceError}</p>}
               <button className="settings-refresh" type="button" disabled={loading} onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={15} />{loading ? 'Memuat perangkat…' : 'Perbarui daftar perangkat'}</button>

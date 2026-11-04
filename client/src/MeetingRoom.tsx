@@ -44,6 +44,7 @@ import { useMeasuredBox, useCompactMeeting } from './useMeetingGeometry';
 import { orderParticipants, participantPage } from './meetingLayout';
 import './MeetingLayout.css';
 import { ScreenShareStage } from './ScreenShareStage';
+import type { ScreenShareResolution } from './preferences';
 import { usePresentationView } from './usePresentationView';
 import { usePresentationFullscreen } from './usePresentationFullscreen';
 import { usePresentationEscape } from './usePresentationEscape';
@@ -134,6 +135,8 @@ interface MeetingRoomProps {
   screenShareError: string | null;
   screenShareSupported: boolean;
   onToggleScreenShare: () => Promise<void>;
+  screenShareResolution?: ScreenShareResolution;
+  onSelectScreenShareResolution?: (resolution: ScreenShareResolution) => void;
 
   devicePending: boolean;
   deviceError: string | null;
@@ -225,6 +228,8 @@ export function MeetingRoom({
   screenShareError,
   screenShareSupported,
   onToggleScreenShare,
+  screenShareResolution = '1080p',
+  onSelectScreenShareResolution,
   devicePending,
   deviceError,
   onOpenDevices,

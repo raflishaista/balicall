@@ -2,7 +2,8 @@ import { useMicrophoneLevel } from './useMicrophoneLevel';
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
 import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
 import { featureError } from './api';
-import { resolveTranscriptionPreferences } from './preferences';
+import { resolveTranscriptionPreferences, PREFERENCES_KEY } from './preferences';
+import type { ScreenShareResolution } from './preferences';
 import { usePreferredAudioOutput } from './usePreferredAudioOutput';
 import { TranscriptRealtimeBridge } from './TranscriptRealtimeBridge';
 import { useBackendTranscription } from './useBackendTranscription';
@@ -19,7 +20,7 @@ import { SEA_LIVE_MODEL, MING_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL, isLiveTranscript
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
-import { Track, ConnectionState, MediaDeviceFailure } from 'livekit-client';
+import { Track, ConnectionState, MediaDeviceFailure, ScreenSharePresets } from 'livekit-client';
 import { LiveKitRoom, RoomAudioRenderer, useParticipants, useLocalParticipant, useConnectionState, useTracks, useRoomContext, isTrackReference } from '@livekit/components-react';
 
 export function InCallView({ callDuration,
@@ -64,8 +65,13 @@ export function InCallView({ callDuration,
     },
     publishDefaults: {
       simulcast: true,
+      screenShareEncoding: ScreenSharePresets.h1080fps15.encoding,
+      degradationPreference: 'maintain-resolution',
     },
-    adaptiveStream: true,
+    adaptiveStream: {
+      pixelDensity: 'screen',
+      pauseVideoInBackground: false,
+    },
     dynacast: true,
   }));
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -186,8 +192,21 @@ function RoomContent({
   const camera = useCameraControl(localParticipant, connected, startWithCamera);
   const blur = useBackgroundBlur(localParticipant, isCameraEnabled, connected);
   const microphone = useMicrophoneControl(localParticipant, connected);
+  const [screenShareRes, setScreenShareRes] = useState<ScreenShareResolution>(() => callPreferences.screenShareResolution || '1080p');
+  const onScreenShareResChange = useCallback((res: ScreenShareResolution) => {
+    setScreenShareRes(res);
+    callPreferences.screenShareResolution = res;
+    try {
+      const raw = localStorage.getItem(PREFERENCES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        parsed.preferences = { ...parsed.preferences, screenShareResolution: res };
+        localStorage.setItem(PREFERENCES_KEY, JSON.stringify(parsed));
+      }
+    } catch {}
+  }, [callPreferences]);
   const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
-  const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported);
+  const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported, screenShareRes, onScreenShareResChange);
   const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
   const microphoneError = microphone.error || (!isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null);
   const isMuted = !isMicrophoneEnabled;
@@ -312,6 +331,8 @@ function RoomContent({
         screenSharePending={screenShare.pending}
         screenShareError={screenShare.error}
         screenShareSupported={screenShareSupported}
+        screenShareResolution={screenShare.resolution}
+        onSelectScreenShareResolution={screenShare.setResolution}
         onToggleScreenShare={screenShare.toggleScreenShare}
         devicePending={deviceSettings.pendingKind !== null}
         deviceError={
@@ -400,6 +421,8 @@ function RoomContent({
           onToggleLiveDiarization={onToggleLiveDiarization}
           batchDiarization={callPreferences.batchDiarization ?? true}
           onToggleBatchDiarization={onToggleBatchDiarization}
+          screenShareResolution={screenShare.resolution}
+          onSelectScreenShareResolution={screenShare.setResolution}
           onClose={closeDevices}
         />
       )}

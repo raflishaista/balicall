@@ -292,6 +292,8 @@ input::placeholder { color: #a1b1c6; }
 .screen-share-header svg { color: #4da6ff; flex-shrink: 0; }
 .screen-share-header label { display: flex; align-items: center; gap: 8px; }
 .screen-share-header select { max-width: 180px; min-width: 0; padding: 5px 8px; color: #e5f1fc; border: 1px solid #365972; border-radius: 5px; background: #17344a; }
+.presentation-resolution-select { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #c6d8e8; margin-left: 6px; }
+.presentation-resolution-select select { padding: 3px 6px; font-size: 11px; background: #12344e; border: 1px solid #365972; border-radius: 4px; color: #4da6ff; font-weight: 600; cursor: pointer; }
 .screen-share-content { display: flex; flex: 1; align-items: center; justify-content: center; position: relative; min-height: 120px; overflow: hidden; }
 .screen-share-content.is-zoomed { cursor: grab; }
 .screen-share-content.is-panning { cursor: grabbing; }

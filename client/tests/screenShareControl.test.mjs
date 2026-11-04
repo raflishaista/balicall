@@ -158,3 +158,94 @@ test('browser stop during publication removes the ended screen publication', asy
   await act(async () => { resume(); await operation; });
   assert.equal(unpublished, true);
 });
+
+test('screen share enforces detail contentHint, 1080p resolution, no simulcast, and maintain-resolution degradation preference', async t => {
+  const video = screenTrack();
+  video.mediaStreamTrack.contentHint = '';
+  let capturedOptions = null;
+  let publishedOptions = null;
+  const p = {
+    isScreenShareEnabled: false,
+    async createScreenTracks(options) {
+      capturedOptions = options;
+      return [video];
+    },
+    async publishTrack(track, options) {
+      publishedOptions = options;
+      this.isScreenShareEnabled = true;
+    },
+    async setScreenShareEnabled(enabled) {
+      this.isScreenShareEnabled = enabled;
+    },
+  };
+  const h = await mount(t, p);
+  await act(async () => { await h.share.toggleScreenShare(); });
+  assert.equal(capturedOptions.audio, false);
+  assert.equal(capturedOptions.contentHint, 'detail');
+  assert.equal(capturedOptions.resolution.width, 1920);
+  assert.equal(capturedOptions.resolution.height, 1080);
+  assert.equal(video.mediaStreamTrack.contentHint, 'detail');
+  assert.equal(publishedOptions.source, 'screen_share');
+  assert.equal(publishedOptions.simulcast, false);
+  assert.equal(publishedOptions.degradationPreference, 'maintain-resolution');
+  assert.ok(publishedOptions.screenShareEncoding.maxBitrate >= 2000000);
+});
+
+test('screen share allows selecting resolution from 540p, 720p, 1080p, 360p, 1440p, and original', async t => {
+  const video = screenTrack();
+  let captured = null;
+  let published = null;
+  const p = {
+    isScreenShareEnabled: false,
+    async createScreenTracks(options) {
+      captured = options;
+      return [video];
+    },
+    async publishTrack(track, options) {
+      published = options;
+      this.isScreenShareEnabled = true;
+    },
+    async setScreenShareEnabled(enabled) {
+      this.isScreenShareEnabled = enabled;
+    },
+  };
+
+  let shareRef = null;
+  function Harness({ res }) {
+    const share = useScreenShareControl(p, true, true, res);
+    React.useEffect(() => { shareRef = share; });
+    return null;
+  }
+
+  let root;
+  await act(async () => { root = create(React.createElement(Harness, { res: '720p' })); });
+  t.after(async () => { await act(async () => root.unmount()); });
+
+  assert.equal(shareRef.resolution, '720p');
+
+  // Test 720p capture
+  await act(async () => { await shareRef.toggleScreenShare(); });
+  assert.equal(captured.resolution.width, 1280);
+  assert.equal(captured.resolution.height, 720);
+  assert.equal(published.screenShareEncoding.maxBitrate, 1500000);
+
+  // Stop share
+  await act(async () => { await shareRef.toggleScreenShare(); });
+
+  // Test setResolution to 540p
+  await act(async () => { shareRef.setResolution('540p'); });
+  assert.equal(shareRef.resolution, '540p');
+  await act(async () => { await shareRef.toggleScreenShare(); });
+  assert.equal(captured.resolution.width, 960);
+  assert.equal(captured.resolution.height, 540);
+  assert.equal(published.screenShareEncoding.maxBitrate, 800000);
+
+  // Stop share
+  await act(async () => { await shareRef.toggleScreenShare(); });
+
+  // Test original (uncapped)
+  await act(async () => { await shareRef.toggleScreenShare('original'); });
+  assert.equal(shareRef.resolution, 'original');
+  assert.equal(captured.resolution, undefined);
+  assert.equal(published.screenShareEncoding.maxBitrate, 7000000);
+});
