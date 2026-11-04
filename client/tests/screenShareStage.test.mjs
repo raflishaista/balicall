@@ -96,6 +96,9 @@ test('ScreenShareStage provides quality options for remote viewers and shows cir
 
   // Verify option values
   const optionValues = qualitySelect.findAllByType('option').map(o => o.props.value);
+  assert.ok(optionValues.includes('original'));
+  assert.ok(optionValues.includes('4k'));
+  assert.ok(optionValues.includes('1440p'));
   assert.ok(optionValues.includes('1080p'));
   assert.ok(optionValues.includes('720p'));
   assert.ok(optionValues.includes('540p'));

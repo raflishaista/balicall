@@ -121,9 +121,9 @@ test('screen share resolution preference round-trips and sanitizes invalid value
   writePreferences(storage, choices);
   assert.equal(readPreferences(storage).preferences.screenShareResolution, '720p');
 
-  for (const valid of ['360p', '540p', '720p', '1080p', '1440p', 'original']) {
+  for (const valid of ['360p', '540p', '720p', '1080p', '1440p', '4k', 'original']) {
     assert.equal(normalizePreferences({ screenShareResolution: valid }).screenShareResolution, valid);
   }
-  assert.equal(normalizePreferences({ screenShareResolution: '4k' }).screenShareResolution, '1080p');
+  assert.equal(normalizePreferences({ screenShareResolution: '8k' }).screenShareResolution, '1080p');
   assert.equal(normalizePreferences({ screenShareResolution: 1080 }).screenShareResolution, '1080p');
 });

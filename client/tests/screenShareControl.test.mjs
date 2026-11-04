@@ -258,6 +258,15 @@ test('screen share allows selecting resolution and updates active track constrai
   await act(async () => { await shareRef.toggleScreenShare('original'); });
   assert.equal(shareRef.resolution, 'original');
   assert.equal(captured.resolution, undefined);
-  assert.equal(published.screenShareEncoding.maxBitrate, 7000000);
+  assert.equal(published.screenShareEncoding.maxBitrate, 9000000);
+  assert.equal(published.simulcast, true);
+
+  // Stop share and test 4K
+  await act(async () => { await shareRef.toggleScreenShare(); });
+  await act(async () => { await shareRef.toggleScreenShare('4k'); });
+  assert.equal(shareRef.resolution, '4k');
+  assert.equal(captured.resolution.width, 3840);
+  assert.equal(captured.resolution.height, 2160);
+  assert.equal(published.screenShareEncoding.maxBitrate, 9000000);
   assert.equal(published.simulcast, true);
 });

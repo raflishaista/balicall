@@ -1,7 +1,7 @@
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { MING_LIVE_MODEL, SEA_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL } from './modelSelection.ts';
 
-export type ScreenShareResolution = '360p' | '540p' | '720p' | '1080p' | '1440p' | 'original';
+export type ScreenShareResolution = '360p' | '540p' | '720p' | '1080p' | '1440p' | '4k' | 'original';
 
 export interface MeetingPreferences {
   microphoneEnabled: boolean;
@@ -94,7 +94,7 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   if (input.defaultRecordingDiarizer === 'none' || input.defaultRecordingDiarizer === 'nemotron' || input.defaultRecordingDiarizer === 'pyannote') {
     result.defaultRecordingDiarizer = input.defaultRecordingDiarizer;
   }
-  if (input.screenShareResolution === '360p' || input.screenShareResolution === '540p' || input.screenShareResolution === '720p' || input.screenShareResolution === '1080p' || input.screenShareResolution === '1440p' || input.screenShareResolution === 'original') {
+  if (input.screenShareResolution === '360p' || input.screenShareResolution === '540p' || input.screenShareResolution === '720p' || input.screenShareResolution === '1080p' || input.screenShareResolution === '1440p' || input.screenShareResolution === '4k' || input.screenShareResolution === 'original') {
     result.screenShareResolution = input.screenShareResolution;
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {
