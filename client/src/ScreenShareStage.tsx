@@ -8,7 +8,7 @@ import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import type { ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch';
 import { useTrackUnavailable } from './useTrackUnavailable';
 
-export type ReceiveQuality = '1080p' | '720p' | '540p' | '360p' | 'auto' | 'high' | 'med' | 'low';
+export type ReceiveQuality = 'original' | '4k' | '1440p' | '1080p' | '720p' | '540p' | '360p' | 'auto' | 'high' | 'med' | 'low';
 
 function screenShareKey(track: TrackReference) {
   return `${track.participant.identity}:${track.publication.trackSid}`;
@@ -16,6 +16,12 @@ function screenShareKey(track: TrackReference) {
 
 export function getQualityLabel(q: string): string {
   switch (q) {
+    case 'original':
+      return 'Asli';
+    case '4k':
+      return '4K';
+    case '1440p':
+      return '1440p';
     case '1080p':
     case 'high':
       return '1080p';
@@ -27,10 +33,6 @@ export function getQualityLabel(q: string): string {
     case '360p':
     case 'low':
       return '360p';
-    case '1440p':
-      return '1440p';
-    case 'original':
-      return 'Asli';
     case 'auto':
       return 'Otomatis';
     default:
@@ -55,7 +57,7 @@ export function ScreenShareStage({
   const activeKey = active ? screenShareKey(active) : null;
 
   const transformRef = useRef<ReactZoomPanPinchContentRef | null>(null);
-  const [receiveQuality, setReceiveQuality] = useState<ReceiveQuality>('1080p');
+  const [receiveQuality, setReceiveQuality] = useState<ReceiveQuality>('original');
   const [qualityApplying, setQualityApplying] = useState(false);
   const [qualityApplied, setQualityApplied] = useState(false);
   const [appliedLabel, setAppliedLabel] = useState('');
@@ -145,12 +147,13 @@ export function ScreenShareStage({
             disabled={qualityApplying}
             onChange={event => handlePresenterResolutionChange(event.target.value as ScreenShareResolution)}
           >
-            <option value="1080p">1080p</option>
-            <option value="720p">720p</option>
-            <option value="540p">540p</option>
-            <option value="360p">360p</option>
-            <option value="1440p">1440p</option>
-            <option value="original">Asli</option>
+            <option value="original">Asli (Resolusi Layar Penuh • Paling Tajam)</option>
+            <option value="4k">4K (Ultra HD • 2160p)</option>
+            <option value="1440p">1440p (2K Quad HD)</option>
+            <option value="1080p">1080p (Full HD)</option>
+            <option value="720p">720p (HD)</option>
+            <option value="540p">540p (Standar)</option>
+            <option value="360p">360p (Hemat Kuota)</option>
           </select>
           {qualityApplying && (
             <span className="circular-spinner-inline" title="Menerapkan resolusi..." aria-hidden="true">
@@ -174,7 +177,10 @@ export function ScreenShareStage({
               disabled={qualityApplying}
               onChange={event => handleViewerQualityChange(event.target.value as ReceiveQuality)}
             >
-              <option value="1080p">1080p (Maksimal)</option>
+              <option value="original">Asli (Resolusi Penuh • Paling Tajam)</option>
+              <option value="4k">4K (Ultra HD • 2160p)</option>
+              <option value="1440p">1440p (2K Quad HD)</option>
+              <option value="1080p">1080p (Full HD)</option>
               <option value="720p">720p (HD)</option>
               <option value="540p">540p (Standar)</option>
               <option value="360p">360p (Hemat Kuota)</option>
@@ -255,7 +261,7 @@ function ScreenShareVideo({
   presenter,
   transformRef,
   scale,
-  receiveQuality = '1080p',
+  receiveQuality = 'original',
   onScaleChange,
   onVideoResized,
 }: {
@@ -276,26 +282,26 @@ function ScreenShareVideo({
     const pub = track.publication as any;
     if (!pub) return;
     try {
-      if (receiveQuality === 'low' || receiveQuality === '360p') {
+      if (receiveQuality === 'original' || receiveQuality === 'auto') {
         if (typeof pub.setVideoQuality === 'function') {
-          pub.setVideoQuality(VideoQuality.LOW);
+          pub.setVideoQuality(VideoQuality.HIGH);
         }
         if (typeof pub.setVideoDimensions === 'function') {
-          pub.setVideoDimensions({ width: 640, height: 360 });
+          pub.setVideoDimensions({ width: 3840, height: 2160 });
         }
-      } else if (receiveQuality === '540p') {
+      } else if (receiveQuality === '4k') {
         if (typeof pub.setVideoQuality === 'function') {
-          pub.setVideoQuality(VideoQuality.MEDIUM);
+          pub.setVideoQuality(VideoQuality.HIGH);
         }
         if (typeof pub.setVideoDimensions === 'function') {
-          pub.setVideoDimensions({ width: 960, height: 540 });
+          pub.setVideoDimensions({ width: 3840, height: 2160 });
         }
-      } else if (receiveQuality === 'med' || receiveQuality === '720p') {
+      } else if (receiveQuality === '1440p') {
         if (typeof pub.setVideoQuality === 'function') {
-          pub.setVideoQuality(VideoQuality.MEDIUM);
+          pub.setVideoQuality(VideoQuality.HIGH);
         }
         if (typeof pub.setVideoDimensions === 'function') {
-          pub.setVideoDimensions({ width: 1280, height: 720 });
+          pub.setVideoDimensions({ width: 2560, height: 1440 });
         }
       } else if (receiveQuality === 'high' || receiveQuality === '1080p') {
         if (typeof pub.setVideoQuality === 'function') {
@@ -304,9 +310,26 @@ function ScreenShareVideo({
         if (typeof pub.setVideoDimensions === 'function') {
           pub.setVideoDimensions({ width: 1920, height: 1080 });
         }
-      } else if (receiveQuality === 'auto') {
+      } else if (receiveQuality === 'med' || receiveQuality === '720p') {
         if (typeof pub.setVideoQuality === 'function') {
-          pub.setVideoQuality(VideoQuality.HIGH);
+          pub.setVideoQuality(VideoQuality.MEDIUM);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 1280, height: 720 });
+        }
+      } else if (receiveQuality === '540p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.MEDIUM);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 960, height: 540 });
+        }
+      } else if (receiveQuality === 'low' || receiveQuality === '360p') {
+        if (typeof pub.setVideoQuality === 'function') {
+          pub.setVideoQuality(VideoQuality.LOW);
+        }
+        if (typeof pub.setVideoDimensions === 'function') {
+          pub.setVideoDimensions({ width: 640, height: 360 });
         }
       }
     } catch {

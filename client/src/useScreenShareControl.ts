@@ -38,23 +38,30 @@ export const SCREEN_SHARE_PRESETS: Record<ScreenShareResolution, ScreenSharePres
   '1080p': {
     id: '1080p',
     label: '1080p (Full HD - Tajam)',
-    detail: '1920×1080 • 15 FPS • ~2.5 Mbps',
+    detail: '1920×1080 • 15 FPS • ~3.5 Mbps',
     resolution: ScreenSharePresets.h1080fps15.resolution,
-    encoding: ScreenSharePresets.h1080fps15.encoding,
+    encoding: { maxBitrate: 3500000, maxFramerate: 15, priority: 'medium' },
   },
   '1440p': {
     id: '1440p',
     label: '1440p (2K Quad HD)',
-    detail: '2560×1440 • 15 FPS • ~5.0 Mbps',
+    detail: '2560×1440 • 15 FPS • ~6.0 Mbps',
     resolution: { width: 2560, height: 1440 },
-    encoding: { maxBitrate: 5000000, maxFramerate: 15, priority: 'medium' },
+    encoding: { maxBitrate: 6000000, maxFramerate: 15, priority: 'medium' },
+  },
+  '4k': {
+    id: '4k',
+    label: '4K (Ultra HD - 2160p)',
+    detail: '3840×2160 • 15 FPS • ~9.0 Mbps',
+    resolution: { width: 3840, height: 2160 },
+    encoding: { maxBitrate: 9000000, maxFramerate: 15, priority: 'medium' },
   },
   'original': {
     id: 'original',
-    label: 'Asli (Resolusi Layar Penuh)',
-    detail: 'Resolusi layar native • 30 FPS • ~7.0 Mbps',
+    label: 'Asli (Resolusi Layar Penuh • Native)',
+    detail: 'Resolusi layar native • 30 FPS • ~9.0 Mbps',
     resolution: undefined,
-    encoding: ScreenSharePresets.original.encoding,
+    encoding: { maxBitrate: 9000000, maxFramerate: 30, priority: 'medium' },
   },
 };
 
@@ -70,12 +77,17 @@ export function getScreenShareSimulcastLayers(res: ScreenShareResolution): Video
         new VideoPreset(960, 540, 800000, 15, 'medium'),
       ];
     case '1080p':
-    case '1440p':
-    case 'original':
-    default:
       return [
         ScreenSharePresets.h360fps15,
         ScreenSharePresets.h720fps15,
+      ];
+    case '1440p':
+    case '4k':
+    case 'original':
+    default:
+      return [
+        ScreenSharePresets.h720fps15,
+        ScreenSharePresets.h1080fps15,
       ];
   }
 }
@@ -141,7 +153,8 @@ export function useScreenShareControl(
             params.encodings[0].maxBitrate = preset.encoding.maxBitrate;
             params.encodings[0].maxFramerate = preset.encoding.maxFramerate;
             let scale = 1;
-            if (next === '720p') scale = 1.5;
+            if (next === '1080p') scale = 1;
+            else if (next === '720p') scale = 1.5;
             else if (next === '540p') scale = 2;
             else if (next === '360p') scale = 3;
             params.encodings[0].scaleResolutionDownBy = scale;
@@ -192,7 +205,7 @@ export function useScreenShareControl(
         const preset = SCREEN_SHARE_PRESETS[chosenRes] || SCREEN_SHARE_PRESETS['1080p'];
         // Capture directly from the click to preserve browser user activation.
         // Request 'detail' contentHint and configured preset resolution to prioritize sharp text over framerate drops.
-        // Own tracks before publishing so leaving during the picker cannot leak capture.
+        // For 'original', resolution is undefined so native screen resolution is captured without downscaling.
         tracks = await participant.createScreenTracks({
           audio: false,
           contentHint: 'detail',
@@ -212,7 +225,7 @@ export function useScreenShareControl(
         const isEnded = () => video.mediaStreamTrack.readyState === 'ended';
         if (isEnded()) { tracks.forEach(track => track.stop()); return; }
         // Publish with simulcast enabled and screenShareSimulcastLayers configured
-        // so viewers can choose their preferred quality level (1080p, 720p, 540p, 360p).
+        // so viewers can choose their preferred quality level (original, 4k, 1440p, 1080p, 720p, 540p, 360p).
         const simulcastLayers = getScreenShareSimulcastLayers(chosenRes);
         await participant.publishTrack(video, {
           source: Track.Source.ScreenShare,

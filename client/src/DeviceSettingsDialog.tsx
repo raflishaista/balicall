@@ -92,6 +92,7 @@ export function DeviceSettingsDialog({
             <option value="720p">720p (HD - Seimbang)</option>
             <option value="540p">540p (Standar - Hemat data)</option>
             <option value="360p">360p (Hemat kuota)</option>
+            <option value="4k">4K (Ultra HD - 2160p)</option>
             <option value="1440p">1440p (2K Quad HD)</option>
             <option value="original">Asli (Resolusi layar penuh)</option>
           </select>
