@@ -66,10 +66,10 @@ export function InCallView({ callDuration,
     publishDefaults: {
       simulcast: true,
       screenShareEncoding: ScreenSharePresets.h1080fps15.encoding,
-      degradationPreference: 'maintain-resolution',
+      degradationPreference: 'maintain-resolution' as const,
     },
     adaptiveStream: {
-      pixelDensity: 'screen',
+      pixelDensity: 'screen' as const,
       pauseVideoInBackground: false,
     },
     dynacast: true,

@@ -159,7 +159,7 @@ test('browser stop during publication removes the ended screen publication', asy
   assert.equal(unpublished, true);
 });
 
-test('screen share enforces detail contentHint, 1080p resolution, no simulcast, and maintain-resolution degradation preference', async t => {
+test('screen share enforces detail contentHint, 1080p resolution, simulcast layers, and maintain-resolution degradation preference', async t => {
   const video = screenTrack();
   video.mediaStreamTrack.contentHint = '';
   let capturedOptions = null;
@@ -186,13 +186,22 @@ test('screen share enforces detail contentHint, 1080p resolution, no simulcast, 
   assert.equal(capturedOptions.resolution.height, 1080);
   assert.equal(video.mediaStreamTrack.contentHint, 'detail');
   assert.equal(publishedOptions.source, 'screen_share');
-  assert.equal(publishedOptions.simulcast, false);
+  assert.equal(publishedOptions.simulcast, true);
+  assert.ok(Array.isArray(publishedOptions.screenShareSimulcastLayers));
+  assert.ok(publishedOptions.screenShareSimulcastLayers.length > 0);
   assert.equal(publishedOptions.degradationPreference, 'maintain-resolution');
   assert.ok(publishedOptions.screenShareEncoding.maxBitrate >= 2000000);
 });
 
-test('screen share allows selecting resolution from 540p, 720p, 1080p, 360p, 1440p, and original', async t => {
+test('screen share allows selecting resolution and updates active track constraints dynamically', async t => {
   const video = screenTrack();
+  let appliedConstraints = null;
+  let senderParameters = null;
+  video.mediaStreamTrack.applyConstraints = async (c) => { appliedConstraints = c; };
+  video.sender = {
+    getParameters: () => ({ encodings: [{ maxBitrate: 2500000, maxFramerate: 15 }] }),
+    setParameters: async (p) => { senderParameters = p; },
+  };
   let captured = null;
   let published = null;
   const p = {
@@ -207,6 +216,10 @@ test('screen share allows selecting resolution from 540p, 720p, 1080p, 360p, 144
     },
     async setScreenShareEnabled(enabled) {
       this.isScreenShareEnabled = enabled;
+    },
+    getTrackPublication(source) {
+      if (source === 'screen_share') return { track: video };
+      return null;
     },
   };
 
@@ -228,17 +241,15 @@ test('screen share allows selecting resolution from 540p, 720p, 1080p, 360p, 144
   assert.equal(captured.resolution.width, 1280);
   assert.equal(captured.resolution.height, 720);
   assert.equal(published.screenShareEncoding.maxBitrate, 1500000);
+  assert.equal(published.simulcast, true);
 
-  // Stop share
-  await act(async () => { await shareRef.toggleScreenShare(); });
-
-  // Test setResolution to 540p
-  await act(async () => { shareRef.setResolution('540p'); });
+  // In-flight resolution switch to 540p while sharing is active
+  await act(async () => { await shareRef.setResolution('540p'); });
   assert.equal(shareRef.resolution, '540p');
-  await act(async () => { await shareRef.toggleScreenShare(); });
-  assert.equal(captured.resolution.width, 960);
-  assert.equal(captured.resolution.height, 540);
-  assert.equal(published.screenShareEncoding.maxBitrate, 800000);
+  assert.equal(appliedConstraints.width.ideal, 960);
+  assert.equal(appliedConstraints.height.ideal, 540);
+  assert.equal(senderParameters.encodings[0].scaleResolutionDownBy, 2);
+  assert.equal(senderParameters.encodings[0].maxBitrate, 800000);
 
   // Stop share
   await act(async () => { await shareRef.toggleScreenShare(); });
@@ -248,4 +259,5 @@ test('screen share allows selecting resolution from 540p, 720p, 1080p, 360p, 144
   assert.equal(shareRef.resolution, 'original');
   assert.equal(captured.resolution, undefined);
   assert.equal(published.screenShareEncoding.maxBitrate, 7000000);
+  assert.equal(published.simulcast, true);
 });

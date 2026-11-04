@@ -309,6 +309,16 @@ input::placeholder { color: #a1b1c6; }
 .screen-share-zoom-badge:hover { background: #1c4b72; border-color: #4da6ff; color: #fff; }
 .screen-share-zoom-badge .reset-icon { color: #4da6ff; }
 .screen-share-content p { padding: 20px; text-align: center; color: #c6d8e8; font-size: 12px; }
+@keyframes circular-rotate { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+@keyframes circular-pop-in { 0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+.circular-progress-svg { animation: circular-rotate 0.9s linear infinite; display: inline-block; vertical-align: middle; flex-shrink: 0; }
+.circular-progress-bg { stroke: rgba(255, 255, 255, 0.2); }
+.circular-progress-meter { stroke: #38bdf8; transform-origin: 50% 50%; }
+.circular-spinner-inline { display: inline-flex; align-items: center; justify-content: center; margin-left: 4px; }
+.screen-share-resolution-pill { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 10px; padding: 10px 18px; background: rgba(10, 25, 42, 0.94); border: 1px solid #38bdf8; border-radius: 30px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 25; color: #f0fdf4; font-size: 13px; font-weight: 500; pointer-events: none; animation: circular-pop-in 0.22s ease-out forwards; }
+.screen-share-resolution-pill.is-finished { border-color: #34d399; color: #ecfdf5; }
+.screen-share-resolution-pill .circular-finish-icon { width: 22px; height: 22px; border-radius: 50%; background: #10b981; color: #ffffff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.screen-share-resolution-pill .resolution-pill-text { white-space: nowrap; letter-spacing: 0.2px; }
 .screen-share-hint { padding: 0 22px 12px; color: #aac2d6; font-size: 11px; }
 .device-dialog { width: min(760px,calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; margin: auto; padding: 26px; overflow-y: auto; color: #102d4a; border: 1px solid #d8e5f2; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px #03172855; }
 .device-dialog::backdrop { background: #031728a6; }

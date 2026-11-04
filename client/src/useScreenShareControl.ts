@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ScreenSharePresets, Track } from 'livekit-client';
-import type { LocalParticipant, LocalTrack } from 'livekit-client';
+import { ScreenSharePresets, Track, VideoPreset } from 'livekit-client';
+import type { LocalParticipant, LocalTrack, LocalVideoTrack } from 'livekit-client';
 import type { ScreenShareResolution } from './preferences';
 
 export { type ScreenShareResolution };
@@ -10,7 +10,7 @@ export interface ScreenSharePresetConfig {
   label: string;
   detail: string;
   resolution?: { width: number; height: number };
-  encoding: { maxBitrate: number; maxFramerate: number; priority?: RTCPriorityType };
+  encoding: { maxBitrate: number; maxFramerate?: number; priority?: RTCPriorityType };
 }
 
 export const SCREEN_SHARE_PRESETS: Record<ScreenShareResolution, ScreenSharePresetConfig> = {
@@ -58,6 +58,28 @@ export const SCREEN_SHARE_PRESETS: Record<ScreenShareResolution, ScreenSharePres
   },
 };
 
+export function getScreenShareSimulcastLayers(res: ScreenShareResolution): VideoPreset[] {
+  switch (res) {
+    case '360p':
+      return [];
+    case '540p':
+      return [ScreenSharePresets.h360fps15];
+    case '720p':
+      return [
+        ScreenSharePresets.h360fps15,
+        new VideoPreset(960, 540, 800000, 15, 'medium'),
+      ];
+    case '1080p':
+    case '1440p':
+    case 'original':
+    default:
+      return [
+        ScreenSharePresets.h360fps15,
+        ScreenSharePresets.h720fps15,
+      ];
+  }
+}
+
 export function screenShareErrorMessage(error: unknown): string {
   switch (error instanceof Error ? error.name : '') {
     case 'NotAllowedError':
@@ -95,10 +117,42 @@ export function useScreenShareControl(
     setResolutionState(initialResolution);
   }, [initialResolution]);
 
-  const setResolution = useCallback((next: ScreenShareResolution) => {
+  const setResolution = useCallback(async (next: ScreenShareResolution) => {
     setResolutionState(next);
     onResolutionChange?.(next);
-  }, [onResolutionChange]);
+
+    if (participant?.isScreenShareEnabled) {
+      try {
+        const pub = participant.getTrackPublication(Track.Source.ScreenShare);
+        const videoTrack = pub?.track as LocalVideoTrack | undefined;
+        const preset = SCREEN_SHARE_PRESETS[next] || SCREEN_SHARE_PRESETS['1080p'];
+        if (videoTrack?.mediaStreamTrack && typeof videoTrack.mediaStreamTrack.applyConstraints === 'function') {
+          if (preset.resolution) {
+            await videoTrack.mediaStreamTrack.applyConstraints({
+              width: { ideal: preset.resolution.width, max: preset.resolution.width },
+              height: { ideal: preset.resolution.height, max: preset.resolution.height },
+              frameRate: { ideal: preset.encoding.maxFramerate, max: preset.encoding.maxFramerate },
+            }).catch(() => {});
+          }
+        }
+        if (videoTrack?.sender && typeof videoTrack.sender.getParameters === 'function' && typeof videoTrack.sender.setParameters === 'function') {
+          const params = videoTrack.sender.getParameters();
+          if (params?.encodings && params.encodings.length > 0) {
+            params.encodings[0].maxBitrate = preset.encoding.maxBitrate;
+            params.encodings[0].maxFramerate = preset.encoding.maxFramerate;
+            let scale = 1;
+            if (next === '720p') scale = 1.5;
+            else if (next === '540p') scale = 2;
+            else if (next === '360p') scale = 3;
+            params.encodings[0].scaleResolutionDownBy = scale;
+            await videoTrack.sender.setParameters(params).catch(() => {});
+          }
+        }
+      } catch {
+        // Safe fallback if browser or platform restricts runtime stream reconfiguration
+      }
+    }
+  }, [participant, onResolutionChange]);
 
   useEffect(() => {
     mounted.current = true;
@@ -157,13 +211,15 @@ export function useScreenShareControl(
         }
         const isEnded = () => video.mediaStreamTrack.readyState === 'ended';
         if (isEnded()) { tracks.forEach(track => track.stop()); return; }
-        // Publish without simulcast downscaling and with 'maintain-resolution' degradation preference.
-        // This prevents the browser encoder from halving resolution into blurry text when movement occurs.
+        // Publish with simulcast enabled and screenShareSimulcastLayers configured
+        // so viewers can choose their preferred quality level (1080p, 720p, 540p, 360p).
+        const simulcastLayers = getScreenShareSimulcastLayers(chosenRes);
         await participant.publishTrack(video, {
           source: Track.Source.ScreenShare,
-          simulcast: false,
+          simulcast: true,
           degradationPreference: 'maintain-resolution',
           screenShareEncoding: preset.encoding,
+          screenShareSimulcastLayers: simulcastLayers,
         });
         if (!isCurrent() || isEnded()) {
           tracks.forEach(track => track.stop());
