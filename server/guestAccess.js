@@ -4,13 +4,22 @@ import { hashToken } from './authStore.js';
 export function createGuestAccess(store) {
   const user = (meeting, person) => ({ employeeId: person.employeeId, name: person.employeeName,
     email: '', department: 'Tamu', position: 'Tamu rapat', isGuest: true,
-    guestMeetingId: meeting.id, guestRoomName: meeting.roomName });
+    guestMeetingId: meeting.id, guestRoomName: meeting.roomName, guestRoomCode: meeting.roomCode });
   return {
     join({ name, inviteCode } = {}) {
-      if (typeof name !== 'string' || !name.trim() || name.length > 80 || /[\x00-\x1f\x7f]/.test(name) || typeof inviteCode !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(inviteCode.trim())) {
+      const code = typeof inviteCode === 'string' ? inviteCode.trim() : '';
+      const isRoomCode = /^[A-Za-z0-9]{5}$/.test(code);
+      const isLegacyInvite = /^[A-Za-z0-9_-]{22}$/.test(code);
+      if (typeof name !== 'string' || !name.trim() || name.length > 80 || /[\x00-\x1f\x7f]/.test(name) || (!isRoomCode && !isLegacyInvite)) {
         throw Object.assign(new Error('Isi nama dan kode undangan tamu yang valid.'), { status: 400 });
       }
-      const meeting = [...store.meetings.values()].find(m => m.guestInviteCode === inviteCode.trim() && m.status === 'active' && !m.attendanceFinalization && !m.closingForUploads);
+      const upperCode = code.toUpperCase();
+      const meeting = [...store.meetings.values()].find(m =>
+        m.status === 'active' &&
+        !m.attendanceFinalization &&
+        !m.closingForUploads &&
+        (m.guestInviteCode === code || (isRoomCode && m.roomCode && m.roomCode.toUpperCase() === upperCode))
+      );
       if (!meeting) throw Object.assign(new Error('Undangan tidak tersedia atau rapat sudah selesai.'), { status: 404 });
       const token = randomBytes(32).toString('base64url');
       const person = { employeeId: 'GUEST-' + randomUUID(), employeeName: name.trim() + ' (Tamu)', department: 'Tamu', isGuest: true,

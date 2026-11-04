@@ -1,5 +1,7 @@
 import type { JoinMediaChoices } from './usePreJoinMedia';
-import { SEA_LIVE_MODEL } from './modelSelection.ts';
+import { MING_LIVE_MODEL, SEA_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL } from './modelSelection.ts';
+
+export type ScreenShareResolution = '360p' | '540p' | '720p' | '1080p' | '1440p' | 'original';
 
 export interface MeetingPreferences {
   microphoneEnabled: boolean;
@@ -34,6 +36,7 @@ export interface MeetingPreferences {
   requireSpeakApprovalForGuests: boolean;
   autoReleaseDevicesOnLeave: boolean;
   showSecurityBadge: boolean;
+  screenShareResolution: ScreenShareResolution;
 }
 
 export const PREFERENCES_KEY = 'sentra.meeting-preferences.v1';
@@ -62,6 +65,7 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   requireSpeakApprovalForGuests: false,
   autoReleaseDevicesOnLeave: true,
   showSecurityBadge: true,
+  screenShareResolution: '1080p',
 };
 
 export function normalizePreferences(value: unknown): MeetingPreferences {
@@ -89,6 +93,9 @@ export function normalizePreferences(value: unknown): MeetingPreferences {
   }
   if (input.defaultRecordingDiarizer === 'none' || input.defaultRecordingDiarizer === 'nemotron' || input.defaultRecordingDiarizer === 'pyannote') {
     result.defaultRecordingDiarizer = input.defaultRecordingDiarizer;
+  }
+  if (input.screenShareResolution === '360p' || input.screenShareResolution === '540p' || input.screenShareResolution === '720p' || input.screenShareResolution === '1080p' || input.screenShareResolution === '1440p' || input.screenShareResolution === 'original') {
+    result.screenShareResolution = input.screenShareResolution;
   }
   for (const key of ['microphoneId', 'cameraId', 'outputId'] as const) {
     if (typeof input[key] === 'string' && input[key].trim() && input[key].length <= 256) result[key] = input[key].trim();
@@ -119,21 +126,24 @@ export function mediaChoices(preferences: MeetingPreferences, qwenDiarizationRea
     microphoneId: preferences.microphoneId, cameraId: preferences.cameraId,
     sharedRoomMic: supportsSharedMicrophone(preferences.transcriptionModel, qwenDiarizationReady) && (preferences.sharedRoomMic ?? false),
     liveDiarization: preferences.liveDiarization ?? true,
-    batchDiarization: preferences.transcriptionModel.startsWith('qwen3-asr-') || [SEA_LIVE_MODEL].includes(preferences.transcriptionModel) ? false : preferences.batchDiarization ?? true };
+    batchDiarization: preferences.transcriptionModel.startsWith('qwen3-asr-') || [MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(preferences.transcriptionModel) ? false : preferences.batchDiarization ?? true };
 }
 
 export function supportsSharedMicrophone(model?: string, qwenDiarizationReady = false) {
+  if (model === 'qwen3-asr-0.6b-gguf-q8') return false;
+  if (model === MING_LIVE_MODEL) return false;
   if (model === SEA_LIVE_MODEL) return qwenDiarizationReady;
   return !model?.startsWith('qwen3-asr-') || qwenDiarizationReady;
 }
 
-export function qwenDiarizationForModel(model: string | undefined, health?: {qwenDiarizationReady?: boolean; qwenLiveDiarizationReady?: boolean; seaLiveDiarizationReady?: boolean} | null) {
-  return Boolean(model === SEA_LIVE_MODEL ? health?.seaLiveDiarizationReady : model === 'qwen3-asr-0.6b-live' ? health?.qwenLiveDiarizationReady : health?.qwenDiarizationReady);
+export function qwenDiarizationForModel(model: string | undefined, health?: {qwenDiarizationReady?: boolean; qwenLiveDiarizationReady?: boolean; qwenGgufLiveDiarizationReady?: boolean; seaLiveDiarizationReady?: boolean} | null) {
+  return Boolean(model === QWEN_GGUF_LIVE_MODEL ? health?.qwenGgufLiveDiarizationReady : model === SEA_LIVE_MODEL ? health?.seaLiveDiarizationReady : model === 'qwen3-asr-0.6b-live' ? health?.qwenLiveDiarizationReady : health?.qwenDiarizationReady);
 }
 
 export const QWEN_LIVE_DIARIZATION_NOTICE = 'Qwen Live + Nemotron: nama pembicara bisa diedit manual di transkrip. Sesi mikrofon dipertahankan hingga 45 detik saat mute atau koneksi terputus. Setelah sesi berakhir atau worker restart, label perlu diperiksa lagi. Suara bertumpuk tetap ditandai.';
 
 export const QWEN_TRANSCRIPTION_NOTICE = 'Qwen masih eksperimental. Layanan diarization belum siap; transkrip memakai nama akun peserta.';
+export const QWEN_GGUF_NOTICE = 'Qwen Q8 memproses audio per potongan di PC. Diarization belum tersedia; transkrip menggunakan nama akun peserta.';
 export const QWEN_DIARIZATION_NOTICE = 'Qwen + Nemotron eksperimental: label pembicara berlaku per potongan audio, bukan nama orang atau identitas tetap sepanjang rapat. Suara bertumpuk belum dipisahkan. Batch pasca-rapat belum tersedia untuk Qwen.';
 
 export function resolveTranscriptionPreferences(preferences: MeetingPreferences, configured: boolean, models: string[], defaultModel: string, defaultProvider: 'browser' | 'server') {
@@ -149,7 +159,10 @@ export function resolveTranscriptionPreferences(preferences: MeetingPreferences,
 }
 
 export function transcriptionModelLabel(model: string) {
+  if (model === QWEN_GGUF_LIVE_MODEL) return 'Qwen3-ASR 0.6B · Q8 + Nemotron (Lokal)';
+  if (model === 'qwen3-asr-0.6b-gguf-q8') return 'Qwen3-ASR 0.6B · GGUF Q8 (Lokal, per potongan)';
   if (model === SEA_LIVE_MODEL) return 'SEA-ASR-ID · Live (Indonesia)';
+  if (model === MING_LIVE_MODEL) return 'Ming ASR Tiny · Live (Inggris)';
   return model === 'qwen3-asr-0.6b-live' ? 'Qwen3-ASR 0.6B · Live + Diarization'
     : model === 'qwen3-asr-0.6b' ? 'Qwen3-ASR-0.6B · Eksperimental'
     : model === 'whisperlivekit-small' ? 'WhisperLiveKit · Small (Live)'

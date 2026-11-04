@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef } from 'react';
 import { VideoTrack, useLocalParticipant } from '@livekit/components-react';
 import { Track } from 'livekit-client';
-import { Headphones, Loader2, Mic, RefreshCw, Settings2, Video, VideoOff, X } from 'lucide-react';
+import { Headphones, Loader2, Mic, MonitorUp, RefreshCw, Settings2, Video, VideoOff, X } from 'lucide-react';
 import type { useDeviceSettings } from './useDeviceSettings';
 import { QWEN_TRANSCRIPTION_NOTICE } from './preferences';
+import type { ScreenShareResolution } from './preferences';
 
 type DeviceSettings = ReturnType<typeof useDeviceSettings>;
 
@@ -12,6 +13,7 @@ export function DeviceSettingsDialog({
   sharedRoomMic = false, sharedMicSupported = true, onToggleSharedMic,
   liveDiarization = true, onToggleLiveDiarization,
   batchDiarization = true, onToggleBatchDiarization, batchSupported = true,
+  screenShareResolution = '1080p', onSelectScreenShareResolution,
   onClose,
 }: {
   settings: DeviceSettings; connected: boolean; blocked: boolean; micVolume: number; sttProvider: 'browser' | 'server'; mirror?: boolean;
@@ -19,6 +21,8 @@ export function DeviceSettingsDialog({
   liveDiarization?: boolean; onToggleLiveDiarization?: (enabled: boolean) => void;
   batchDiarization?: boolean; onToggleBatchDiarization?: (enabled: boolean) => void;
   batchSupported?: boolean;
+  screenShareResolution?: ScreenShareResolution;
+  onSelectScreenShareResolution?: (resolution: ScreenShareResolution) => void;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -73,6 +77,27 @@ export function DeviceSettingsDialog({
       <DeviceSelector settings={settings} kind="videoinput" label="Kamera" icon={<Video size={18} />} disabled={disabled} />
       <DeviceSelector settings={settings} kind="audiooutput" label="Speaker / headphone" icon={<Headphones size={18} />} disabled={disabled || !settings.outputSupported} />
       {!settings.outputSupported ? <p className="device-help">Browser ini belum mendukung pemilihan speaker. Atur output melalui pengaturan suara sistem.</p> : settings.outputPickerSupported && <button type="button" className="text-button" disabled={disabled} onClick={() => void settings.requestOutput()}>Izinkan / pilih speaker melalui browser</button>}
+      {onSelectScreenShareResolution && (
+        <div className="device-selector">
+          <label htmlFor={`${id}-screen-res`}>
+            <MonitorUp size={18} />Resolusi berbagi layar
+          </label>
+          <select
+            id={`${id}-screen-res`}
+            value={screenShareResolution || '1080p'}
+            disabled={disabled}
+            onChange={event => onSelectScreenShareResolution(event.target.value as ScreenShareResolution)}
+          >
+            <option value="1080p">1080p (Full HD - Tajam • Default)</option>
+            <option value="720p">720p (HD - Seimbang)</option>
+            <option value="540p">540p (Standar - Hemat data)</option>
+            <option value="360p">360p (Hemat kuota)</option>
+            <option value="1440p">1440p (2K Quad HD)</option>
+            <option value="original">Asli (Resolusi layar penuh)</option>
+          </select>
+          <small className="device-help">Pilih resolusi tangkapan layar untuk menghemat kuota atau menjaga teks tetap tajam.</small>
+        </div>
+      )}
     </div><div className="device-camera-preview">
       {isCameraEnabled && cameraTrack?.track?.mediaStreamTrack.readyState === 'live' ? <VideoTrack trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }} className="device-preview-video" style={{ transform: mirror ? 'scaleX(-1)' : 'none' }} autoPlay playsInline muted aria-label="Preview kamera aktif" /> : <div><VideoOff size={30} /><span>Kamera nonaktif atau belum tersedia</span></div>}
       <p>Preview kamera rapat</p>

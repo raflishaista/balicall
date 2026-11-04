@@ -113,3 +113,17 @@ test('storage and security preferences round-trip and sanitize invalid inputs', 
   assert.equal(invalid.autoRecordMeeting, false);
   assert.equal(invalid.allowGuestJoin, true);
 });
+
+test('screen share resolution preference round-trips and sanitizes invalid values', () => {
+  let raw;
+  const storage = { getItem: () => raw, setItem: (_, value) => { raw = value; } };
+  const choices = { ...DEFAULT_PREFERENCES, screenShareResolution: '720p' };
+  writePreferences(storage, choices);
+  assert.equal(readPreferences(storage).preferences.screenShareResolution, '720p');
+
+  for (const valid of ['360p', '540p', '720p', '1080p', '1440p', 'original']) {
+    assert.equal(normalizePreferences({ screenShareResolution: valid }).screenShareResolution, valid);
+  }
+  assert.equal(normalizePreferences({ screenShareResolution: '4k' }).screenShareResolution, '1080p');
+  assert.equal(normalizePreferences({ screenShareResolution: 1080 }).screenShareResolution, '1080p');
+});

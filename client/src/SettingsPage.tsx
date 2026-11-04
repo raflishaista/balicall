@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Film, HardDrive, Info, Lock, LockKeyhole, LogOut, Mic, Monitor, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserRound, Video, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, Check, ChevronRight, Cloud, Film, HardDrive, Info, Lock, LockKeyhole, LogOut, Mic, Monitor, MonitorUp, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, UploadCloud, UserRound, Video, Volume2 } from 'lucide-react';
 import { initials } from './presentation';
 import { DEFAULT_PREFERENCES, transcriptionModelLabel, supportsSharedMicrophone, qwenDiarizationForModel, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
-import type { MeetingPreferences } from './preferences';
+import type { MeetingPreferences, ScreenShareResolution } from './preferences';
 import type { AuthUser } from './AuthGate';
 import './SettingsPage.css';
 import { ProfileEditor, UserAvatar } from './ProfileEditor';
 import { PushSettings } from './NotificationCenter';
 import { AIServicesPanel } from './AIServicesPanel';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
-import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, modelPreferencePatch } from './modelSelection';
+import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE, modelPreferencePatch } from './modelSelection';
 import type { useBackendHealth } from './useBackendHealth';
 import { accountKey } from './accountScope';
 import { HISTORY_KEY } from './summaryHistory';
@@ -145,6 +145,7 @@ export function SettingsPage({ section: propSection, onSectionChange, preference
               <PreferenceDevice label="Mikrofon default" Icon={Mic} kind="audioinput" value={draft.microphoneId} devices={devices} disabled={loading} onChange={microphoneId => update({ microphoneId })} />
               <PreferenceDevice label="Kamera default" Icon={Video} kind="videoinput" value={draft.cameraId} devices={devices} disabled={loading} onChange={cameraId => update({ cameraId })} />
               <PreferenceDevice label="Speaker / headset default" Icon={Volume2} kind="audiooutput" value={draft.outputId} devices={devices} disabled={loading || !outputSupported} onChange={outputId => update({ outputId })} />
+              <label className="settings-device-field"><span><MonitorUp size={17} />Resolusi berbagi layar default</span><select aria-label="Resolusi berbagi layar default" value={draft.screenShareResolution || '1080p'} onChange={event => update({ screenShareResolution: event.target.value as ScreenShareResolution })}><option value="1080p">1080p (Full HD - Tajam • Default)</option><option value="720p">720p (HD - Seimbang)</option><option value="540p">540p (Standar - Hemat data)</option><option value="360p">360p (Hemat kuota)</option><option value="1440p">1440p (2K Quad HD)</option><option value="original">Asli (Resolusi layar penuh)</option></select><small>Resolusi tangkapan layar awal saat kamu membagikan layar.</small></label>
               {!outputSupported && <p className="settings-field-help">Pemilihan output belum didukung browser ini. Suara mengikuti output sistem.</p>}
               {deviceError && <p className="settings-notice" role="alert">{deviceError}</p>}
               <button className="settings-refresh" type="button" disabled={loading} onClick={() => setRefreshKey(key => key + 1)}><RefreshCw size={15} />{loading ? 'Memuat perangkat…' : 'Perbarui daftar perangkat'}</button>
@@ -193,9 +194,10 @@ function AISettings({ draft, update, transcription, aiStatus }: {
   return <>
     {aiStatus && <AIServicesPanel health={aiStatus.health} checking={aiStatus.checking} error={aiStatus.error} checkedAt={aiStatus.checkedAt} onRefresh={() => void aiStatus.refresh()} />}
     <fieldset className="settings-fields"><legend>Transkripsi default</legend>
-      <label className="settings-device-field"><span>Bahasa transkripsi</span><select aria-label="Bahasa transkripsi" value={draft.speechLanguage} disabled={[SEA_LIVE_MODEL].includes(draft.transcriptionModel)} onChange={event => update({ speechLanguage: event.target.value as MeetingPreferences['speechLanguage'] })}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select></label>
+      <label className="settings-device-field"><span>Bahasa transkripsi</span><select aria-label="Bahasa transkripsi" value={draft.speechLanguage} disabled={[MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel)} onChange={event => update({ speechLanguage: event.target.value as MeetingPreferences['speechLanguage'] })}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English</option></select></label>
       <label className="settings-device-field"><span>Layanan transkripsi</span><select aria-label="Layanan transkripsi" value={draft.transcriptionProvider} onChange={event => update({ transcriptionProvider: event.target.value as MeetingPreferences['transcriptionProvider'] })}><option value="auto">Otomatis — ikuti default server</option><option value="browser">Browser</option><option value="server" disabled={!transcription?.configured}>Server{!transcription?.configured ? ' · belum tersedia' : ''}</option></select></label>
-      <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update(modelPreferencePatch(event.target.value))}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && ![SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}<TranscriptionModelOptions models={models} /></select></label>
+      <label className="settings-device-field"><span>Model transkripsi default</span><select aria-label="Model transkripsi default" value={draft.transcriptionModel} disabled={!transcription?.configured || draft.transcriptionProvider === 'browser'} onChange={event => update(modelPreferencePatch(event.target.value))}><option value="">Ikuti default server{transcription?.defaultModel ? ` — ${transcriptionModelLabel(transcription.defaultModel)}` : ''}</option>{missingModel && ![MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <option value={draft.transcriptionModel} disabled>{draft.transcriptionModel} · pilihan tersimpan belum tersedia</option>}<TranscriptionModelOptions models={models} /></select></label>
+      {draft.transcriptionModel === MING_LIVE_MODEL && <p role="status">{MING_LIVE_NOTICE}</p>}
       {draft.transcriptionModel === SEA_LIVE_MODEL && !(draft.sharedRoomMic && sharedMicSupported) && <p role="status">{SEA_LIVE_NOTICE}</p>}
       <PreferenceToggle
         label="Mode Mikrofon Ruang Rapat (Diarization)"
@@ -204,9 +206,10 @@ function AISettings({ draft, update, transcription, aiStatus }: {
         disabled={!sharedMicSupported}
         onChange={sharedRoomMic => update({ sharedRoomMic })}
       />
-      {!sharedMicSupported && ![SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
+      {!sharedMicSupported && ![MING_LIVE_MODEL,SEA_LIVE_MODEL].includes(draft.transcriptionModel) && <p className="settings-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
       {isQwen && sharedMicSupported && <p role="status">{QWEN_DIARIZATION_NOTICE}</p>}
       {draft.transcriptionModel === 'qwen3-asr-0.6b-live' && <p role="status">{QWEN_LIVE_DIARIZATION_NOTICE}</p>}
+      {draft.transcriptionModel === QWEN_GGUF_LIVE_MODEL && <p role="status">{QWEN_GGUF_LIVE_NOTICE}</p>}
       {sharedMicSupported && draft.sharedRoomMic && (
         <div style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '12px', borderLeft: '2px solid #e2e8f0', marginLeft: '6px', margin: '8px 0 12px 6px' }}>
           <PreferenceToggle

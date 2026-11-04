@@ -156,6 +156,35 @@ test('SEA gates availability, binds resumable Indonesian tickets and deduplicate
  assert.equal((await a.post('batch-diarize',{})).status,409);
 });
 
+test('Ming selection gates availability, binds English tickets and persists its own model identity',async t=>{
+ let ready=false;
+ const model='ming3-asr-tiny-live',secret='m'.repeat(40),workerTime=1700000000;
+ const f=await fixture(t,{sttModel:'small',sttModels:['small'],mingLiveSttUrl:'/ming-live-stt/asr',mingLiveSttSecret:secret},{fetchImpl:async()=>new Response(JSON.stringify({ready,streaming:true,model,languages:['en']}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});
+ const a=await f.joinRoom('ming-owner');
+ const health=()=>f.request('/health',undefined,null,'GET');
+ assert.ok(!(await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'en'})).status,503);
+ ready=true;
+ assert.ok((await health()).data.sttModels.includes(model));
+ assert.equal((await a.post('live-session',{model,language:'id'})).status,400);
+ assert.equal((await a.post('live-session',{model,language:'en',diarize:true})).status,400);
+ const session=await a.post('live-session',{model,language:'en'});
+ assert.equal(session.status,200);
+ const ticket=new URL(session.data.url,'http://local').searchParams.get('ticket');
+ const [payload,signature]=ticket.split('.');
+ assert.equal(signature,createHmac('sha256',secret).update(payload).digest('base64url'));
+ const claims=JSON.parse(Buffer.from(payload,'base64url'));
+ assert.equal(claims.model,model);assert.equal(claims.speakerId,'ming-owner');assert.equal(claims.exp,workerTime+60);
+ const final={segmentId:claims.nonce+'-1',sessionId:claims.nonce,sourceId:'ming-owner',text:'Hello team.',start:0,end:2,speakerLabel:'Peserta',attribution:'unknown'};
+ const upload={sttModel:model,final};
+ const first=await a.post('transcript',upload),again=await a.post('transcript',upload);
+ assert.equal(first.status,200);assert.equal(first.data.entry.sttModel,model);
+ assert.equal(again.data.entry.id,first.data.entry.id);
+ assert.equal((await a.post('transcript',{...upload,final:{...final,sourceId:'other'}})).status,400);
+ assert.equal((await a.post('transcript',{...upload,final:{...final,attribution:'assigned'}})).status,400);
+ assert.equal((await a.post('batch-diarize',{})).status,409);
+});
+
 test('Qwen live tickets bind speaker and shared mode; structured finals persist once',async t=>{
  const workerTime=1700000000;
  const f=await fixture(t,{qwenLiveSttUrl:'/qwen-live-stt/asr',qwenLiveSttSecret:'q'.repeat(40)},{fetchImpl:async()=>new Response(JSON.stringify({ready:true,native:true,streaming:true,diarization:true,model:'qwen3-asr-0.6b-live'}),{headers:{Date:new Date(workerTime*1000).toUTCString()}})});

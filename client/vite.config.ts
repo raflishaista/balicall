@@ -15,7 +15,9 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:3001', changeOrigin: true },
       '/live-stt': { target: 'http://127.0.0.1:8003', ws: true, rewrite: value => value.replace(/^\/live-stt/, '') },
       '/qwen-live-stt': { target: 'http://127.0.0.1:8008', ws: true, rewrite: value => value.replace(/^\/qwen-live-stt/, '') },
+      '/qwen-gguf-live': { target: 'http://127.0.0.1:8013', ws: true, rewrite: value => value.replace(/^\/qwen-gguf-live/, '') },
       '/sea-live-stt': { target: 'http://127.0.0.1:3001', ws: true },
+      '/ming-live-stt': { target: 'http://127.0.0.1:8011', ws: true, rewrite: value => value.replace(/^\/ming-live-stt/, '') },
     },
   },
 })

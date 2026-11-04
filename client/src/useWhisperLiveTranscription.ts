@@ -28,7 +28,7 @@ export function useWhisperLiveTranscription(options: {
     let cancelled = false;
     let live: ReturnType<typeof startLiveTranscription> | undefined;
     const track = options.track, language = options.language, model = options.model, diarize = options.diarize;
-    const resumable = ['qwen3-asr-0.6b-live','sea-asr-id-live'].includes(model || '');
+    const resumable = ['qwen3-asr-0.6b-live','qwen3-asr-0.6b-gguf-q8-live','sea-asr-id-live'].includes(model || '');
     const device = track.getSettings?.().deviceId || track.id;
     if (!microphone.current || microphone.current.device !== device) {
       microphone.current = {device,id:crypto.randomUUID()};

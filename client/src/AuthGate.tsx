@@ -10,7 +10,7 @@ import { clearSummarySession } from './summaryHistory';
 
 const App = lazy(() => import('./App'));
 
-export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; legalName?: string; photoVersion?: string|null }
+export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
 export function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);
@@ -132,8 +132,8 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
       <form onSubmit={submit} aria-busy={pending}>
         {mode==='guest' ? <>
           <label className="login-field">Nama tamu<span><input autoComplete="name" value={guestName} onChange={event=>setGuestName(event.target.value)} maxLength={80} required disabled={disabled} placeholder="Nama yang tampil di rapat" /></span></label>
-          <label className="login-field">Kode undangan tamu<span><input autoComplete="off" value={inviteCode} onChange={event=>setInviteCode(event.target.value)} maxLength={22} required disabled={disabled} placeholder="Kode dari peserta rapat" /></span></label>
-          <p className="login-help">Akses hanya ke rapat yang diundang. Nama tamu tidak diverifikasi sebagai karyawan.</p>
+          <label className="login-field">Kode undangan tamu<span><input autoComplete="off" value={inviteCode} onChange={event=>{const val=event.target.value; setInviteCode(val.trim().length <= 5 ? val.toUpperCase() : val);}} maxLength={22} required disabled={disabled} placeholder="5 digit kode ruang atau kode undangan" /></span></label>
+          <p className="login-help">Akses hanya ke rapat yang diundang. Masukkan 5 digit kode ruang atau kode undangan dari peserta rapat.</p>
         </> : <>
         <label className="login-field">Email perusahaan<span><Mail size={21} aria-hidden="true" /><input type="email" autoComplete="username" inputMode="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="nama@balitower.co.id" maxLength={254} required disabled={disabled} /></span></label>
         {mode==='activate' && <label className="login-field">Kode aktivasi<span><LockKeyhole size={21} aria-hidden="true" /><input autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} placeholder="Kode dari admin" maxLength={43} required disabled={disabled} /></span></label>}
