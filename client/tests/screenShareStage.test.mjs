@@ -302,3 +302,77 @@ test('Viewer receiveQuality automatically clamps down if presenter lowers resolu
   // Clamped down to highest available
   assert.equal(qualitySelect.props.value, '540p');
 });
+
+test('Viewer adaptive dropdown dynamically adapts to realtime screen_share_res data messages and excludes higher options', async t => {
+  const remoteTrack = mockScreenTrack(false);
+  const roomListeners = {};
+  let publishedPayload = null;
+  const mockRoom = {
+    localParticipant: {
+      publishData: async (data, opts) => {
+        publishedPayload = { data, opts };
+      },
+    },
+    on(event, fn) {
+      roomListeners[event] = roomListeners[event] || [];
+      roomListeners[event].push(fn);
+    },
+    off(event, fn) {
+      if (!roomListeners[event]) return;
+      roomListeners[event] = roomListeners[event].filter(l => l !== fn);
+    },
+    emit(event, ...args) {
+      (roomListeners[event] || []).forEach(fn => fn(...args));
+    },
+  };
+
+  let root;
+  await act(async () => {
+    root = create(
+      React.createElement(ScreenShareStage, {
+        tracks: [remoteTrack],
+        room: mockRoom,
+        focused: false,
+        showThumbnails: false,
+        fullscreen: false,
+        fullscreenPending: false,
+        fullscreenSupported: true,
+        onFocus: () => {},
+        onThumbnails: () => {},
+        onFullscreen: () => {},
+      })
+    );
+  });
+  t.after(async () => { await act(async () => root.unmount()); });
+
+  // Verified that on mount, viewer sent query on topic screen_share_res
+  assert.ok(publishedPayload);
+  assert.equal(publishedPayload.opts.topic, 'screen_share_res');
+  const query = JSON.parse(new TextDecoder().decode(publishedPayload.data));
+  assert.equal(query.type, 'query_screen_share_resolution');
+
+  // Presenter broadcasts 720p resolution
+  const broadcastPacket = new TextEncoder().encode(JSON.stringify({
+    type: 'screen_share_resolution',
+    resolution: '720p',
+    participantIdentity: remoteTrack.participant.identity,
+  }));
+
+  await act(async () => {
+    mockRoom.emit('dataReceived', broadcastPacket, remoteTrack.participant, null, 'screen_share_res');
+  });
+
+  const qualitySelect = root.root.find(s => s.type === 'select' && s.props['aria-label'] === 'Pilih kualitas penerimaan video');
+  const optionValues = qualitySelect.findAllByType('option').map(o => o.props.value);
+
+  // Higher resolutions must NOT be present
+  assert.equal(optionValues.includes('1080p'), false, '1080p should not be present when presenter shares 720p');
+  assert.equal(optionValues.includes('1440p'), false, '1440p should not be present when presenter shares 720p');
+  assert.equal(optionValues.includes('4k'), false, '4k should not be present when presenter shares 720p');
+  assert.equal(optionValues.includes('original'), false, 'original should not be present when presenter shares 720p');
+
+  // Allowed resolutions
+  assert.deepEqual(optionValues, ['720p', '540p', '360p', 'auto']);
+  const firstOption = qualitySelect.findAllByType('option')[0];
+  assert.ok(firstOption.children[0].includes('Maksimal Presenter • HD'));
+});

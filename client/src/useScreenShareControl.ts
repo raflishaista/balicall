@@ -5,6 +5,8 @@ import type { ScreenShareResolution } from './preferences';
 
 export { type ScreenShareResolution };
 
+export const SCREEN_SHARE_RES_TOPIC = 'screen_share_res';
+
 export interface ScreenSharePresetConfig {
   id: ScreenShareResolution;
   label: string;
@@ -129,14 +131,53 @@ export function useScreenShareControl(
     setResolutionState(initialResolution);
   }, [initialResolution]);
 
+  const broadcastResolution = useCallback((targetRes: ScreenShareResolution) => {
+    if (!participant) return;
+    if (typeof participant.setAttributes === 'function') {
+      participant.setAttributes({ screenShareResolution: targetRes }).catch(() => {});
+    }
+    if (typeof (participant as any).publishData === 'function') {
+      try {
+        const payload = new Uint8Array(new TextEncoder().encode(JSON.stringify({
+          type: 'screen_share_resolution',
+          resolution: targetRes,
+          participantIdentity: participant.identity,
+        })));
+        (participant as any).publishData(payload, { reliable: true, topic: SCREEN_SHARE_RES_TOPIC }).catch(() => {});
+      } catch {}
+    }
+  }, [participant]);
+
+  useEffect(() => {
+    if (!participant) return;
+    const handleDataReceived = (payload: Uint8Array, _peer?: any, _kind?: any, topic?: string) => {
+      if (topic !== SCREEN_SHARE_RES_TOPIC) return;
+      try {
+        const text = new TextDecoder().decode(payload);
+        const data = JSON.parse(text);
+        if (data.type === 'query_screen_share_resolution' && participant.isScreenShareEnabled) {
+          const reply = new Uint8Array(new TextEncoder().encode(JSON.stringify({
+            type: 'screen_share_resolution',
+            resolution,
+            participantIdentity: participant.identity,
+          })));
+          (participant as any).publishData?.(reply, { reliable: true, topic: SCREEN_SHARE_RES_TOPIC }).catch(() => {});
+        }
+      } catch {}
+    };
+
+    (participant as any)?.on?.('dataReceived', handleDataReceived);
+    return () => {
+      (participant as any)?.off?.('dataReceived', handleDataReceived);
+    };
+  }, [participant, resolution]);
+
   const setResolution = useCallback(async (next: ScreenShareResolution) => {
     setResolutionState(next);
     onResolutionChange?.(next);
 
     if (participant?.isScreenShareEnabled) {
-      if (typeof participant.setAttributes === 'function') {
-        participant.setAttributes({ screenShareResolution: next }).catch(() => {});
-      }
+      broadcastResolution(next);
       try {
         const pub = participant.getTrackPublication(Track.Source.ScreenShare);
         const videoTrack = pub?.track as LocalVideoTrack | undefined;
@@ -168,7 +209,7 @@ export function useScreenShareControl(
         // Safe fallback if browser or platform restricts runtime stream reconfiguration
       }
     }
-  }, [participant, onResolutionChange]);
+  }, [participant, onResolutionChange, broadcastResolution]);
 
   useEffect(() => {
     mounted.current = true;
@@ -204,9 +245,7 @@ export function useScreenShareControl(
     try {
       if (participant.isScreenShareEnabled) {
         await participant.setScreenShareEnabled(false);
-        if (typeof participant.setAttributes === 'function') {
-          participant.setAttributes({ screenShareResolution: '' }).catch(() => {});
-        }
+        broadcastResolution('' as ScreenShareResolution);
       } else {
         const preset = SCREEN_SHARE_PRESETS[chosenRes] || SCREEN_SHARE_PRESETS['1080p'];
         // Capture directly from the click to preserve browser user activation.
@@ -232,6 +271,7 @@ export function useScreenShareControl(
         if (isEnded()) { tracks.forEach(track => track.stop()); return; }
         // Publish with simulcast enabled and screenShareSimulcastLayers configured
         // so viewers can choose their preferred quality level (original, 4k, 1440p, 1080p, 720p, 540p, 360p).
+        (video as any).name = `screen_share:${chosenRes}`;
         const simulcastLayers = getScreenShareSimulcastLayers(chosenRes);
         await participant.publishTrack(video, {
           source: Track.Source.ScreenShare,
@@ -241,9 +281,7 @@ export function useScreenShareControl(
           screenShareEncoding: preset.encoding,
           screenShareSimulcastLayers: simulcastLayers,
         });
-        if (typeof participant.setAttributes === 'function') {
-          participant.setAttributes({ screenShareResolution: chosenRes }).catch(() => {});
-        }
+        broadcastResolution(chosenRes);
         if (!isCurrent() || isEnded()) {
           tracks.forEach(track => track.stop());
           await participant.unpublishTrack(video);
@@ -257,7 +295,7 @@ export function useScreenShareControl(
       inFlight.current = false;
       if (mounted.current) setPending(false);
     }
-  }, [participant, supported, resolution, onResolutionChange]);
+  }, [participant, supported, resolution, onResolutionChange, broadcastResolution]);
 
   return { pending, error, resolution, setResolution, toggleScreenShare };
 }
