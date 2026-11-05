@@ -2,7 +2,28 @@ import {createHash} from 'node:crypto';
 
 const writes=new Set(['createProject','createTask','updateTask','updateTaskStatus','updateProject','assignSprintTasks','createSprint','updateSprint','startSprint','completeSprint','deleteSprint','removeSprintTask','createComment']);
 const reads=new Set(['taskOptions','projectTasks','projectOptions','userProjects','projectDetail','projectSprints','listQueryableModels','queryData']);
-const fields=['itProjectTaskDispatch','itProjectProjectDispatch'];
+const editableFields = {
+  updateProject: [
+    'title', 'description', 'emoji', 'start_date', 'due_date',
+    'status_id', 'priority_id',
+  ],
+  updateTask: [
+    'title', 'description', 'emoji', 'start_date', 'due_date',
+    'status_id', 'priority_id', 'type_id', 'task_category_id',
+    'parent_id', 'owned_id', 'assign_users', 'unassign_users',
+    'tag_ids', 'remove_tag_ids',
+  ],
+  updateTaskStatus: ['status_id', 'start_date', 'due_date'],
+  updateSprint: ['name', 'goal', 'start_date', 'end_date', 'duration'],
+  startSprint: ['goal', 'start_date', 'end_date', 'duration'],
+  completeSprint: ['retrospective'],
+  assignSprintTasks: ['task_ids'],
+  removeSprintTask: ['task'],
+};
+const fields = [
+  'itProjectTaskDispatch',
+  'itProjectProjectDispatch',
+];
 const canonical=value=>JSON.stringify(value,(_key,item)=>item && typeof item==='object' && !Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
 const fail=(message,status=409)=>Object.assign(new Error(message),{status});
@@ -36,7 +57,11 @@ export function createMcpReview({store,client,plan,destination=''}) {
     if(!host)throw fail('Hanya host rapat yang dapat mengakses tinjauan MCP.',403);
     return {isHost:true,revision:record.revision,planDigest:record.planDigest || '',status:record.status,
       canDecide:host && ['pending','ready','rejected','blocked'].includes(record.status),
-      operations:host?record.operations:[],evidence:host?(summaryOf(meeting)?.sourceEvidence?.items || []):[],error:record.error || null,
+      operations:host?record.operations:[],
+      operations:host?record.operations:[],
+      evidence:host?(summaryOf(meeting)?.sourceEvidence?.items || []):[],
+      options:host?record.options || {}:{},
+      error:record.error || null,
       decidedBy:record.decidedBy || null,decidedAt:record.decidedAt || null,
       results:host?record.results || []:[],note:record.note || null};
   }
@@ -55,7 +80,7 @@ export function createMcpReview({store,client,plan,destination=''}) {
     locks.add(id);
     try {
       const shadow={meetings:structuredClone(store.meetings),get(key){return this.meetings.get(key)},transact(fn){return fn()}};
-      const operations=[],conditions=[];
+      const operations=[],conditions=[],optionSnapshots={};
       const proxy=new Proxy(client,{get(target,key){
         if(writes.has(key))return async args=>{
           const operation={method:key,args:structuredClone(args),ref:`@review:${operations.length}`};operations.push(operation);
@@ -63,7 +88,14 @@ export function createMcpReview({store,client,plan,destination=''}) {
         };
         if(reads.has(key))return async(...args)=>{
           if(symbolic(args))throw fail('Opsi proyek baru belum tersedia; tinjau task setelah proyek dibuat.');
-          const result=await target[key](...args);conditions.push({method:key,args:structuredClone(args),digest:hash(result.data)});return result;
+          const result=await target[key](...args);
+          conditions.push({method:key,args:structuredClone(args),digest:hash(result.data)});
+
+          if(['taskOptions','projectOptions','projectSprints','projectTasks','projectDetail'].includes(key)){
+            optionSnapshots[key]=result.data?.data ?? result.data;
+          }
+
+          return result;
         };
         const value=Reflect.get(target,key);if(typeof value==='function')throw fail('Operasi MCP tidak dikenal.',400);return value;
       }});
@@ -77,7 +109,7 @@ export function createMcpReview({store,client,plan,destination=''}) {
       if(!operations.length && claims.length)throw fail('Tidak ada perubahan yang dapat disiapkan. Periksa target proyek/task dan hasil sinkronisasi sebelumnya.');
       const markers=Object.fromEntries(fields.map(field=>[field,shadow.get(id)[field] || {}]));
       const planDigest=hash({operations,conditions,markers});
-      save(id,record.revision,{status:'ready',operations,reads:conditions,markers,planDigest,note,error:null});
+      save(id,record.revision,{status:'ready', operations, reads:conditions, markers, options:optionSnapshots, planDigest, note, error:null,});
     } catch(error){save(id,record.revision,{status:'blocked',error:error.message});}
     finally{locks.delete(id);}
     return publicRecord(record,actor,meeting);
@@ -91,6 +123,68 @@ export function createMcpReview({store,client,plan,destination=''}) {
     if(locks.has(id) || ['sending','needs_check'].includes(record.status))throw fail('Hasil pengiriman perlu diperiksa; tidak dikirim ulang otomatis.');
     if(!body.decision && ['pending','blocked','ready','rejected'].includes(record.status)){save(id,record.revision,{status:'rejected',decidedBy:actor,decidedAt:new Date().toISOString()});return publicRecord(record,actor,meeting);}
     if(!['ready','rejected'].includes(record.status) || !record.planDigest)throw fail('Rencana belum siap ditinjau.');
+    const approvedIndexes = body.approvedIndexes === undefined
+      ? record.operations.map((_, index) => index)
+      : body.approvedIndexes;
+
+    if (
+      !Array.isArray(approvedIndexes) ||
+      approvedIndexes.some(index =>
+        !Number.isInteger(index) || index < 0 || index >= record.operations.length
+      )
+    ) {
+      throw fail('Daftar item yang disetujui tidak valid.', 400);
+    }
+
+    const uniqueIndexes = [...new Set(approvedIndexes)];
+    if (!uniqueIndexes.length) {
+      save(id, record.revision, {
+        status: 'rejected',
+        decidedBy: actor,
+        decidedAt: new Date().toISOString(),
+        note: 'Tidak ada item yang dipilih untuk dikirim.',
+      });
+      return publicRecord(record, actor, meeting);
+    }
+
+    const edits = body.edits && typeof body.edits === 'object' && !Array.isArray(body.edits)
+      ? body.edits
+      : {};
+
+    const selectedOperations = uniqueIndexes.map(index => {
+      const original = record.operations[index];
+      const patch = edits[index] || {};
+
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw fail(`Perubahan item ${index + 1} tidak valid.`, 400);
+      }
+
+      const allowedFields = new Set(editableFields[original.method] || []);
+      for (const [key, value] of Object.entries(patch)) {
+        if (!allowedFields.has(key)) {
+          throw fail(`Field '${key}' tidak dapat diedit pada aksi ${original.method}.`, 400);
+        }
+
+        const validValue =
+          typeof value === 'string' ||
+          typeof value === 'boolean' ||
+          (Array.isArray(value) && value.every(item => typeof item === 'string')) ||
+          (value && typeof value === 'object' && !Array.isArray(value));
+
+        if (!validValue) {
+          throw fail(`Nilai field '${key}' tidak valid.`, 400);
+        }
+      }
+
+      return {
+        index,
+        operation: {
+          ...structuredClone(original),
+          args: { ...original.args, ...patch },
+        },
+      };
+    });
+
     locks.add(id);
     let sending=false;
     try {
@@ -121,7 +215,7 @@ export function createMcpReview({store,client,plan,destination=''}) {
       if(revision(store.get(id),summaryOf(store.get(id)))!==record.revision)throw fail('Notulen berubah; perlu persetujuan baru.');
       save(id,record.revision,{status:'sending',decidedBy:actor,decidedAt:new Date().toISOString(),results:[]});sending=true;
       const ids={};
-      for(const [index,operation] of record.operations.entries()) {
+      for(const {index,operation} of selectedOperations) {
         if(store.get(id)?.hostId!==actor)throw fail('Host berubah saat pengiriman. Periksa hasil parsial.');
         if(revision(store.get(id),summaryOf(store.get(id)))!==record.revision)throw fail('Notulen berubah ketika pengiriman berlangsung. Periksa hasil parsial.');
         const args=replace(operation.args,ids);

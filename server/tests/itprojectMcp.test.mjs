@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createItProjectClient } from '../itproject.js';
+import { createItProjectClient } from '../itproject/client.js';
 import { createMcpReview } from '../mcpReview.js';
 import { MeetingStore } from '../meetingStore.js';
 

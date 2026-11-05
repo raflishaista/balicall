@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import dotenv from 'dotenv';
 import { loadConfig } from '../config.js';
-import { createItProjectClient } from '../itproject.js';
+import { createItProjectClient } from '../itproject/client.js';
 import { createMcpReview } from '../mcpReview.js';
 import { MeetingStore } from '../meetingStore.js';
 import { mkdtempSync, rmSync } from 'node:fs';

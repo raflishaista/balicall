@@ -2,5 +2,17 @@
 .mcp-review header{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}.mcp-review h2{margin:0;font-size:19px}.mcp-review p{font-size:13px;line-height:1.6;margin:7px 0 12px}.mcp-review header>div{flex:1;min-width:200px}
 .mcp-review-status{padding:7px 11px;border-radius:20px;background:#fff0ce;color:#77530a;font-size:12px}.mcp-review-operations{padding:0;list-style:none}.mcp-review-operations li{padding:14px 16px;margin:9px 0;background:white;border:1px solid #dce7f4;border-radius:9px}.mcp-review pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:#354b66}.mcp-review details{font-size:13px;line-height:1.6}.mcp-review-buttons{display:flex;gap:12px;margin-top:15px}.mcp-review-buttons button{flex:1;justify-content:center}.mcp-review-error{color:#a12532;background:#fff1f2;padding:10px 12px;border-radius:7px}.mcp-review .mcp-review-help{font-size:12px;color:#637b98}.mcp-review summary{cursor:pointer}
 @media(max-width:680px){.mcp-review{padding:15px}.mcp-review-buttons{flex-direction:column}.mcp-review-status{max-width:100%}}
-
 .mcp-review blockquote{margin:10px 0;padding:10px 14px;background:#eef5ff;border-left:3px solid #4187d9}.mcp-review cite{display:block;color:#627995;font-size:12px;font-style:normal;margin-top:5px}
+.mcp-review-group{margin-top:18px}
+.mcp-review-group h3{margin:0 0 8px;font-size:16px;color:#173f70}
+.mcp-review-operation-card{padding:15px;background:#fff;border:1px solid #dce7f4;border-radius:9px;margin:10px 0}
+.mcp-review-operation-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mcp-review-operation-head label{display:flex;align-items:center;gap:7px;margin-right:auto;font-size:13px}
+.mcp-review-target{font-weight:600}
+.mcp-review-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.mcp-review-field{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:#405873}
+.mcp-review-field input,.mcp-review-field select,.mcp-review-field textarea{box-sizing:border-box;width:100%;min-height:38px;padding:8px 10px;border:1px solid #bacbe0;border-radius:6px;background:#fff;color:#17324f;font:inherit}
+.mcp-review-field select[multiple]{min-height:110px}
+.mcp-review-field textarea{resize:vertical}
+.mcp-review-no-options{font-size:12px;color:#8a5b13;font-weight:400}
+@media(max-width:680px){.mcp-review-fields{grid-template-columns:1fr}}
