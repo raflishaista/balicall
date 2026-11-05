@@ -1,6 +1,7 @@
 """Standalone CPU diarization using JSWOOK segmentation and Community-1 clustering."""
 
 import io
+import logging
 import os
 import secrets
 import subprocess
@@ -21,6 +22,8 @@ from alignment import align_words
 
 MODEL = "JSWOOK/pyannote_2_finetuning"
 REVISION = "4f36ffa5e5452ce51ecbfaa7edd3f4bb9b2cdea2"
+STT_MODEL = "small"
+DIARIZER = "pyannote-jswook"
 RATE = 16000
 MAX_SECONDS = 60
 MAX_BYTES = RATE * MAX_SECONDS * 2 + 4096
@@ -48,9 +51,12 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 
 @app.get("/health")
 def health():
+    model_path = os.getenv("PYANNOTE_JSWOOK_WHISPER")
+    recording_ready = bool(model_path and (Path(model_path) / "model.bin").is_file())
     return {"diarization": True, "model": MODEL, "revision": REVISION,
             "device": "cpu", "maxSeconds": MAX_SECONDS,
-            "recordingTranscription": bool(os.getenv("PYANNOTE_JSWOOK_WHISPER"))}
+            "recordingTranscription": recording_ready,
+            "recordingModels": [{"model": STT_MODEL, "diarizers": [DIARIZER]}] if recording_ready else []}
 
 
 def decode_wav(payload):
@@ -145,10 +151,18 @@ def transcribe(file: UploadFile = File(...), language: str = Form("id"), authori
             app.state.whisper = WhisperModel(model_path, device="cpu", compute_type="int8", cpu_threads=2)
         decoded, _ = app.state.whisper.transcribe(audio, language=language, beam_size=1,
                                                  word_timestamps=True, vad_filter=True)
+        decoded = list(decoded)
+        text = " ".join(s.text.strip() for s in decoded).strip()
         words = [(w.start, w.end, w.word) for s in decoded for w in (s.words or [])]
-        turns = speaker_turns(torch.from_numpy(audio).unsqueeze(0)) if words else []
+        try:
+            turns = speaker_turns(torch.from_numpy(audio).unsqueeze(0)) if words else []
+        except Exception:
+            logging.getLogger(__name__).exception("Pyannote recording diarization failed")
+            turns = []
         segments = align_words(words, turns)
-        return {"text": " ".join(s["text"] for s in segments), "segments": segments,
-                "duration": len(audio) / RATE, "diarizer": "pyannote-jswook"}
+        diarizer_used = DIARIZER if any(segment["speaker"] != "UNKNOWN" for segment in segments) else "none"
+        return {"text": text, "segments": segments if diarizer_used != "none" else [],
+                "duration": len(audio) / RATE, "diarizer": diarizer_used,
+                "sttModelUsed": STT_MODEL, "diarizerUsed": diarizer_used}
     finally:
         busy.release()

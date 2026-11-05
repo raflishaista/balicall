@@ -11,6 +11,7 @@ import { UserAvatar } from './ProfileEditor';
 import { NotificationCenter } from './NotificationCenter';
 import { EmployeeInvites } from './EmployeeInvites';
 import { AIProcessingIndicator } from './AIProcessingIndicator';
+import { BalitowerLoading } from './BalitowerLoading';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
@@ -1567,7 +1568,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         </p>}
 
         {view === 'in-call' && token && (
-          <Suspense fallback={<p role="status">Menyiapkan ruang rapat…</p>}><InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
+          <Suspense fallback={<BalitowerLoading variant="meeting" reduceMotion={userPreferences.preferences.reduceMotion} />}><InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
             meetingHostId={meetingHostId}

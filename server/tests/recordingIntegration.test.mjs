@@ -29,18 +29,36 @@ test('upload choices reach the worker and database without losing speaker segmen
   const directory = mkdtempSync(join(tmpdir(), 'balicall-upload-integration-'));
   const calls = [];
   const config = { ...loadConfig({ LLM_PROVIDER: 'demo', RECORDING_STT_URL: 'http://synthetic-worker/v1',
-    RECORDING_STT_MODEL: 'small', RECORDING_STT_MODELS: 'small', RECORDING_DIARIZERS: 'nemotron,pyannote' }),
+    RECORDING_STT_MODEL: 'small', RECORDING_STT_MODELS: 'small,small-id,base,sea',
+    RECORDING_DIARIZERS: 'nemotron,pyannote', QWEN_STT_BASE_URL: 'http://synthetic-qwen/v1',
+    QWEN_Q8_BATCH_URL: 'http://127.0.0.1:8017/v1', QWEN_Q8_BATCH_KEY: 'synthetic-key' }),
     recordingUploadDir: join(directory, 'uploads'), dataFile: join(directory, 'meetings.json'), recordingPollMs: 1 };
   config.recordingPyannoteUrl = 'http://127.0.0.1:8018/v1';
   config.recordingPyannoteKey = 'synthetic-key';
   config.recordingDiarizers.push('pyannote-jswook');
   const transcript = { text: 'Rapat dimulai.', duration: 2,
     segments: [{ text: 'Rapat dimulai.', speaker: 'Pembicara 1', start: 0, end: 2 }] };
+  const qwen = 'qwen3-asr-0.6b';
+  const q8 = 'qwen3-asr-0.6b-gguf-q8';
+  let workerResult;
+  let whisperReady = true;
   const context = createApp(config, { livekitProbe: async () => [], fetchImpl: async (url, options) => {
+    if (url === 'http://synthetic-worker/health') {
+      return Response.json({ recordingModels: whisperReady ? [{ model: 'small', diarizers: ['none', 'nemotron'] }] : [] });
+    }
+    if (url === 'http://synthetic-qwen/health') {
+      return Response.json({ recordingModels: [{ model: qwen, diarizers: ['none'] }] });
+    }
+    if (url === 'http://127.0.0.1:8017/health') {
+      return Response.json({ ready: true, model: q8, batchDiarization: true });
+    }
+    if (url === 'http://127.0.0.1:8018/health') {
+      return Response.json({ recordingModels: [{ model: 'small', diarizers: ['pyannote-jswook'] }] });
+    }
     if (url === `${config.recordingPyannoteUrl}/audio/transcriptions`) {
       const file = options.body.get('file');
       calls.push({ name: file.name, type: file.type, diarizer: 'pyannote-jswook' });
-      return Response.json({ ...transcript, diarizer: 'pyannote-jswook' });
+      return Response.json({ ...transcript, sttModelUsed: 'small', diarizerUsed: 'pyannote-jswook' });
     }
     if (url.endsWith('/audio/transcriptions/jobs')) {
       const file = options.body.get('file');
@@ -48,29 +66,27 @@ test('upload choices reach the worker and database without losing speaker segmen
       return Response.json({ job_id: 'synthetic-job' });
     }
     assert.ok(url.endsWith('/audio/transcriptions/jobs/synthetic-job'));
-    return Response.json({ status: 'done', result: transcript });
+    return Response.json({ status: 'done', result: workerResult });
   } });
   const server = context.app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}/api/recording-uploads`;
   t.after(async () => { context.close(); await new Promise(resolve => server.close(resolve)); rmSync(directory, { recursive: true, force: true }); });
   const choices = await (await fetch(base + '/options')).json();
-  assert.deepEqual(choices.diarizer.options, ['none', 'nemotron', 'pyannote', 'pyannote-jswook']);
+  assert.deepEqual(choices.stt.models, ['small', qwen, q8]);
+  assert.deepEqual(choices.diarizer.byModel, { small: ['none', 'nemotron', 'pyannote-jswook'], [qwen]: ['none'], [q8]: ['nemotron'] });
   const mp3Frame = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
   const taggedMp3 = Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 3]), Buffer.alloc(3), mp3Frame]);
   const mp4 = Buffer.from('0000ftypSynthetic fixture');
-  for (const [diarizer, extension, type, payload] of [
-    ['nemotron', 'mp4', 'video/mp4', mp4],
-    ['none', 'MP3', 'audio/mpeg', mp3Frame],
-    ['pyannote-jswook', 'mp3', 'audio/mpeg', taggedMp3],
-  ]) {
+  async function submit(model, diarizer, extension, payload) {
     const form = new FormData();
     form.append('language', 'id');
-    form.append('llmModel', config.llmModel); form.append('sttModel', 'small'); form.append('diarizer', diarizer);
+    form.append('llmModel', config.llmModel); form.append('sttModel', model); form.append('diarizer', diarizer);
     form.append('file', new Blob([payload]), `Synthetic QA.${extension}`);
-    const response = await fetch(base, { method: 'POST', body: form });
+    return fetch(base, { method: 'POST', body: form });
+  }
+  async function finished(response) {
     const submitted = await response.json(); assert.equal(response.status, 202, JSON.stringify(submitted));
-    assert.equal(submitted.upload.diarizer, diarizer);
     assert.equal(submitted.upload.title, 'Synthetic QA');
     let stored;
     for (let tries = 0; tries < 100; tries++) {
@@ -78,14 +94,49 @@ test('upload choices reach the worker and database without losing speaker segmen
       if (['done', 'failed'].includes(stored.status)) break;
       await delay(20);
     }
+    return stored;
+  }
+  for (const [model, diarizer, extension, type, payload] of [
+    ['small', 'nemotron', 'mp4', 'video/mp4', mp4],
+    [qwen, 'none', 'MP3', 'audio/mpeg', mp3Frame],
+    ['small', 'pyannote-jswook', 'mp3', 'audio/mpeg', taggedMp3],
+    [q8, 'nemotron', 'mp3', 'audio/mpeg', taggedMp3],
+  ]) {
+    workerResult = model === q8 ? { ...transcript, model, diarizer, speaker_scope: 'recording' }
+      : { ...transcript, sttModelUsed: model, diarizerUsed: diarizer };
+    const stored = await finished(await submit(model, diarizer, extension, payload));
     assert.equal(stored.status, 'done', JSON.stringify(stored));
     assert.equal(stored.diarizer, diarizer);
-    assert.equal(stored.transcript.segments[0].speaker, 'Pembicara 1');
+    assert.equal(stored.transcript.sttModelUsed, model);
+    assert.equal(stored.transcript.diarizerUsed, diarizer);
+    assert.equal(stored.transcript.segments[0]?.speaker, diarizer === 'none' ? undefined : 'Pembicara 1');
     assert.equal(calls.at(-1).name, `recording.${extension.toLowerCase()}`);
     assert.equal(calls.at(-1).type, type);
     if (diarizer !== 'pyannote-jswook') assert.equal(calls.at(-1).diarize, diarizer === 'none' ? 'false' : 'true');
     assert.equal(calls.at(-1).diarizer, diarizer === 'none' ? null : diarizer);
   }
+  const callsBeforeRejection = calls.length;
+  assert.equal((await submit('sea', 'none', 'mp4', mp4)).status, 400);
+  assert.equal((await submit(q8, 'none', 'mp4', mp4)).status, 400);
+  assert.equal((await submit('small', 'pyannote', 'mp4', mp4)).status, 400);
+  whisperReady = false;
+  assert.equal((await submit('small', 'nemotron', 'mp4', mp4)).status, 400);
+  whisperReady = true;
+  assert.equal(calls.length, callsBeforeRejection);
+
+  workerResult = { ...transcript, sttModelUsed: 'base', diarizerUsed: 'nemotron' };
+  const mismatch = await finished(await submit('small', 'nemotron', 'mp4', mp4));
+  assert.equal(mismatch.status, 'failed');
+  assert.match(mismatch.error, /model transkripsi yang dipilih/);
+  assert.equal(mismatch.transcript, null);
+
+  workerResult = { ...transcript, sttModelUsed: 'small', diarizerUsed: 'none' };
+  const partial = await finished(await submit('small', 'nemotron', 'mp4', mp4));
+  assert.equal(partial.status, 'done');
+  assert.equal(partial.diarizer, 'nemotron');
+  assert.equal(partial.transcript.diarizerUsed, 'none');
+  assert.equal(partial.transcript.diarizationStatus, 'unavailable');
+  assert.deepEqual(partial.transcript.segments, []);
   for (const [name, payload] of [['wrong.mp3', mp4], ['wrong.mp4', taggedMp3], ['unsupported.wav', mp3Frame]]) {
     const form = new FormData();
     form.append('file', new Blob([payload]), name);

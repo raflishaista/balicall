@@ -7,8 +7,15 @@ import logo from './assets/login/balitower-balicall-logo-white.webp';
 import './Login.css';
 import { disablePush } from './pushNotifications';
 import { clearSummarySession } from './summaryHistory';
+import { BalitowerLoading } from './BalitowerLoading';
+import { usePreferences } from './usePreferences';
 
 const App = lazy(() => import('./App'));
+
+function WorkspaceLoading() {
+  const { preferences } = usePreferences();
+  return <BalitowerLoading variant="workspace" reduceMotion={preferences.reduceMotion} />;
+}
 
 export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
@@ -71,7 +78,7 @@ export function AuthGate() {
     }
   };
   if (!checking && session && (!session.enabled || session.user)) {
-    return <><Suspense fallback={<main className="login-page"><p role="status">Memuat ruang kerja…</p></main>}><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
+    return <><Suspense fallback={<WorkspaceLoading />}><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
       onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)}
       onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} /></Suspense>
       {error && <div className="login-session-error" role="alert">{error}</div>}</>;
