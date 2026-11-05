@@ -14,10 +14,12 @@ class IndependentDiarizationTests(unittest.TestCase):
     def test_health_keeps_active_model_and_new_diarizer_choices(self):
         worker.app.state.models = SimpleNamespace(active='small-id')
         worker.app.state.diarizer = None
-        with patch.object(worker, 'NEMOTRON_URL', 'http://synthetic-nemotron'):
+        with patch.object(worker, 'NEMOTRON_URL', 'http://synthetic-nemotron'), \
+             patch.object(worker, 'nemotron_available', return_value=True):
             status = worker.health()
         self.assertEqual(status['model'], 'small-id')
         self.assertEqual(status['diarizers'], ['nemotron'])
+        self.assertIn({'model': 'small', 'diarizers': ['none', 'nemotron']}, status['recordingModels'])
 
     def test_long_nemotron_upload_does_not_require_pyannote(self):
         word = SimpleNamespace(start=0, end=1, word='Rapat')
@@ -32,6 +34,16 @@ class IndependentDiarizationTests(unittest.TestCase):
         diarize.assert_called_once()
         self.assertEqual(result['segments'][0]['speaker'], 'Pembicara 1')
         self.assertEqual(result['text'], 'Rapat')
+        self.assertEqual(result['sttModelUsed'], 'small')
+        self.assertEqual(result['diarizerUsed'], 'nemotron')
+
+        with patch.object(worker, 'decode_audio', return_value=np.ones(16000, dtype=np.float32)), \
+             patch.object(worker, 'nemotron_turns', side_effect=ValueError('worker unavailable')):
+            whisper.transcribe.return_value = (iter([segment]), None)
+            result = worker.infer_long({}, 'synthetic', 'id', True, 'small', 'nemotron')
+        self.assertEqual(result['text'], 'Rapat')
+        self.assertEqual(result['diarizerUsed'], 'none')
+        self.assertEqual(result['segments'], [])
 
     def audio(self):
         result = io.BytesIO()

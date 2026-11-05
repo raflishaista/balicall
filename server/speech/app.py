@@ -67,7 +67,16 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health():
+    diarizers = ["none"]
+    if app.state.diarizer is not None:
+        diarizers.append("pyannote")
+    if nemotron_available():
+        diarizers.append("nemotron")
+    recording_models = [model for model, source in SOURCES.items()
+                        if model != "small-id" or os.path.isfile(os.path.join(source, "model.bin"))]
     return {"model": app.state.models.active, "models": list(SOURCES), "diarization": app.state.diarizer is not None,
+            "recordingModels": [{"model": model, "diarizers": diarizers} for model in recording_models]
+                               if not DIARIZATION_ONLY else [],
             "diarizers": [name for name, ok in (("pyannote", app.state.diarizer is not None),
                                                  ("nemotron", bool(NEMOTRON_URL))) if ok]}
 
@@ -192,6 +201,19 @@ NEMOTRON_API_KEY = os.getenv("NEMOTRON_API_KEY", "")
 NEMOTRON_TIMEOUT = int(os.getenv("NEMOTRON_TIMEOUT_SECONDS", "3600"))
 
 
+def nemotron_available():
+    if not NEMOTRON_URL:
+        return False
+    headers = {"Authorization": f"Bearer {NEMOTRON_API_KEY}"} if NEMOTRON_API_KEY else {}
+    request = urllib.request.Request(NEMOTRON_URL.rstrip("/") + "/health", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=0.5) as response:
+            result = json.load(response)
+        return result.get("ready") is True and result.get("diarization") is True
+    except Exception:
+        return False
+
+
 def nemotron_turns(audio):
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
     headers = {"Content-Type": "application/octet-stream"}
@@ -216,9 +238,11 @@ def infer_long(job, path, language, diarize, model, diarizer="pyannote"):
         duration = len(audio) / 16000
         if duration > LONG_MAX_SECONDS:
             raise ValueError(f"Maximum audio duration is {LONG_MAX_SECONDS // 60} minutes")
-        if not len(audio):
-            return {"text": "", "segments": [], "duration": 0.0}
         whisper = app.state.models.get(model)
+        result = {"text": "", "segments": [], "duration": duration,
+                  "sttModelUsed": model, "diarizerUsed": "none"}
+        if not len(audio):
+            return result
         started = perf_counter()
         decoded, _ = whisper.transcribe(
             audio, language=language, vad_filter=True, word_timestamps=diarize,
@@ -227,23 +251,19 @@ def infer_long(job, path, language, diarize, model, diarizer="pyannote"):
         decoded = list(decoded)
         logger.info("LONG STT model=%s audio_s=%.1f inference_s=%.1f",
                     model, duration, perf_counter() - started)
-        if not diarize:
-            return {"text": " ".join(s.text.strip() for s in decoded).strip(),
-                    "segments": [], "duration": duration}
-        if not decoded:
-            return {"text": "", "segments": [], "duration": duration}
-        if diarizer == "nemotron":
-            turns = nemotron_turns(audio)
-        else:
-            output = app.state.diarizer({
-                "waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000,
-            })
-            turns = [(turn.start, turn.end, speaker)
-                     for turn, speaker in output.exclusive_speaker_diarization]
+        result["text"] = " ".join(s.text.strip() for s in decoded).strip()
+        if not diarize or not decoded:
+            return result
+        try:
+            turns = nemotron_turns(audio) if diarizer == "nemotron" else diarize_waveform(audio)
+        except Exception:
+            logger.exception("Recording diarization failed for %s", diarizer)
+            return result
         words = [(w.start, w.end, w.word) for s in decoded for w in (s.words or [])]
         segments = align_words(words, turns)
-        return {"text": " ".join(s["text"] for s in segments),
-                "segments": segments, "duration": duration}
+        if any(segment["speaker"] != "UNKNOWN" for segment in segments):
+            result.update(segments=segments, diarizerUsed=diarizer)
+        return result
 
 
 def run_job(job, path, language, diarize, model, diarizer="pyannote"):

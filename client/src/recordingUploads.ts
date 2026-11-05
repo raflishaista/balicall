@@ -7,6 +7,9 @@ export interface RecordingTranscript {
   text: string;
   segments: { text: string; speaker: string; start: number; end: number }[];
   durationSeconds: number | null;
+  sttModelUsed?: string;
+  diarizerUsed?: string;
+  diarizationStatus?: 'applied' | 'not_requested' | 'unavailable';
 }
 
 export interface RecordingUpload {
@@ -74,7 +77,7 @@ export const resummarizeUpload = (id: string, llmModel?: string) =>
 
 export const getOptions = () =>
   apiRequest<{ success: boolean; llm: { default: string; models: string[] }; stt: { default: string; models: string[] };
-    diarizer: { default: string; options: string[] } }>('/recording-uploads/options');
+    diarizer: { default: string; byModel: Record<string, string[]> } }>('/recording-uploads/options');
 
 export const DiarizerLabels: Record<string, string> = {
   none: 'Tanpa pemisah pembicara',

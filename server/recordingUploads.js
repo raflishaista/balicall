@@ -58,7 +58,43 @@ async function workerError(response) {
 }
 
 export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) {
-  const sttReady = Boolean(config.recordingSttUrl && config.recordingSttModel);
+  async function recordingCapabilities() {
+    const probe = async (base, key) => {
+      if (!base) return null;
+      try {
+        return await fetchJson(new URL('/health', base).href,
+          { headers: key ? { Authorization: `Bearer ${key}` } : {} }, 2000, fetchImpl);
+      } catch { return null; }
+    };
+    const [whisper, qwen, q8, pyannote] = await Promise.all([
+      probe(config.recordingSttUrl, config.recordingSttKey),
+      probe(config.qwenSttBaseUrl, config.qwenSttKey),
+      probe(config.qwenQ8BatchUrl, config.qwenQ8BatchKey),
+      probe(config.recordingPyannoteUrl, config.recordingPyannoteKey),
+    ]);
+    const advertised = (worker, model) => {
+      const entry = Array.isArray(worker?.recordingModels)
+        ? worker.recordingModels.find(item => item?.model === model) : null;
+      return Array.isArray(entry?.diarizers) ? entry.diarizers : [];
+    };
+    const byModel = new Map();
+    for (const model of config.recordingSttModels) {
+      let candidates;
+      if (model === QWEN_GGUF_MODEL) {
+        candidates = q8?.ready === true && q8.model === model && q8.batchDiarization === true ? ['nemotron'] : [];
+      } else if (model === QWEN_STT_MODEL) {
+        candidates = advertised(qwen, model).filter(name => name === 'none');
+      } else {
+        candidates = advertised(whisper, model).filter(name => name !== PYANNOTE_JSWOOK);
+        if (model === 'small' && advertised(pyannote, model).includes(PYANNOTE_JSWOOK)) {
+          candidates.push(PYANNOTE_JSWOOK);
+        }
+        candidates = candidates.filter(name => config.recordingDiarizers.includes(name));
+      }
+      if (candidates.length) byModel.set(model, [...new Set(candidates)]);
+    }
+    return byModel;
+  }
 
   // One job at a time: the STT worker serializes inference anyway.
   let tail = Promise.resolve();
@@ -106,11 +142,6 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     next();
   }
 
-  function requireReady(_req, res, next) {
-    if (!sttReady) return res.status(503).json({ error: 'Transkripsi rekaman belum dikonfigurasi (RECORDING_STT_URL dan RECORDING_STT_MODEL).' });
-    next();
-  }
-
   async function findOwned(req, res) {
     const row = await uploads.getUploadRow(req.params.id);
     if (!row || (req.recordingActor.id && row.owner_id !== req.recordingActor.id)) {
@@ -121,9 +152,18 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   }
 
   // ---- Processing ----------------------------------------------------------
-  function normalizeResult(result) {
+  function normalizeResult(result, row) {
     if (!result || typeof result.text !== 'string') throw new ServiceError('Worker mengembalikan hasil yang tidak valid.');
-    const segments = Array.isArray(result.segments)
+    const requestedDiarizer = row.diarizer || 'none';
+    const sttModelUsed = result.sttModelUsed ?? (row.stt_model === QWEN_GGUF_MODEL ? result.model : undefined);
+    const diarizerUsed = result.diarizerUsed ?? (row.stt_model === QWEN_GGUF_MODEL ? result.diarizer : undefined);
+    if (sttModelUsed !== row.stt_model) throw new ServiceError('Worker tidak mengonfirmasi model transkripsi yang dipilih.', 502);
+    if (diarizerUsed !== requestedDiarizer && diarizerUsed !== 'none') {
+      throw new ServiceError('Worker tidak mengonfirmasi pemisah pembicara yang dipilih.', 502);
+    }
+    const diarizationStatus = diarizerUsed !== 'none' ? 'applied'
+      : requestedDiarizer === 'none' ? 'not_requested' : 'unavailable';
+    const segments = diarizerUsed !== 'none' && Array.isArray(result.segments)
       ? result.segments.map(segment => ({
           text: String(segment?.text ?? '').trim(),
           speaker: String(segment?.speaker ?? '').slice(0, 100),
@@ -131,7 +171,8 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
           end: Number(segment?.end),
         })).filter(segment => segment.text && segment.speaker && Number.isFinite(segment.start) && Number.isFinite(segment.end))
       : [];
-    return { text: result.text.trim(), segments, durationSeconds: Number.isFinite(result.duration) ? result.duration : null };
+    return { text: result.text.trim(), segments, durationSeconds: Number.isFinite(result.duration) ? result.duration : null,
+      sttModelUsed, diarizerUsed, diarizationStatus };
   }
 
   async function transcribeFile(row) {
@@ -145,8 +186,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       }).catch(() => { throw new ServiceError('Worker Pyannote JSWOOK tidak dapat dijangkau.', 502); });
       if (!response.ok) throw await workerError(response);
       const result = await response.json().catch(() => null);
-      if (result?.diarizer !== PYANNOTE_JSWOOK) throw new ServiceError('Worker tidak mengembalikan hasil Pyannote JSWOOK.');
-      return normalizeResult(result);
+      return normalizeResult(result, row);
     }
     const isQwen = row.stt_model === QWEN_STT_MODEL;
     const isQ8 = row.stt_model === QWEN_GGUF_MODEL;
@@ -191,7 +231,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         if (isQ8 && (job.result?.model !== QWEN_GGUF_MODEL || job.result?.diarizer !== 'nemotron' || job.result?.speaker_scope !== 'recording')) {
           throw new ServiceError('Worker tidak mengembalikan hasil Q8 + Nemotron yang valid.');
         }
-        return normalizeResult(job.result);
+        return normalizeResult(job.result, row);
       }
     }
   }
@@ -245,7 +285,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   uploads.failInterrupted().catch(error => console.warn('[RECORDING] Startup cleanup skipped:', error.message));
 
   // ---- Routes --------------------------------------------------------------
-  app.post('/api/recording-uploads', requireActor, requireReady, receive, asyncRoute(async (req, res) => {
+  app.post('/api/recording-uploads', requireActor, receive, asyncRoute(async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'File rekaman (field "file") wajib dikirim.' });
     const discard = () => rm(file.path, { force: true }).catch(() => {});
@@ -265,24 +305,17 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         await discard();
         return res.status(400).json({ error: 'Model ringkasan tidak tersedia.' });
       }
-      const sttModel = String(req.body?.sttModel || config.recordingSttModel).trim();
-      if (!config.recordingSttModels.includes(sttModel)) {
+      const capabilities = await recordingCapabilities();
+      const sttModel = String(req.body?.sttModel || config.recordingSttModel || '').trim();
+      const supportedDiarizers = capabilities.get(sttModel);
+      if (!supportedDiarizers) {
         await discard();
-        return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
+        return res.status(capabilities.size ? 400 : 503).json({ error: 'Model transkripsi tidak tersedia.' });
       }
-      const isQ8 = sttModel === QWEN_GGUF_MODEL;
-      const diarizer = String(req.body?.diarizer || (isQ8 ? 'nemotron' : 'none')).trim();
-      if (isQ8 ? diarizer !== 'nemotron' : !config.recordingDiarizers.includes(diarizer)) {
+      const diarizer = String(req.body?.diarizer || (supportedDiarizers.includes('none') ? 'none' : supportedDiarizers[0])).trim();
+      if (!supportedDiarizers.includes(diarizer)) {
         await discard();
-        return res.status(400).json({ error: isQ8 ? 'Qwen Q8 menggunakan Nemotron-3 untuk pemisah pembicara.' : 'Pemisah pembicara tidak tersedia.' });
-      }
-      if (diarizer === PYANNOTE_JSWOOK && sttModel !== 'small') {
-        await discard();
-        return res.status(400).json({ error: 'Pyannote JSWOOK hanya tersedia dengan Whisper Small.' });
-      }
-      if (sttModel === QWEN_STT_MODEL && diarizer !== 'none') {
-        await discard();
-        return res.status(400).json({ error: 'Qwen belum mendukung pemisah pembicara.' });
+        return res.status(400).json({ error: 'Pemisah pembicara tidak tersedia untuk model transkripsi ini.' });
       }
       const title = String(req.body?.title || '').trim().slice(0, 255)
         || file.originalname.slice(0, -extension.length).slice(0, 255) || 'Rekaman';
@@ -304,15 +337,21 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     res.json({ success: true, uploads: await uploads.listUploads(req.recordingActor.id, limit) });
   }));
   
-  app.get('/api/recording-uploads/options', requireActor, (_req, res) => {
-    const defaultDiarizer = (config.recordingDiarization && config.recordingDiarizers.find(d => d !== 'none' && d !== PYANNOTE_JSWOOK)) || 'none';
+  app.get('/api/recording-uploads/options', requireActor, asyncRoute(async (_req, res) => {
+    const capabilities = await recordingCapabilities();
+    const models = [...capabilities.keys()];
+    const defaultModel = capabilities.has(config.recordingSttModel) ? config.recordingSttModel : models[0] || '';
+    const defaultChoices = capabilities.get(defaultModel) || [];
+    const preferred = config.recordingDiarization && defaultChoices.find(d => d !== 'none' && d !== PYANNOTE_JSWOOK);
+    const defaultDiarizer = preferred || defaultChoices[0] || 'none';
     res.json({
       success: true,
       llm: { default: config.llmModel, models: config.recordingLlmModels },
-      stt: { default: config.recordingSttModel, models: config.recordingSttModels },
-      diarizer: { default: defaultDiarizer, options: config.recordingDiarizers },
+      stt: { default: defaultModel, models },
+      diarizer: { default: defaultDiarizer, options: [...new Set([...capabilities.values()].flat())],
+        byModel: Object.fromEntries(capabilities) },
     });
-  });
+  }));
 
   app.get('/api/recording-uploads/:id', requireActor, asyncRoute(async (req, res) => {
     const row = await findOwned(req, res);

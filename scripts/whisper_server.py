@@ -261,6 +261,9 @@ def health():
         "model": loaded_model_id,
         "diarization": diar_model is not None,
         "diarization_model": loaded_diar_model_id,
+        "recordingModels": [{"model": loaded_model_id, "diarizers":
+                             ["none", "nemotron"] if diar_model is not None else ["none"]}]
+                           if whisper_model is not None else [],
         "engine": "faster-whisper / ctranslate2",
         "device": device_name,
     }
@@ -546,9 +549,14 @@ def run_transcription_job(job_id: str, file_path: str, language: Optional[str], 
             full_text = " ".join(seg.text.strip() for seg in segments).strip()
 
             aligned = []
+            diarizer_used = "none"
             if do_diarize and diar_model is not None:
                 print(f"[*] Job {job_id}: Running Nemotron-3 diarization...")
-                turns = run_diarization(waveform, sr=16000, threshold=threshold)
+                try:
+                    turns = run_diarization(waveform, sr=16000, threshold=threshold)
+                except Exception as error:
+                    print(f"[!] Job {job_id}: Nemotron diarization failed: {error}")
+                    turns = []
                 words = []
                 for seg in segments:
                     if seg.words:
@@ -558,30 +566,19 @@ def run_transcription_job(job_id: str, file_path: str, language: Optional[str], 
                                 words.append((w.start, w.end, w_text))
                     elif seg.text.strip():
                         words.append((seg.start, seg.end, seg.text.strip()))
-                aligned = align_words(words, turns, default_speaker="Pembicara 1", carry_previous_speaker=True)
-            elif segments:
-                aligned = [
-                    {
-                        "speaker": "Pembicara 1",
-                        "start": round(float(seg.start), 2),
-                        "end": round(float(seg.end), 2),
-                        "text": seg.text.strip(),
-                    }
-                    for seg in segments if seg.text.strip()
-                ]
-
-            if not aligned and full_text:
-                aligned = [{
-                    "speaker": "Pembicara 1",
-                    "start": 0.0,
-                    "end": duration_sec,
-                    "text": full_text,
-                }]
+                if turns:
+                    aligned = align_words(words, turns)
+                    if any(segment["speaker"] != "UNKNOWN" for segment in aligned):
+                        diarizer_used = "nemotron"
+                    else:
+                        aligned = []
 
             job["result"] = {
                 "text": full_text,
                 "segments": aligned,
                 "duration": duration_sec,
+                "sttModelUsed": loaded_model_id,
+                "diarizerUsed": diarizer_used,
             }
             job["status"] = "done"
             print(f"[OK] Job {job_id} complete: {len(aligned)} dialogue turns across {duration_sec:.1f}s.")
@@ -614,9 +611,10 @@ async def submit_transcription_job(
         raise HTTPException(503, "Whisper model is not available.")
 
     do_diarize = str(diarize).strip().lower() in ("true", "1", "yes") if diarize is not None else False
-    if do_diarize and diar_model is None:
-        print("[!] Note: Diarization requested but diar_model not available, continuing with standard transcription")
-        do_diarize = False
+    if model is not None and model != loaded_model_id:
+        raise HTTPException(400, "Requested transcription model is not loaded.")
+    if (do_diarize and diarizer not in (None, "nemotron")) or (not do_diarize and diarizer not in (None, "none")):
+        raise HTTPException(400, "Unsupported diarizer for this transcription job.")
 
     lang = language.lower().split("-")[0].split("_")[0] if language else None
     lang = {"indonesian": "id", "english": "en"}.get(lang, lang)
