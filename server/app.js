@@ -2566,6 +2566,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      canUpdateOwnMetadata: true,
     };
 
     if (microphoneIsRestricted) {

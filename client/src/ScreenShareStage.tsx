@@ -146,11 +146,12 @@ export function getQualityLabel(q: string): string {
 }
 
 export function ScreenShareStage({
-  tracks, focused, showThumbnails, fullscreen, fullscreenPending, fullscreenSupported,
+  tracks, room, focused, showThumbnails, fullscreen, fullscreenPending, fullscreenSupported,
   screenShareResolution = '1080p', onSelectScreenShareResolution,
   onFocus, onThumbnails, onFullscreen,
 }: {
   tracks: TrackReference[];
+  room?: any;
   focused: boolean; showThumbnails: boolean; fullscreen: boolean;
   fullscreenPending: boolean; fullscreenSupported: boolean;
   screenShareResolution?: ScreenShareResolution;
@@ -176,6 +177,9 @@ export function ScreenShareStage({
     setScale(1);
   }
 
+  const [broadcastResolution, setBroadcastResolution] = useState<ScreenShareResolution | null>(null);
+  const [decodedHeight, setDecodedHeight] = useState<number | null>(null);
+
   const [participantAttributes, setParticipantAttributes] = useState<Record<string, string>>(() => active?.participant?.attributes || {});
 
   useEffect(() => {
@@ -190,13 +194,56 @@ export function ScreenShareStage({
     };
   }, [active?.participant]);
 
+  useEffect(() => {
+    if (!room && !(active?.participant as any)?.on) return;
+    const handleDataReceived = (payload: Uint8Array, _participant?: any, _kind?: any, topic?: string) => {
+      if (topic !== 'screen_share_res') return;
+      try {
+        const text = new TextDecoder().decode(payload);
+        const data = JSON.parse(text);
+        if (data.type === 'screen_share_resolution') {
+          if (!data.participantIdentity || data.participantIdentity === active?.participant?.identity) {
+            if (data.resolution && data.resolution in RESOLUTION_RANKS) {
+              setBroadcastResolution(data.resolution as ScreenShareResolution);
+            }
+          }
+        }
+      } catch {}
+    };
+
+    room?.on?.('dataReceived', handleDataReceived);
+    (active?.participant as any)?.on?.('dataReceived', handleDataReceived);
+
+    if (active && !active.participant.isLocal && room?.localParticipant?.publishData) {
+      try {
+        const query = new Uint8Array(new TextEncoder().encode(JSON.stringify({
+          type: 'query_screen_share_resolution',
+          targetIdentity: active.participant.identity,
+        })));
+        room.localParticipant.publishData(query, { reliable: true, topic: 'screen_share_res' }).catch(() => {});
+      } catch {}
+    }
+
+    return () => {
+      room?.off?.('dataReceived', handleDataReceived);
+      (active?.participant as any)?.off?.('dataReceived', handleDataReceived);
+    };
+  }, [room, active?.participant]);
+
   const presenterAttrRes = active?.participant?.attributes?.screenShareResolution || participantAttributes.screenShareResolution;
   const trackNameRes = parseTrackNameResolution(active?.publication?.trackName);
-  const streamHeight = active?.publication?.dimensions?.height ||
-    (active?.publication?.track?.mediaStreamTrack?.getSettings?.().height);
 
-  const presenterRes = presenterAttrRes || trackNameRes || (streamHeight ? getResolutionFromHeight(streamHeight) : undefined);
-  const viewerOptions = useMemo(() => getAdaptiveViewerOptions(presenterRes, streamHeight), [presenterRes, streamHeight]);
+  // 1. Explicit presenter choice: broadcast data packet, participant attributes, trackName
+  const explicitRes = (broadcastResolution && broadcastResolution in RESOLUTION_RANKS ? broadcastResolution : undefined)
+    || (presenterAttrRes && presenterAttrRes in RESOLUTION_RANKS ? (presenterAttrRes as ScreenShareResolution) : undefined)
+    || trackNameRes;
+
+  // 2. Decoded stream frame height (from HTML <video> element videoHeight)
+  const streamDecodedRes = decodedHeight ? getResolutionFromHeight(decodedHeight) : undefined;
+
+  // Presenter ceiling: explicit choice takes absolute priority, then decoded video frame height
+  const presenterRes = explicitRes || streamDecodedRes;
+  const viewerOptions = useMemo(() => getAdaptiveViewerOptions(presenterRes), [presenterRes]);
 
   // Clamp receive quality if the presenter lowered resolution
   useEffect(() => {
@@ -385,6 +432,7 @@ export function ScreenShareStage({
       receiveQuality={receiveQuality}
       onScaleChange={setScale}
       onVideoResized={finishQualityEarly}
+      onDecodedHeightChange={setDecodedHeight}
     />
   </section>;
 }
@@ -397,6 +445,7 @@ function ScreenShareVideo({
   receiveQuality = 'original',
   onScaleChange,
   onVideoResized,
+  onDecodedHeightChange,
 }: {
   track: TrackReference;
   presenter: string;
@@ -405,11 +454,19 @@ function ScreenShareVideo({
   receiveQuality?: ReceiveQuality;
   onScaleChange: (scale: number) => void;
   onVideoResized?: () => void;
+  onDecodedHeightChange?: (h: number) => void;
 }) {
   const native = track.publication.track?.mediaStreamTrack;
   const [failedTrack, setFailedTrack] = useState<MediaStreamTrack>();
   const [isPanning, setIsPanning] = useState(false);
   const unavailable = useTrackUnavailable(native);
+
+  useEffect(() => {
+    if (native && typeof native.getSettings === 'function') {
+      const h = native.getSettings().height;
+      if (h) onDecodedHeightChange?.(h);
+    }
+  }, [native, onDecodedHeightChange]);
 
   useEffect(() => {
     const pub = track.publication as any;
@@ -512,7 +569,13 @@ function ScreenShareVideo({
           playsInline
           muted
           aria-label={`Layar ${presenter}`}
-          onResize={() => onVideoResized?.()}
+          onResize={(e: any) => {
+            const el = (e?.target || e?.currentTarget) as HTMLVideoElement | undefined;
+            if (el?.videoHeight) {
+              onDecodedHeightChange?.(el.videoHeight);
+            }
+            onVideoResized?.();
+          }}
           onError={() => setFailedTrack(native)}
         />
       </TransformComponent>

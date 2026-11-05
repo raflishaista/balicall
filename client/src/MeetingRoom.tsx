@@ -655,6 +655,7 @@ export function MeetingRoom({
           {sharing ? (
             <ScreenShareStage
               tracks={screenTracks}
+              room={room}
               focused={presentation.focused}
               showThumbnails={presentation.showThumbnails}
               fullscreen={fullScreen.fullscreen}
