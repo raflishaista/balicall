@@ -80,12 +80,14 @@ export const DiarizerLabels: Record<string, string> = {
   none: 'Tanpa pemisah pembicara',
   nemotron: 'Nemotron-3',
   pyannote: 'Pyannote',
+  'pyannote-jswook': 'Pyannote JSWOOK · Maks. 60 detik',
 };
 
 export const SttLabels: Record<string, string> = {
   small: 'Whisper Small',
   'small-id': 'Whisper Small (Indonesia)',
-  'qwen3-asr-0.6b': 'Qwen3-ASR 0.6B (eksperimental)',
+  'qwen3-asr-0.6b': 'Qwen3-ASR 0.6B',
+  'qwen3-asr-0.6b-gguf-q8': 'Qwen3-ASR 0.6B GGUF Q8_0',
 };
 
 export function uploadRecording(file: File, title: string, language: 'id' | 'en', llmModel: string, sttModel: string, diarizer: string) {
