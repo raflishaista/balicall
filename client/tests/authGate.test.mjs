@@ -17,6 +17,8 @@ function fixture({enabled=true,user={employeeId:'qc-user',name:'QC'},failLogout=
       assert.equal(path,'/auth/logout');logoutCalls++;if(failLogout)throw Error('Network unavailable');return {success:true};
     }},'./accountScope':{setAccountScope:value=>{scope=value;}},
     './summaryHistory':{clearSummarySession:()=>{cleared++;}},
+    './usePreferences':{usePreferences:()=>({preferences:{}})},
+    './BalitowerLoading':{BalitowerLoading:()=>null},
     './pushNotifications':{disablePush:async()=>{if(failPush)throw Error('Push unavailable');}},
     'lucide-react':{AlertCircle:()=>null,Eye:()=>null,EyeOff:()=>null,Loader2:()=>null,LockKeyhole:()=>null,Mail:()=>null}};
   const source=readFileSync(new URL('../src/AuthGate.tsx',import.meta.url),'utf8');
@@ -89,6 +91,8 @@ test('duplicate login attempt triggers active session popup, allowing cancel or 
     },
     './accountScope': { setAccountScope() {} },
     './summaryHistory': { clearSummarySession() {} },
+    './usePreferences': { usePreferences: () => ({ preferences: {} }) },
+    './BalitowerLoading': { BalitowerLoading: () => null },
     './pushNotifications': { disablePush: async () => {} },
     'lucide-react': { AlertCircle: () => null, Eye: () => null, EyeOff: () => null, Loader2: () => null, LockKeyhole: () => null, Mail: () => null }
   };

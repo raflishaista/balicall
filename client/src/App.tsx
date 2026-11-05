@@ -42,7 +42,7 @@ import { usePreJoinMedia } from './usePreJoinMedia';
 import { usePageFocus } from './usePageFocus';
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { PreJoinPreview } from './PreJoinPreview';
-import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, ChevronLeft, Home, Sparkles, Video } from 'lucide-react';
+import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, ChevronLeft, Home, Sparkles, Video, CalendarX, Info } from 'lucide-react';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
 
@@ -894,7 +894,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (generation !== summaryGeneration.current) return;
       const rawMessage = error instanceof Error ? error.message : '';
       const message = rawMessage.includes('No saved speech to summarize')
-        ? 'Belum ada rekaman percakapan untuk dibuat notulen. Silakan berbicara terlebih dahulu saat rapat.'
+        ? 'Belum ada rekaman percakapan untuk dibuat notulen.'
         : rawMessage || 'Gagal membuat notulen AI. Silakan coba lagi.';
       setSummaryError(message);
     } finally {
@@ -1620,15 +1620,25 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
 
         {view === 'in-call' && !token && (
-          <div className="call-recovery-card" role="region" aria-label="Sesi rapat" style={{ padding: '32px', textAlign: 'center' }}>
+          <div className="call-recovery-wrapper">
+            <div className="call-recovery-card" role="region" aria-label="Sesi rapat">
+              <div className="call-recovery-icon-badge" aria-hidden="true">
+                <CalendarX size={34} strokeWidth={2.2} />
+              </div>
             <h2>Sesi Rapat Telah Berakhir atau Kedaluwarsa</h2>
-            <p>Tidak ada sesi panggilan aktif atau token rapat telah kedaluwarsa.</p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '20px' }}>
-              <button type="button" className="button-secondary" onClick={() => navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined })}>
-                {isGuest ? 'Kembali ke Lobi' : 'Kembali ke Beranda'}
+            <p>Ruang rapat ini sudah selesai atau token sesi telah kedaluwarsa. Silakan kembali untuk membuat rapat baru atau memasukkan kode ruang rapat yang aktif.</p>
+            <div className="call-recovery-actions">
+              <button type="button" className="button-primary" onClick={() => navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined })}>
+                <Home size={15} /><span>{isGuest ? 'Kembali ke Lobi' : 'Kembali ke Beranda'}</span>
               </button>
+              {!isGuest && (
+                <button type="button" className="button-secondary" onClick={() => openLobby('join')}>
+                  <ArrowRight size={15} /><span>Gabung Rapat Lain</span>
+                </button>
+              )}
             </div>
           </div>
+        </div>
         )}
         
         {view === 'recordings' && !isGuest && (
@@ -1980,6 +1990,8 @@ function SummaryView({
   }
 
   if (summaryError && !summary) {
+    const isNoDialogue = transcripts.length === 0 || summaryError.includes('Belum ada rekaman');
+    const displayError = summaryError.replace(/\.?\s*Silakan berbicara terlebih dahulu saat rapat\.?/gi, '').trim();
     return (
       <div className="summary-page">
         <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
@@ -1993,17 +2005,17 @@ function SummaryView({
           </button>
         </div>
         <section className="summary-card">
-          <header className="summary-heading" style={{ borderBottom: '1px solid #fed7d7', paddingBottom: '20px' }}>
+          <header className="summary-heading" style={{ borderBottom: isNoDialogue ? '1px solid #e2e8f0' : '1px solid #fed7d7', paddingBottom: '20px' }}>
             <div>
-              <div className="ai-error-pill">
-                <AlertCircle size={14} />
-                <span>GAGAL MEMBUAT NOTULEN</span>
+              <div className={isNoDialogue ? 'ai-neutral-pill' : 'ai-error-pill'}>
+                {isNoDialogue ? <Info size={14} style={{ color: '#64748b' }} /> : <AlertCircle size={14} />}
+                <span>{isNoDialogue ? 'TIDAK ADA PERCAKAPAN' : 'GAGAL MEMBUAT NOTULEN'}</span>
               </div>
-              <h1 style={{ marginTop: '12px', color: '#b91c1c' }}>Notulen Rapat Belum Dapat Dibuat</h1>
+              <h1 style={{ marginTop: '12px', color: isNoDialogue ? '#1e293b' : '#b91c1c' }}>{isNoDialogue ? 'Belum Ada Percakapan untuk Notulen' : 'Notulen Rapat Belum Dapat Dibuat'}</h1>
               <p className="summary-meta">Ruang <strong>#{roomName}</strong> · Panggilan telah diakhiri · {transcripts.length} ucapan tersimpan</p>
             </div>
             <div className="summary-actions">
-              {onRetry && (
+              {onRetry && !isNoDialogue && (
                 <button className="button-primary" onClick={onRetry}>
                   🔄 Coba Buat Notulen Lagi
                 </button>
@@ -2012,11 +2024,11 @@ function SummaryView({
             </div>
           </header>
 
-          <div className="summary-error-notice">
-            <AlertCircle size={22} style={{ color: '#dc2626', flexShrink: 0 }} />
+          <div className={isNoDialogue ? 'summary-neutral-notice' : 'summary-error-notice'}>
+            {isNoDialogue ? <Info size={22} style={{ color: '#64748b', flexShrink: 0 }} /> : <AlertCircle size={22} style={{ color: '#dc2626', flexShrink: 0 }} />}
             <div>
-              <strong>Terjadi kendala saat menghubungi asisten AI:</strong>
-              <p>{summaryError}</p>
+              <strong>{isNoDialogue ? 'Informasi Notulen Rapat:' : 'Terjadi kendala saat menghubungi asisten AI:'}</strong>
+              <p>{displayError}</p>
             </div>
           </div>
 
