@@ -104,6 +104,7 @@ app.state.api_key = os.getenv('SPEECH_API_KEY', '')
 def health():
     ready = app.state.recognize is not None
     return {'ready': ready, 'model': MODEL_ALIAS, 'models': [MODEL_ALIAS] if ready else [],
+            'recordingModels': [{'model': MODEL_ALIAS, 'diarizers': ['none']}] if ready else [],
             'vad': 'silero', 'diarization': ready and diarizer_ready(),
             'batchDiarization': ready and nemotron_ready(),
             'diarizationConfigured': bool(os.getenv('QWEN_DIARIZATION_URL')),
@@ -260,7 +261,9 @@ def infer_long(job, path, language, diarize=False, diarizer='turns'):
 
 def run_job(job, path, language, diarize=False, diarizer='turns', admitted=False):
     try:
-        job['result'] = infer_long(job, path, language, diarize, diarizer)
+        result = infer_long(job, path, language, diarize, diarizer)
+        job['result'] = {**result, 'sttModelUsed': MODEL_ALIAS,
+                         'diarizerUsed': diarizer if diarize else 'none'}
         job['status'] = 'done'
     except Exception as error:
         logger.exception('Qwen long transcription job failed')

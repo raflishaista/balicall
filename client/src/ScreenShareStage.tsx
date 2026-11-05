@@ -1,6 +1,6 @@
 import { VideoTrack } from '@livekit/components-react';
 import type { TrackReference } from '@livekit/components-react';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VideoQuality } from 'livekit-client';
 import type { ScreenShareResolution } from './preferences';
 import { MonitorUp, Maximize, Minimize, PanelTop, Users, ZoomIn, ZoomOut, RotateCcw, Check } from 'lucide-react';
@@ -9,6 +9,111 @@ import type { ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch';
 import { useTrackUnavailable } from './useTrackUnavailable';
 
 export type ReceiveQuality = 'original' | '4k' | '1440p' | '1080p' | '720p' | '540p' | '360p' | 'auto' | 'high' | 'med' | 'low';
+
+export const RESOLUTION_RANKS: Record<ScreenShareResolution, number> = {
+  '360p': 1,
+  '540p': 2,
+  '720p': 3,
+  '1080p': 4,
+  '1440p': 5,
+  '4k': 6,
+  'original': 7,
+};
+
+export interface ViewerQualityOption {
+  value: ReceiveQuality;
+  label: string;
+}
+
+export function parseTrackNameResolution(trackName?: string): ScreenShareResolution | undefined {
+  if (!trackName) return undefined;
+  const match = trackName.match(/^screen_share:(original|4k|1440p|1080p|720p|540p|360p)$/);
+  return match ? (match[1] as ScreenShareResolution) : undefined;
+}
+
+export function getResolutionFromHeight(height?: number): ScreenShareResolution | undefined {
+  if (!height || height <= 0) return undefined;
+  if (height >= 2000) return '4k';
+  if (height >= 1400) return '1440p';
+  if (height >= 1000) return '1080p';
+  if (height >= 700) return '720p';
+  if (height >= 500) return '540p';
+  return '360p';
+}
+
+export function getAdaptiveViewerOptions(
+  presenterResolution?: string,
+  streamHeight?: number,
+): ViewerQualityOption[] {
+  let effectiveRes: ScreenShareResolution = 'original';
+
+  if (presenterResolution && presenterResolution in RESOLUTION_RANKS) {
+    effectiveRes = presenterResolution as ScreenShareResolution;
+  } else if (streamHeight) {
+    const fromHeight = getResolutionFromHeight(streamHeight);
+    if (fromHeight) effectiveRes = fromHeight;
+  }
+
+  const maxRank = RESOLUTION_RANKS[effectiveRes] ?? 7;
+
+  const allTiers: { value: ReceiveQuality; rank: number; baseLabel: string; maxLabel: string }[] = [
+    {
+      value: 'original',
+      rank: 7,
+      baseLabel: 'Asli (Resolusi Penuh • Paling Tajam)',
+      maxLabel: 'Asli (Maksimal Presenter • Resolusi Layar Penuh)',
+    },
+    {
+      value: '4k',
+      rank: 6,
+      baseLabel: '4K (Ultra HD • 2160p)',
+      maxLabel: '4K (Maksimal Presenter • Ultra HD • 2160p)',
+    },
+    {
+      value: '1440p',
+      rank: 5,
+      baseLabel: '1440p (2K Quad HD)',
+      maxLabel: '1440p (Maksimal Presenter • 2K Quad HD)',
+    },
+    {
+      value: '1080p',
+      rank: 4,
+      baseLabel: '1080p (Full HD)',
+      maxLabel: '1080p (Maksimal Presenter • Full HD)',
+    },
+    {
+      value: '720p',
+      rank: 3,
+      baseLabel: '720p (HD)',
+      maxLabel: '720p (Maksimal Presenter • HD)',
+    },
+    {
+      value: '540p',
+      rank: 2,
+      baseLabel: '540p (Standar)',
+      maxLabel: '540p (Maksimal Presenter • Standar)',
+    },
+    {
+      value: '360p',
+      rank: 1,
+      baseLabel: '360p (Hemat Kuota)',
+      maxLabel: '360p (Maksimal Presenter • Hemat Kuota)',
+    },
+  ];
+
+  const eligible = allTiers.filter(t => t.rank <= maxRank);
+  const options: ViewerQualityOption[] = eligible.map((t, idx) => ({
+    value: t.value,
+    label: (idx === 0 && effectiveRes !== 'original') ? t.maxLabel : t.baseLabel,
+  }));
+
+  options.push({
+    value: 'auto',
+    label: 'Otomatis',
+  });
+
+  return options;
+}
 
 function screenShareKey(track: TrackReference) {
   return `${track.participant.identity}:${track.publication.trackSid}`;
@@ -70,6 +175,37 @@ export function ScreenShareStage({
     setPrevActiveKey(activeKey);
     setScale(1);
   }
+
+  const [participantAttributes, setParticipantAttributes] = useState<Record<string, string>>(() => active?.participant?.attributes || {});
+
+  useEffect(() => {
+    if (!active?.participant) return;
+    setParticipantAttributes(active.participant.attributes || {});
+    const onAttributesChanged = (changedAttrs: Record<string, string>) => {
+      setParticipantAttributes(prev => ({ ...prev, ...changedAttrs }));
+    };
+    (active.participant as any)?.on?.('attributesChanged', onAttributesChanged);
+    return () => {
+      (active.participant as any)?.off?.('attributesChanged', onAttributesChanged);
+    };
+  }, [active?.participant]);
+
+  const presenterAttrRes = active?.participant?.attributes?.screenShareResolution || participantAttributes.screenShareResolution;
+  const trackNameRes = parseTrackNameResolution(active?.publication?.trackName);
+  const streamHeight = active?.publication?.dimensions?.height ||
+    (active?.publication?.track?.mediaStreamTrack?.getSettings?.().height);
+
+  const presenterRes = presenterAttrRes || trackNameRes || (streamHeight ? getResolutionFromHeight(streamHeight) : undefined);
+  const viewerOptions = useMemo(() => getAdaptiveViewerOptions(presenterRes, streamHeight), [presenterRes, streamHeight]);
+
+  // Clamp receive quality if the presenter lowered resolution
+  useEffect(() => {
+    if (!active || active.participant.isLocal) return;
+    const isAvailable = viewerOptions.some(opt => opt.value === receiveQuality);
+    if (!isAvailable && viewerOptions.length > 0) {
+      setReceiveQuality(viewerOptions[0].value);
+    }
+  }, [viewerOptions, receiveQuality, active]);
 
   const triggerQualityFeedback = useCallback((target: string) => {
     if (applyTimer.current) clearTimeout(applyTimer.current);
@@ -177,14 +313,11 @@ export function ScreenShareStage({
               disabled={qualityApplying}
               onChange={event => handleViewerQualityChange(event.target.value as ReceiveQuality)}
             >
-              <option value="original">Asli (Resolusi Penuh • Paling Tajam)</option>
-              <option value="4k">4K (Ultra HD • 2160p)</option>
-              <option value="1440p">1440p (2K Quad HD)</option>
-              <option value="1080p">1080p (Full HD)</option>
-              <option value="720p">720p (HD)</option>
-              <option value="540p">540p (Standar)</option>
-              <option value="360p">360p (Hemat Kuota)</option>
-              <option value="auto">Otomatis</option>
+              {viewerOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
             {qualityApplying && (
               <span className="circular-spinner-inline" title="Menerapkan resolusi..." aria-hidden="true">

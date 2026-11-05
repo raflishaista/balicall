@@ -1,7 +1,9 @@
 import { SEA_LIVE_MODEL } from './seaLiveConfig.js';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { MING_LIVE_MODEL } from './mingLiveConfig.js';
 
+export const PYANNOTE_JSWOOK = 'pyannote-jswook';
 export const QWEN_STT_MODEL = 'qwen3-asr-0.6b';
 export const QWEN_GGUF_MODEL = 'qwen3-asr-0.6b-gguf-q8';
 export function availableSttModels(config) {
@@ -63,6 +65,8 @@ export function loadConfig(env = process.env) {
     recordingSttUrl: env.RECORDING_STT_URL || '',
     recordingSttModel: env.RECORDING_STT_MODEL || env.STT_MODEL || '',
     recordingSttKey: env.RECORDING_STT_API_KEY || env.STT_API_KEY || '',
+    recordingPyannoteUrl: env.RECORDING_PYANNOTE_URL || '',
+    recordingPyannoteKey: '',
     recordingDiarization: env.RECORDING_DIARIZATION === 'true',
     recordingPollMs: Number(env.RECORDING_POLL_MS || 5000),
     recordingMaxProcessMin: Number(env.RECORDING_MAX_PROCESS_MIN || 240),
@@ -73,6 +77,8 @@ export function loadConfig(env = process.env) {
    
     qwenSttBaseUrl: env.QWEN_STT_BASE_URL || '',
     qwenGgufSttBaseUrl: env.QWEN_GGUF_STT_BASE_URL || '',
+    qwenQ8BatchUrl: env.QWEN_Q8_BATCH_URL || '',
+    qwenQ8BatchKey: env.QWEN_Q8_BATCH_KEY || '',
     qwenBatchEnabled: env.QWEN_BATCH_ENABLED === 'true',
     qwenBatchEgressMode: env.QWEN_BATCH_EGRESS_MODE || 'web',
     qwenBatchRecordingsDir: env.QWEN_BATCH_RECORDINGS_DIR || '',
@@ -144,6 +150,10 @@ export function loadConfig(env = process.env) {
     throw new Error('Production requires non-development LiveKit credentials');
   }
   if (!Number.isInteger(config.recordingUploadMaxMb) || config.recordingUploadMaxMb < 1 || config.recordingUploadMaxMb > 5000) throw new Error('RECORDING_UPLOAD_MAX_MB must be an integer from 1 to 5000');
+  if (config.qwenQ8BatchUrl) {
+    const url = new URL(config.qwenQ8BatchUrl);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password || url.search || url.hash || !config.qwenQ8BatchKey) throw new Error('Q8 batch requires a local HTTP endpoint and a key');
+  }
   if (!['web', 'sdk'].includes(config.qwenBatchEgressMode)) throw new Error('QWEN_BATCH_EGRESS_MODE must be web or sdk');
   if (!Number.isInteger(config.recordingPollMs) || config.recordingPollMs < 1000 || config.recordingPollMs > 60000) throw new Error('RECORDING_POLL_MS must be 1000–60000 milliseconds');
   if (!Number.isInteger(config.recordingMaxProcessMin) || config.recordingMaxProcessMin < 1 || config.recordingMaxProcessMin > 1440) throw new Error('RECORDING_MAX_PROCESS_MIN must be an integer from 1 to 1440');
@@ -155,11 +165,23 @@ export function loadConfig(env = process.env) {
   }
   config.recordingLlmModels = [...new Set([config.llmModel, ...config.recordingLlmModels])];
   config.recordingSttModels = [...new Set([config.recordingSttModel, ...config.recordingSttModels].filter(Boolean))]
-    .filter(name => name !== QWEN_STT_MODEL || config.qwenSttBaseUrl);
+    .filter(name => (name !== QWEN_STT_MODEL || config.qwenSttBaseUrl)
+      && (name !== QWEN_GGUF_MODEL || config.qwenQ8BatchUrl));
   if (config.qwenSttBaseUrl && !config.recordingSttModels.includes(QWEN_STT_MODEL)) config.recordingSttModels.push(QWEN_STT_MODEL);
+  if (config.qwenQ8BatchUrl && !config.recordingSttModels.includes(QWEN_GGUF_MODEL)) config.recordingSttModels.push(QWEN_GGUF_MODEL);
   for (const name of [...config.recordingLlmModels, ...config.recordingSttModels]) {
     if (!/^[\w.\-:/]{1,64}$/.test(name)) throw new Error(`Invalid model name in recording model list: ${name}`);
   }
   config.recordingDiarizers = ['none', ...new Set(config.recordingDiarizers.filter(name => ['pyannote', 'nemotron'].includes(name)))];
+  if (config.recordingPyannoteUrl) {
+    const url = new URL(config.recordingPyannoteUrl);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+      || url.username || url.password || url.search || url.hash || !env.RECORDING_PYANNOTE_KEY_FILE) {
+      throw new Error('Recording Pyannote requires a local HTTP endpoint and a key file');
+    }
+    config.recordingPyannoteKey = readFileSync(env.RECORDING_PYANNOTE_KEY_FILE, 'utf8').trim();
+    if (!config.recordingPyannoteKey) throw new Error('Recording Pyannote key file is empty');
+    if (config.recordingSttModels.includes('small')) config.recordingDiarizers.push(PYANNOTE_JSWOOK);
+  }
   return config;
 }

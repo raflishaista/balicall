@@ -92,7 +92,9 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
                 <StatusBadge item={upload} /> · {upload.originalFilename || 'Rekaman'} · {formatSize(upload.fileSize)} ·
                 durasi {formatDuration(upload.durationSeconds)} · diunggah {date(upload.createdAt)}
                 {upload.llmModel ? ` · model ${upload.llmModel}` : ''}
-                {upload.sttModel ? ` · STT ${SttLabels[upload.sttModel] || upload.sttModel}` : ''}
+                {transcript?.sttModelUsed ? ` · STT ${SttLabels[transcript.sttModelUsed] || transcript.sttModelUsed}`
+                  : transcript?.text ? ' · Model aktual tidak tercatat' : ''}
+                {transcript?.diarizerUsed ? ` · ${DiarizerLabels[transcript.diarizerUsed] || transcript.diarizerUsed}` : ''}
               </p>
             </div>
             <div className="summary-actions">
@@ -164,6 +166,9 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
           {transcript?.text && (
             <section className="summary-section" style={{ marginTop: '20px' }}>
               <div className="transcript-heading"><div><h2>Transkrip</h2></div></div>
+              {transcript.diarizationStatus === 'unavailable' && (
+                <p className="summary-note">Transkrip selesai tanpa label pembicara. Pemisah pembicara gagal menghasilkan label.</p>
+              )}
               {transcript.segments?.length ? (
                 <div className="recap-transcript-list">
                   {transcript.segments.map((seg, i) => {
@@ -219,20 +224,31 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
   const [llmModel, setLlmModel] = useState('');
   const [sttModels, setSttModels] = useState<string[]>([]);
   const [sttModel, setSttModel] = useState('');
-  const [diarizers, setDiarizers] = useState<string[]>([]);
-  const [diarizer, setDiarizer] = useState('none');
-  const fixedDiarizer = sttModel === 'qwen3-asr-0.6b' ? 'none' : sttModel === 'qwen3-asr-0.6b-gguf-q8' ? 'nemotron' : null;
-  const compatibleDiarizers = diarizers.filter(name => name !== 'pyannote-jswook' || sttModel === 'small');
-  const uploadDiarizer = fixedDiarizer ?? (compatibleDiarizers.includes(diarizer) ? diarizer : 'none');
+  const [diarizersByModel, setDiarizersByModel] = useState<Record<string, string[]>>({});
+  const [diarizer, setDiarizer] = useState('');
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const compatibleDiarizers = diarizersByModel[sttModel] || [];
+  const uploadDiarizer = compatibleDiarizers.includes(diarizer) ? diarizer : compatibleDiarizers[0] || '';
 
-  useEffect(() => {
-    getOptions().then(o => {
-      setLlmModels(o.llm.models); setLlmModel(o.llm.default);
-      const models = o.stt.models;
-      setSttModels(models); setSttModel(models.includes(o.stt.default) ? o.stt.default : models[0] || '');
-      setDiarizers(o.diarizer.options); setDiarizer(o.diarizer.default);
-    }).catch(() => {});
+  const refreshOptions = useCallback(async () => {
+    setLoadingOptions(true);
+    setOptionsError(null);
+    try {
+      const o = await getOptions();
+      setLlmModels(o.llm.models); setLlmModel(current => o.llm.models.includes(current) ? current : o.llm.default);
+      const byModel = o.diarizer.byModel ?? {};
+      const models = o.stt.models.filter(model => byModel[model]?.length);
+      setSttModels(models); setSttModel(current => models.includes(current) ? current : o.stt.default);
+      setDiarizersByModel(byModel);
+      setDiarizer(current => current || o.diarizer.default);
+      if (!models.length) setOptionsError('Belum ada model transkripsi yang siap. Coba perbarui.');
+    } catch (error) {
+      setSttModels([]); setSttModel(''); setDiarizersByModel({});
+      setOptionsError(featureError('Memuat pilihan model', error));
+    } finally { setLoadingOptions(false); }
   }, []);
+  useEffect(() => { void refreshOptions(); }, [refreshOptions]);
 
   const refresh = useCallback(async () => {
     try { setItems((await listUploads()).uploads); setListError(null); }
@@ -264,7 +280,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
   };
 
   const submit = async () => {
-    if (!file || uploading) return;
+    if (!file || uploading || loadingOptions || !sttModel || !uploadDiarizer) return;
     setUploading(true); setFormError(null);
     try {
       const { upload } = await uploadRecording(
@@ -298,7 +314,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
             <p>Unggah rekaman MP3 atau MP4. Sistem membuat transkrip, lalu AI menyusun ringkasan, keputusan, dan tindak lanjut.</p>
           </div>
           <div className="history-header-actions">
-            <button type="button" className="button-secondary compact-btn" onClick={() => void refresh()}>
+            <button type="button" className="button-secondary compact-btn" onClick={() => { void refresh(); void refreshOptions(); }}>
               <RefreshCw size={13} /><span>Perbarui</span>
             </button>
           </div>
@@ -369,7 +385,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
               </select>
             </label>
           )}
-          {sttModels.length > 1 && (
+          {sttModels.length > 0 && (
             <label className="rec-field">
               <span>Model transkripsi</span>
               <select value={sttModel} disabled={uploading} onChange={e => setSttModel(e.target.value)}>
@@ -377,19 +393,20 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
               </select>
             </label>
           )}
-          {(fixedDiarizer || compatibleDiarizers.length > 1) && (
+          {compatibleDiarizers.length > 0 && (
             <label className="rec-field">
               <span>Pemisah pembicara</span>
               <select value={uploadDiarizer}
-                disabled={uploading || fixedDiarizer !== null}
+                disabled={uploading || compatibleDiarizers.length === 1}
                 onChange={e => setDiarizer(e.target.value)}>
-                {(fixedDiarizer ? [fixedDiarizer] : compatibleDiarizers).map(name => <option key={name} value={name}>{DiarizerLabels[name] || name}</option>)}
+                {compatibleDiarizers.map(name => <option key={name} value={name}>{DiarizerLabels[name] || name}</option>)}
               </select>
             </label>
           )}
         </div>
         {formError && <div className="summary-note" role="alert"><AlertCircle size={16} />{formError}</div>}
-        <button type="button" className="button-primary" disabled={!file || uploading} onClick={() => void submit()}>
+        {optionsError && <div className="summary-note" role="alert"><AlertCircle size={16} />{optionsError}</div>}
+        <button type="button" className="button-primary" disabled={!file || uploading || loadingOptions || !sttModel || !uploadDiarizer} onClick={() => void submit()}>
           {uploading ? <><Loader2 size={14} className="ui-spinner" /> Mengunggah…</> : <><Upload size={14} /> Unggah & proses</>}
         </button>
         {uploading && <p className="rec-hint">Jangan tutup halaman ini sampai unggahan selesai. File besar membutuhkan waktu.</p>}
