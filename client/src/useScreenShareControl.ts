@@ -134,6 +134,9 @@ export function useScreenShareControl(
     onResolutionChange?.(next);
 
     if (participant?.isScreenShareEnabled) {
+      if (typeof participant.setAttributes === 'function') {
+        participant.setAttributes({ screenShareResolution: next }).catch(() => {});
+      }
       try {
         const pub = participant.getTrackPublication(Track.Source.ScreenShare);
         const videoTrack = pub?.track as LocalVideoTrack | undefined;
@@ -201,6 +204,9 @@ export function useScreenShareControl(
     try {
       if (participant.isScreenShareEnabled) {
         await participant.setScreenShareEnabled(false);
+        if (typeof participant.setAttributes === 'function') {
+          participant.setAttributes({ screenShareResolution: '' }).catch(() => {});
+        }
       } else {
         const preset = SCREEN_SHARE_PRESETS[chosenRes] || SCREEN_SHARE_PRESETS['1080p'];
         // Capture directly from the click to preserve browser user activation.
@@ -229,11 +235,15 @@ export function useScreenShareControl(
         const simulcastLayers = getScreenShareSimulcastLayers(chosenRes);
         await participant.publishTrack(video, {
           source: Track.Source.ScreenShare,
+          name: `screen_share:${chosenRes}`,
           simulcast: true,
           degradationPreference: 'maintain-resolution',
           screenShareEncoding: preset.encoding,
           screenShareSimulcastLayers: simulcastLayers,
         });
+        if (typeof participant.setAttributes === 'function') {
+          participant.setAttributes({ screenShareResolution: chosenRes }).catch(() => {});
+        }
         if (!isCurrent() || isEnded()) {
           tracks.forEach(track => track.stop());
           await participant.unpublishTrack(video);
