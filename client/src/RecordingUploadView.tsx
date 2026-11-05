@@ -89,7 +89,7 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
               <p className="eyebrow">NOTULEN REKAMAN · {upload.provider || 'AI ASSISTANT'}</p>
               <h1>{summary?.title || upload.title}</h1>
               <p className="summary-meta">
-                <StatusBadge item={upload} /> · {upload.originalFilename || 'rekaman.mp4'} · {formatSize(upload.fileSize)} ·
+                <StatusBadge item={upload} /> · {upload.originalFilename || 'Rekaman'} · {formatSize(upload.fileSize)} ·
                 durasi {formatDuration(upload.durationSeconds)} · diunggah {date(upload.createdAt)}
                 {upload.llmModel ? ` · model ${upload.llmModel}` : ''}
                 {upload.sttModel ? ` · STT ${SttLabels[upload.sttModel] || upload.sttModel}` : ''}
@@ -207,22 +207,28 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
   };
 
   const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState('');
+  const [manualTitle, setManualTitle] = useState<string | null>(null);
+  const title = manualTitle ?? file?.name.replace(/\.mp[34]$/i, '') ?? '';
   const [language, setLanguage] = useState<'id' | 'en'>('id');
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragDepth = useRef(0);
   const [llmModels, setLlmModels] = useState<string[]>([]);
   const [llmModel, setLlmModel] = useState('');
   const [sttModels, setSttModels] = useState<string[]>([]);
   const [sttModel, setSttModel] = useState('');
   const [diarizers, setDiarizers] = useState<string[]>([]);
   const [diarizer, setDiarizer] = useState('none');
+  const fixedDiarizer = sttModel === 'qwen3-asr-0.6b' ? 'none' : sttModel === 'qwen3-asr-0.6b-gguf-q8' ? 'nemotron' : null;
+  const compatibleDiarizers = diarizers.filter(name => name !== 'pyannote-jswook' || sttModel === 'small');
+  const uploadDiarizer = fixedDiarizer ?? (compatibleDiarizers.includes(diarizer) ? diarizer : 'none');
 
   useEffect(() => {
     getOptions().then(o => {
       setLlmModels(o.llm.models); setLlmModel(o.llm.default);
-      const models = o.stt.models.filter(model => model !== 'qwen3-asr-0.6b');
+      const models = o.stt.models;
       setSttModels(models); setSttModel(models.includes(o.stt.default) ? o.stt.default : models[0] || '');
       setDiarizers(o.diarizer.options); setDiarizer(o.diarizer.default);
     }).catch(() => {});
@@ -242,13 +248,19 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
     return () => clearInterval(timer);
   }, [hasActive, selectedId, refresh]);
 
-  const pickFile = (picked: File | null) => {
+  const pickFiles = (files: FileList | null) => {
+    if (uploading || !files?.length) return;
     setFormError(null);
-    if (!picked) { setFile(null); return; }
-    if (!/\.mp4$/i.test(picked.name)) { setFormError('Hanya file .mp4 yang didukung.'); setFile(null); return; }
+    if (files.length !== 1) {
+      setFormError('Pilih satu file rekaman MP3 atau MP4.');
+      setFile(null);
+      return;
+    }
+    const picked = files[0];
+    if (!/\.mp[34]$/i.test(picked.name)) { setFormError('Hanya file MP3 dan MP4 yang didukung.'); setFile(null); return; }
     if (picked.size > MAX_UPLOAD_MB * 1024 * 1024) { setFormError(`Ukuran file melebihi ${MAX_UPLOAD_MB} MB.`); setFile(null); return; }
     setFile(picked);
-    if (!title.trim()) setTitle(picked.name.replace(/\.mp4$/i, ''));
+    if (manualTitle !== null && !manualTitle.trim()) setManualTitle(null);
   };
 
   const submit = async () => {
@@ -257,11 +269,10 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
     try {
       const { upload } = await uploadRecording(
         file, title.trim(), language, llmModel, sttModel,
-        sttModel === 'qwen3-asr-0.6b' ? 'none' : diarizer,
+        uploadDiarizer,
       );
       setItems(prev => [upload, ...prev]);
-      setFile(null); setTitle('');
-      if (fileInput.current) fileInput.current.value = '';
+      setFile(null); setManualTitle(null);
     } catch (e) {
       setFormError(featureError('Mengunggah rekaman', e));
     } finally {
@@ -284,7 +295,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
           <div className="history-title-copy">
             <span className="page-kicker">REKAMAN TERUNGGAH</span>
             <h1>Unggah Rekaman Rapat</h1>
-            <p>Unggah rekaman MP4. Sistem membuat transkrip, lalu AI menyusun ringkasan, keputusan, dan tindak lanjut.</p>
+            <p>Unggah rekaman MP3 atau MP4. Sistem membuat transkrip, lalu AI menyusun ringkasan, keputusan, dan tindak lanjut.</p>
           </div>
           <div className="history-header-actions">
             <button type="button" className="button-secondary compact-btn" onClick={() => void refresh()}>
@@ -296,15 +307,52 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
 
       <section className="surface-card rec-form" aria-label="Unggah rekaman">
         <div className="rec-form-grid">
-          <label className="rec-field rec-field-file">
-            <span>File rekaman (.mp4, maks {MAX_UPLOAD_MB} MB)</span>
-            <input ref={fileInput} type="file" accept=".mp4,video/mp4" disabled={uploading}
-              onChange={e => pickFile(e.target.files?.[0] ?? null)} />
-          </label>
+          <div className="rec-field rec-field-file"
+            onDragEnter={event => {
+              if (!event.dataTransfer.types.includes('Files')) return;
+              event.preventDefault();
+              if (uploading) return;
+              dragDepth.current += 1;
+              setIsDraggingFile(true);
+            }}
+            onDragOver={event => {
+              if (!event.dataTransfer.types.includes('Files')) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = uploading ? 'none' : 'copy';
+            }}
+            onDragLeave={() => {
+              dragDepth.current = Math.max(0, dragDepth.current - 1);
+              if (dragDepth.current === 0) setIsDraggingFile(false);
+            }}
+            onDrop={event => {
+              event.preventDefault();
+              dragDepth.current = 0;
+              setIsDraggingFile(false);
+              pickFiles(event.dataTransfer.files);
+            }}
+          >
+            <span>File rekaman</span>
+            <input ref={fileInput} type="file" accept=".mp3,.mp4,audio/mpeg,audio/mp4,video/mp4" disabled={uploading} hidden
+              onChange={event => {
+                pickFiles(event.currentTarget.files);
+                event.currentTarget.value = '';
+              }} />
+            <button type="button" className={`rec-drop-zone${isDraggingFile ? ' is-dragging' : ''}`}
+              aria-label={file ? 'Ganti file rekaman' : 'Pilih file rekaman'}
+              aria-describedby="recording-file-limit"
+              disabled={uploading} onClick={() => fileInput.current?.click()}>
+              <Upload size={20} aria-hidden="true" />
+              <strong>{isDraggingFile ? 'Lepas file di sini' : file ? 'Seret file baru ke sini atau klik untuk mengganti' : 'Seret file ke sini atau klik untuk memilih'}</strong>
+              <span id="recording-file-limit">MP3 atau MP4 · Maksimal {MAX_UPLOAD_MB} MB</span>
+            </button>
+            <div aria-live="polite">
+              {file && <p className="rec-file-info"><FileVideo size={14} aria-hidden="true" /> <span>{file.name} · {formatSize(file.size)}</span></p>}
+            </div>
+          </div>
           <label className="rec-field">
             <span>Judul</span>
             <input type="text" value={title} maxLength={255} disabled={uploading}
-              onChange={e => setTitle(e.target.value)} placeholder="Contoh: Rapat mingguan NOC" />
+              onChange={e => setManualTitle(e.target.value)} placeholder="Contoh: Rapat mingguan NOC" />
           </label>
           <label className="rec-field">
             <span>Bahasa</span>
@@ -329,18 +377,17 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
               </select>
             </label>
           )}
-          {diarizers.length > 1 && (
+          {(fixedDiarizer || compatibleDiarizers.length > 1) && (
             <label className="rec-field">
               <span>Pemisah pembicara</span>
-              <select value={sttModel === 'qwen3-asr-0.6b' ? 'none' : diarizer}
-                disabled={uploading || sttModel === 'qwen3-asr-0.6b'}
+              <select value={uploadDiarizer}
+                disabled={uploading || fixedDiarizer !== null}
                 onChange={e => setDiarizer(e.target.value)}>
-                {diarizers.map(name => <option key={name} value={name}>{DiarizerLabels[name] || name}</option>)}
+                {(fixedDiarizer ? [fixedDiarizer] : compatibleDiarizers).map(name => <option key={name} value={name}>{DiarizerLabels[name] || name}</option>)}
               </select>
             </label>
           )}
         </div>
-        {file && <p className="rec-file-info"><FileVideo size={14} /> {file.name} · {formatSize(file.size)}</p>}
         {formError && <div className="summary-note" role="alert"><AlertCircle size={16} />{formError}</div>}
         <button type="button" className="button-primary" disabled={!file || uploading} onClick={() => void submit()}>
           {uploading ? <><Loader2 size={14} className="ui-spinner" /> Mengunggah…</> : <><Upload size={14} /> Unggah & proses</>}
@@ -353,7 +400,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
       <section className="surface-card history-archive-card">
         <header className="card-heading"><div><h2>Daftar Rekaman ({items.length})</h2></div></header>
         {loading ? <p><Loader2 size={14} className="ui-spinner" /> Memuat…</p> : items.length === 0 ? (
-          <div className="empty-meetings"><h3>Belum ada rekaman</h3><p>Unggah file MP4 pertama Anda di atas.</p></div>
+          <div className="empty-meetings"><h3>Belum ada rekaman</h3><p>Unggah file MP3 atau MP4 pertama Anda di atas.</p></div>
         ) : (
           <div className="history-cards-grid">
             {items.map(item => (
@@ -368,7 +415,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
                   <h3 className="schedule-item-title">{item.title}</h3>
                   <p className="history-item-desc">
                     {item.status === 'failed' ? (item.error || 'Gagal diproses.')
-                      : `${item.originalFilename || 'rekaman.mp4'} · ${formatSize(item.fileSize)} · durasi ${formatDuration(item.durationSeconds)}`}
+                      : `${item.originalFilename || 'Rekaman'} · ${formatSize(item.fileSize)} · durasi ${formatDuration(item.durationSeconds)}`}
                   </p>
                 </div>
                 <div className="schedule-card-actions">

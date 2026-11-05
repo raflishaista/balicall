@@ -2,10 +2,10 @@ import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
 import { mkdir, open, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { extname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchJson, ServiceError, summarize } from './providers.js';
-import { QWEN_STT_MODEL } from './config.js';
+import { PYANNOTE_JSWOOK, QWEN_GGUF_MODEL, QWEN_STT_MODEL } from './config.js';
 import * as uploads from './recordingStore.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -15,17 +15,40 @@ export const DiarizerLabels = {
   none: 'Tanpa pemisah pembicara',
   nemotron: 'Nemotron-3',
   pyannote: 'Pyannote',
+  [PYANNOTE_JSWOOK]: 'Pyannote JSWOOK',
 };
 
-async function looksLikeMp4(path) {
+const recordingMimeTypes = new Map([['.mp3', 'audio/mpeg'], ['.mp4', 'video/mp4']]);
+const recordingExtension = filename => extname(filename).toLowerCase();
+
+async function matchesRecordingFormat(path, extension) {
   const handle = await open(path, 'r');
   try {
     const buffer = Buffer.alloc(12);
     const { bytesRead } = await handle.read(buffer, 0, 12, 0);
-    return bytesRead >= 12 && buffer.toString('latin1', 4, 8) === 'ftyp';
+    if (extension === '.mp4') return bytesRead >= 12 && buffer.toString('latin1', 4, 8) === 'ftyp';
+    if (extension !== '.mp3' || bytesRead < 4) return false;
+    if (buffer.toString('latin1', 0, 3) === 'ID3') {
+      if (bytesRead < 10 || buffer[3] < 2 || buffer[3] > 4) return false;
+      const sizeBytes = buffer.subarray(6, 10);
+      if (sizeBytes.some(byte => byte & 0x80)) return false;
+      const tagSize = sizeBytes.reduce((size, byte) => size * 128 + byte, 0);
+      const footerSize = buffer[3] === 4 && (buffer[5] & 0x10) ? 10 : 0;
+      const frame = await handle.read(buffer, 0, 4, 10 + tagSize + footerSize);
+      if (frame.bytesRead < 4) return false;
+    }
+    // MPEG audio sync, a valid version, Layer III, bitrate and sample rate.
+    return buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0
+      && (buffer[1] & 0x18) !== 0x08 && (buffer[1] & 0x06) === 0x02
+      && (buffer[2] & 0xf0) !== 0xf0 && (buffer[2] & 0x0c) !== 0x0c;
   } finally {
     await handle.close();
   }
+}
+
+async function appendRecording(form, path) {
+  const extension = recordingExtension(path);
+  form.append('file', await openAsBlob(path, { type: recordingMimeTypes.get(extension) }), `recording${extension}`);
 }
 
 async function workerError(response) {
@@ -55,12 +78,12 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     storage: multer.diskStorage({
       destination: (_req, _file, cb) => mkdir(config.recordingUploadDir, { recursive: true })
         .then(() => cb(null, config.recordingUploadDir), cb),
-      filename: (_req, _file, cb) => cb(null, `${randomUUID()}.mp4`),
+      filename: (_req, file, cb) => cb(null, `${randomUUID()}${recordingExtension(file.originalname)}`),
     }),
     limits: { fileSize: config.recordingUploadMaxMb * 1024 * 1024, files: 1, fields: 5 },
-    fileFilter: (_req, file, cb) => /\.mp4$/i.test(file.originalname)
+    fileFilter: (_req, file, cb) => recordingMimeTypes.has(recordingExtension(file.originalname))
       ? cb(null, true)
-      : cb(new ServiceError('Hanya file .mp4 yang didukung.', 415)),
+      : cb(new ServiceError('Hanya file MP3 dan MP4 yang didukung.', 415)),
   });
 
   const receive = (req, res, next) => upload.single('file')(req, res, error => {
@@ -112,18 +135,35 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   }
 
   async function transcribeFile(row) {
+    if (row.diarizer === PYANNOTE_JSWOOK) {
+      const form = new FormData();
+      await appendRecording(form, row.file_path);
+      form.append('language', row.language);
+      const response = await fetchImpl(`${config.recordingPyannoteUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
+        method: 'POST', body: form, headers: { Authorization: `Bearer ${config.recordingPyannoteKey}` },
+        signal: AbortSignal.timeout(5 * 60_000),
+      }).catch(() => { throw new ServiceError('Worker Pyannote JSWOOK tidak dapat dijangkau.', 502); });
+      if (!response.ok) throw await workerError(response);
+      const result = await response.json().catch(() => null);
+      if (result?.diarizer !== PYANNOTE_JSWOOK) throw new ServiceError('Worker tidak mengembalikan hasil Pyannote JSWOOK.');
+      return normalizeResult(result);
+    }
     const isQwen = row.stt_model === QWEN_STT_MODEL;
-    const base = (isQwen ? config.qwenSttBaseUrl : config.recordingSttUrl).replace(/\/+$/, '');
-    const sttKey = isQwen ? config.qwenSttKey : config.recordingSttKey;
+    const isQ8 = row.stt_model === QWEN_GGUF_MODEL;
+    const endpoint = isQ8 ? config.qwenQ8BatchUrl : isQwen ? config.qwenSttBaseUrl : config.recordingSttUrl;
+    if (!endpoint) throw new ServiceError('Worker untuk model transkripsi ini belum dikonfigurasi.', 503);
+    const base = endpoint.replace(/\/+$/, '');
+    const sttKey = isQ8 ? config.qwenQ8BatchKey : isQwen ? config.qwenSttKey : config.recordingSttKey;
     const headers = sttKey ? { Authorization: `Bearer ${sttKey}` } : {};
     const form = new FormData();
     // File-backed Blob: streams from disk instead of loading the whole recording into RAM.
-    form.append('file', await openAsBlob(row.file_path, { type: 'video/mp4' }), 'recording.mp4');
+    await appendRecording(form, row.file_path);
     form.append('model', row.stt_model || config.recordingSttModel);
     form.append('language', row.language);
-    const useDiarizer = !isQwen && row.diarizer && row.diarizer !== 'none';
+    const diarizer = isQ8 ? 'nemotron' : isQwen ? 'none' : row.diarizer;
+    const useDiarizer = diarizer && diarizer !== 'none';
     form.append('diarize', String(Boolean(useDiarizer)));
-    if (useDiarizer) form.append('diarizer', row.diarizer);
+    if (useDiarizer) form.append('diarizer', diarizer);
     const submitResponse = await fetchImpl(`${base}/audio/transcriptions/jobs`,
       { method: 'POST', headers, body: form, signal: AbortSignal.timeout(10 * 60 * 1000) })
       .catch(() => { throw new ServiceError('Worker STT tidak dapat dijangkau. Pastikan worker berjalan.', 502); });
@@ -147,7 +187,12 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         continue;
       }
       if (job.status === 'failed') throw new ServiceError(job.error || 'Transkripsi gagal di worker.');
-      if (job.status === 'done') return normalizeResult(job.result);
+      if (job.status === 'done') {
+        if (isQ8 && (job.result?.model !== QWEN_GGUF_MODEL || job.result?.diarizer !== 'nemotron' || job.result?.speaker_scope !== 'recording')) {
+          throw new ServiceError('Worker tidak mengembalikan hasil Q8 + Nemotron yang valid.');
+        }
+        return normalizeResult(job.result);
+      }
     }
   }
 
@@ -205,9 +250,10 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     if (!file) return res.status(400).json({ error: 'File rekaman (field "file") wajib dikirim.' });
     const discard = () => rm(file.path, { force: true }).catch(() => {});
     try {
-      if (!await looksLikeMp4(file.path)) {
+      const extension = recordingExtension(file.originalname);
+      if (!await matchesRecordingFormat(file.path, extension)) {
         await discard();
-        return res.status(415).json({ error: 'Isi file bukan MP4 yang valid.' });
+        return res.status(415).json({ error: `Isi file tidak cocok dengan format ${extension.slice(1).toUpperCase()}.` });
       }
       const language = req.body?.language || 'id';
       if (!['id', 'en'].includes(language)) {
@@ -224,17 +270,22 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         await discard();
         return res.status(400).json({ error: 'Model transkripsi tidak tersedia.' });
       }
-      const diarizer = String(req.body?.diarizer || 'none').trim();
-      if (!config.recordingDiarizers.includes(diarizer)) {
+      const isQ8 = sttModel === QWEN_GGUF_MODEL;
+      const diarizer = String(req.body?.diarizer || (isQ8 ? 'nemotron' : 'none')).trim();
+      if (isQ8 ? diarizer !== 'nemotron' : !config.recordingDiarizers.includes(diarizer)) {
         await discard();
-        return res.status(400).json({ error: 'Pemisah pembicara tidak tersedia.' });
+        return res.status(400).json({ error: isQ8 ? 'Qwen Q8 menggunakan Nemotron-3 untuk pemisah pembicara.' : 'Pemisah pembicara tidak tersedia.' });
+      }
+      if (diarizer === PYANNOTE_JSWOOK && sttModel !== 'small') {
+        await discard();
+        return res.status(400).json({ error: 'Pyannote JSWOOK hanya tersedia dengan Whisper Small.' });
       }
       if (sttModel === QWEN_STT_MODEL && diarizer !== 'none') {
         await discard();
         return res.status(400).json({ error: 'Qwen belum mendukung pemisah pembicara.' });
       }
       const title = String(req.body?.title || '').trim().slice(0, 255)
-        || file.originalname.replace(/\.mp4$/i, '').slice(0, 255) || 'Rekaman';
+        || file.originalname.slice(0, -extension.length).slice(0, 255) || 'Rekaman';
       const created = await uploads.createUpload({
         id: randomUUID(), ownerId: req.recordingActor.id, ownerName: req.recordingActor.name,
         title, originalFilename: file.originalname.slice(0, 255), filePath: file.path,
@@ -254,7 +305,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   }));
   
   app.get('/api/recording-uploads/options', requireActor, (_req, res) => {
-    const defaultDiarizer = (config.recordingDiarization && config.recordingDiarizers.find(d => d !== 'none')) || 'none';
+    const defaultDiarizer = (config.recordingDiarization && config.recordingDiarizers.find(d => d !== 'none' && d !== PYANNOTE_JSWOOK)) || 'none';
     res.json({
       success: true,
       llm: { default: config.llmModel, models: config.recordingLlmModels },

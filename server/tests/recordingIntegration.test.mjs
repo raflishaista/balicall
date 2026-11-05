@@ -31,29 +31,47 @@ test('upload choices reach the worker and database without losing speaker segmen
   const config = { ...loadConfig({ LLM_PROVIDER: 'demo', RECORDING_STT_URL: 'http://synthetic-worker/v1',
     RECORDING_STT_MODEL: 'small', RECORDING_STT_MODELS: 'small', RECORDING_DIARIZERS: 'nemotron,pyannote' }),
     recordingUploadDir: join(directory, 'uploads'), dataFile: join(directory, 'meetings.json'), recordingPollMs: 1 };
+  config.recordingPyannoteUrl = 'http://127.0.0.1:8018/v1';
+  config.recordingPyannoteKey = 'synthetic-key';
+  config.recordingDiarizers.push('pyannote-jswook');
+  const transcript = { text: 'Rapat dimulai.', duration: 2,
+    segments: [{ text: 'Rapat dimulai.', speaker: 'Pembicara 1', start: 0, end: 2 }] };
   const context = createApp(config, { livekitProbe: async () => [], fetchImpl: async (url, options) => {
+    if (url === `${config.recordingPyannoteUrl}/audio/transcriptions`) {
+      const file = options.body.get('file');
+      calls.push({ name: file.name, type: file.type, diarizer: 'pyannote-jswook' });
+      return Response.json({ ...transcript, diarizer: 'pyannote-jswook' });
+    }
     if (url.endsWith('/audio/transcriptions/jobs')) {
-      calls.push({ diarize: options.body.get('diarize'), diarizer: options.body.get('diarizer'), model: options.body.get('model') });
+      const file = options.body.get('file');
+      calls.push({ name: file.name, type: file.type, diarize: options.body.get('diarize'), diarizer: options.body.get('diarizer') });
       return Response.json({ job_id: 'synthetic-job' });
     }
     assert.ok(url.endsWith('/audio/transcriptions/jobs/synthetic-job'));
-    return Response.json({ status: 'done', result: { text: 'Rapat dimulai.', duration: 2,
-      segments: [{ text: 'Rapat dimulai.', speaker: 'Pembicara 1', start: 0, end: 2 }] } });
+    return Response.json({ status: 'done', result: transcript });
   } });
   const server = context.app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}/api/recording-uploads`;
   t.after(async () => { context.close(); await new Promise(resolve => server.close(resolve)); rmSync(directory, { recursive: true, force: true }); });
   const choices = await (await fetch(base + '/options')).json();
-  assert.deepEqual(choices.diarizer.options, ['none', 'nemotron', 'pyannote']);
-  for (const diarizer of ['nemotron', 'none']) {
+  assert.deepEqual(choices.diarizer.options, ['none', 'nemotron', 'pyannote', 'pyannote-jswook']);
+  const mp3Frame = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
+  const taggedMp3 = Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 3]), Buffer.alloc(3), mp3Frame]);
+  const mp4 = Buffer.from('0000ftypSynthetic fixture');
+  for (const [diarizer, extension, type, payload] of [
+    ['nemotron', 'mp4', 'video/mp4', mp4],
+    ['none', 'MP3', 'audio/mpeg', mp3Frame],
+    ['pyannote-jswook', 'mp3', 'audio/mpeg', taggedMp3],
+  ]) {
     const form = new FormData();
-    form.append('title', 'Synthetic QA'); form.append('language', 'id');
+    form.append('language', 'id');
     form.append('llmModel', config.llmModel); form.append('sttModel', 'small'); form.append('diarizer', diarizer);
-    form.append('file', new Blob([Buffer.from('0000ftypSynthetic fixture')], { type: 'video/mp4' }), 'synthetic.mp4');
+    form.append('file', new Blob([payload]), `Synthetic QA.${extension}`);
     const response = await fetch(base, { method: 'POST', body: form });
     const submitted = await response.json(); assert.equal(response.status, 202, JSON.stringify(submitted));
     assert.equal(submitted.upload.diarizer, diarizer);
+    assert.equal(submitted.upload.title, 'Synthetic QA');
     let stored;
     for (let tries = 0; tries < 100; tries++) {
       stored = (await (await fetch(base + '/' + submitted.upload.id)).json()).upload;
@@ -63,8 +81,15 @@ test('upload choices reach the worker and database without losing speaker segmen
     assert.equal(stored.status, 'done', JSON.stringify(stored));
     assert.equal(stored.diarizer, diarizer);
     assert.equal(stored.transcript.segments[0].speaker, 'Pembicara 1');
-    assert.equal(calls.at(-1).diarize, diarizer === 'none' ? 'false' : 'true');
+    assert.equal(calls.at(-1).name, `recording.${extension.toLowerCase()}`);
+    assert.equal(calls.at(-1).type, type);
+    if (diarizer !== 'pyannote-jswook') assert.equal(calls.at(-1).diarize, diarizer === 'none' ? 'false' : 'true');
     assert.equal(calls.at(-1).diarizer, diarizer === 'none' ? null : diarizer);
+  }
+  for (const [name, payload] of [['wrong.mp3', mp4], ['wrong.mp4', taggedMp3], ['unsupported.wav', mp3Frame]]) {
+    const form = new FormData();
+    form.append('file', new Blob([payload]), name);
+    assert.equal((await fetch(base, { method: 'POST', body: form })).status, 415);
   }
   await t.test('manual speaker labels update persisted transcript rows without duplicating speech',async()=>{
     const {saveTranscripts}=await import('../db.js');
