@@ -32,7 +32,9 @@ def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
         key=secret if secret is not None else os.getenv('SEA_LIVE_STT_SECRET','')
         if len(key)<32: raise RuntimeError('SEA_LIVE_STT_SECRET must contain at least 32 characters')
         app.state.verifier=TicketVerifier(key,MODEL)
-        limit=max_sessions if max_sessions is not None else int(os.getenv('SEA_LIVE_MAX_SESSIONS','2'))
+        limit=max_sessions
+        if limit is None:
+            limit=int(os.getenv('SEA_LIVE_MAX_SESSIONS','0')) or None
         app.state.sessions=RetainedSessions(limit=limit)
         app.state.engine=engine if engine is not None else SeaEngine()
         app.state.active=0
@@ -146,7 +148,7 @@ def create_app(engine=None,secret=None,diarizer_factory=None,max_sessions=None):
         except Exception as error:
             logger.warning('SEA live session failed: %s',type(error).__name__)
             with suppress(Exception):
-                await socket.send_json(dict(type='error',error='SEA streaming gagal atau kapasitas penuh. Coba lagi.'))
+                await socket.send_json(dict(type='error',error='SEA streaming gagal. Coba lagi.'))
         finally:
             for task in (get,receiver):
                 if task:

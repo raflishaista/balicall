@@ -7,7 +7,7 @@ if [[ ! -r "$SEA_ASR_ROOT/sea-worker.env" ]]; then
   exit 1
 fi
 set -a
-# This dedicated file contains only SEA_LIVE_STT_SECRET.
+# Set SEA_LIVE_MAX_SESSIONS to 1–8 to cap microphone sessions. Omit it or set it to 0 for no cap.
 . "$SEA_ASR_ROOT/sea-worker.env"
 if [[ -r "$SEA_ASR_ROOT/sea-diarization.env" ]]; then
   . "$SEA_ASR_ROOT/sea-diarization.env"
