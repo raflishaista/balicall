@@ -16,7 +16,8 @@ class SeaEngine:
 
     def new_detector(self):
         import webrtcvad
-        vad=webrtcvad.Vad(2)
+        vad_mode=min(3,max(0,int(os.getenv('SEA_VAD_MODE','1'))))
+        vad=webrtcvad.Vad(vad_mode)
         pending=b''
         def speech(audio):
             nonlocal pending

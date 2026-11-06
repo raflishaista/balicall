@@ -38,6 +38,12 @@ lock = Lock()
 SOURCES = model_sources(MODEL, os.getenv("WHISPER_SMALL_ID_PATH", ""))
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
 CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "4"))
+DEFAULT_PROMPT_ID = (
+    "Rapat teknis Bali Tower: diskusi AI, Computer Vision, YOLOv12, DINOv2, "
+    "RF-DETR Seg, RT-DETR, Grad-CAM, Focal Loss, RapidOCR, CVAT, dataset, "
+    "training, epoch, evaluasi, segmentasi, LiveKit, WebRTC."
+)
+INITIAL_PROMPT_ID = os.getenv("WHISPER_INITIAL_PROMPT_ID", DEFAULT_PROMPT_ID).strip()
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -92,9 +98,12 @@ def decode_waveform(payload):
 
 
 def transcribe_waveform(audio, language, diarize, whisper):
+    prompt = INITIAL_PROMPT_ID if language == "id" and INITIAL_PROMPT_ID else None
+    kwargs = {"initial_prompt": prompt} if prompt else {}
     decoded, _ = whisper.transcribe(
         audio, language=language, vad_filter=True, word_timestamps=diarize,
         condition_on_previous_text=False, beam_size=BEAM_SIZE, best_of=1,
+        **kwargs,
     )
     return list(decoded)
 
@@ -244,9 +253,12 @@ def infer_long(job, path, language, diarize, model, diarizer="pyannote"):
         if not len(audio):
             return result
         started = perf_counter()
+        prompt = INITIAL_PROMPT_ID if language == "id" and INITIAL_PROMPT_ID else None
+        kwargs = {"initial_prompt": prompt} if prompt else {}
         decoded, _ = whisper.transcribe(
             audio, language=language, vad_filter=True, word_timestamps=diarize,
             condition_on_previous_text=False, beam_size=BEAM_SIZE, best_of=1,
+            **kwargs,
         )
         decoded = list(decoded)
         logger.info("LONG STT model=%s audio_s=%.1f inference_s=%.1f",

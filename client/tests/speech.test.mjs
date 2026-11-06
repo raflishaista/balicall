@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { startSpeechRecognition } from '../src/speechRecognition.ts';
+import { startSpeechRecognition, normalizeBrowserSpeechText, selectBestAlternative } from '../src/speechRecognition.ts';
 import { useSpeechTranscription } from '../src/useSpeechTranscription.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -107,6 +107,35 @@ test('repeated final result events do not save the same sentence twice', () => {
   const { recognition, values, dispose } = setup();
   recognition.onstart(); recognition.final('one sentence'); recognition.final('one sentence');
   assert.deepEqual(values.finals, ['one sentence']);
+  dispose();
+});
+
+test('browser speech configures maxAlternatives and selects/normalizes technical alternatives', () => {
+  const { recognition, values, dispose } = setup();
+  assert.equal(recognition.maxAlternatives, 3);
+  recognition.onstart();
+  recognition.onresult({
+    resultIndex: 0,
+    results: [{
+      isFinal: true,
+      length: 3,
+      0: { transcript: 'kita atur nilai agamanya untuk vokal los', confidence: 0.85 },
+      1: { transcript: 'kita atur nilai gamma untuk Focal Loss', confidence: 0.78 },
+      2: { transcript: 'kita atur nilai agama', confidence: 0.60 },
+    }],
+  });
+  assert.deepEqual(values.finals, ['kita atur nilai gamma untuk Focal Loss']);
+  assert.equal(
+    normalizeBrowserSpeechText('evaluasi gerak cam dan di novel 2 bersama rfd tr sex serta yolo v 12 s'),
+    'evaluasi Grad-CAM dan DINOv2 bersama RF-DETR Seg serta YOLOv12s',
+  );
+  assert.equal(
+    selectBestAlternative({
+      isFinal: true,
+      0: { transcript: 'uji nilai agamanya pada gerak cam' },
+    }),
+    'uji nilai gammanya pada Grad-CAM',
+  );
   dispose();
 });
 

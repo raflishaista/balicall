@@ -1919,6 +1919,8 @@ async function syncActionItemsToItProject(
       }
       catch { return res.status(400).json({error:'Segmen streaming tidak valid.'}); }
       if ([QWEN_LIVE_MODEL,QWEN_GGUF_LIVE_MODEL,SEA_LIVE_MODEL].includes(req.body.sttModel)) final.segments=applySpeakerAliases(store.get(req.meetingId),final.segments);
+      final.text = normalizeTranscriptText(final.text);
+      final.segments = final.segments.map(segment => ({ ...segment, text: normalizeTranscriptText(segment.text) }));
       const existing = store.findEntry(store.get(req.meetingId),req.speakerId,final.requestId);
       if (existing) return res.json({success:true,entry:existing});
       if (!writable(req,res)) return;

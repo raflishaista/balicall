@@ -1,6 +1,6 @@
 import { useMicrophoneLevel } from './useMicrophoneLevel';
 import { useWhisperLiveTranscription } from './useWhisperLiveTranscription.ts';
-import { useState, useEffect, useEffectEvent, useRef, useCallback } from 'react';
+import { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react';
 import { featureError } from './api';
 import { resolveTranscriptionPreferences, PREFERENCES_KEY } from './preferences';
 import type { ScreenShareResolution } from './preferences';
@@ -59,7 +59,11 @@ export function InCallView({ callDuration,
       deviceId: joinMedia.microphoneId === 'default' ? undefined : { exact: joinMedia.microphoneId },
       echoCancellation: true,
       noiseSuppression: true,
-      autoGainControl: true,
+      // Disable aggressive browser AGC when using a shared conference room microphone
+      // to prevent room-noise pumping and initial-consonant clipping on rapid turns.
+      autoGainControl: !Boolean(callPreferences?.sharedRoomMic),
+      channelCount: 1,
+      sampleRate: 48000,
     },
     videoCaptureDefaults: {
       deviceId: joinMedia.cameraId === 'default' ? undefined : { exact: joinMedia.cameraId },
@@ -194,7 +198,23 @@ function RoomContent({
   const preferredOutputError = usePreferredAudioOutput(room, connected, callPreferences.outputId);
   const camera = useCameraControl(localParticipant, connected, startWithCamera);
   const blur = useBackgroundBlur(localParticipant, isCameraEnabled, connected);
-  const microphone = useMicrophoneControl(localParticipant, connected);
+  const audioCaptureOptions = useMemo(() => ({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: !Boolean(callPreferences?.sharedRoomMic),
+    channelCount: 1,
+    sampleRate: 48000,
+  }), [callPreferences?.sharedRoomMic]);
+  const microphone = useMicrophoneControl(localParticipant, connected, audioCaptureOptions);
+  useEffect(() => {
+    const mediaStreamTrack = microphoneTrack?.track?.mediaStreamTrack;
+    if (!mediaStreamTrack || typeof mediaStreamTrack.applyConstraints !== 'function') return;
+    void mediaStreamTrack.applyConstraints({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: !Boolean(callPreferences?.sharedRoomMic),
+    }).catch(() => {});
+  }, [microphoneTrack?.track?.mediaStreamTrack, callPreferences?.sharedRoomMic]);
   const [screenShareRes, setScreenShareRes] = useState<ScreenShareResolution>(() => callPreferences.screenShareResolution || '1080p');
   const onScreenShareResChange = useCallback((res: ScreenShareResolution) => {
     setScreenShareRes(res);
@@ -231,7 +251,7 @@ function RoomContent({
   const [selectedSttModel, setSelectedSttModel] = useState<string | null>(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).model || null);
   const [transcriptionNotice, setTranscriptionNotice] = useState(() => resolveTranscriptionPreferences(callPreferences, sttConfigured, sttModels, defaultSttModel, sttProvider).notice);
   const [modelPending, setModelPending] = useState(false);
-  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelError, setModelError] = useState(null as string | null);
   const sttModel = selectedSttModel || defaultSttModel;
   const isLiveModel = isLiveTranscriptionModel(sttModel);
   const paused = isMuted || !connected || isSummarizing || saveBlocked;

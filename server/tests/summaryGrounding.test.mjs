@@ -46,6 +46,7 @@ test('truncated model output is rejected even if its prefix parses as valid JSON
 import {normalizeTranscriptText} from '../providers.js';
 test('normalization does not guess a person name or change a phonetic word into another meaning',()=>{
  assert.equal(normalizeTranscriptText('Enok ikut perlombongan, bukan permohonan.'),'Enok ikut perlombongan, bukan permohonan.');
+ assert.equal(normalizeTranscriptText('Evaluasi gerak cam, di novel 2, rfd tr sex, vokal los, dan nilai agamanya di balitower.'),'Evaluasi Grad-CAM, DINOv2, RF-DETR Seg, Focal Loss, dan nilai gammanya di Bali Tower.');
 });
 test('decimal values cannot be confused with whole numbers by citation validation',async()=>{
  const subject={...meeting,transcripts:[{speakerName:'QC',text:'Disepakati anggaran 1.5 juta.'}]};
