@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import dotenv from 'dotenv';
 import { loadConfig } from '../config.js';
 import { createApp } from '../app.js';
-import { createItProjectClient } from '../itproject.js';
+import { createItProjectClient } from '../itproject/client.js';
 
 const mockSessionToken = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG';
 const mockCsrf = createHash('sha256').update('balicall-csrf:' + mockSessionToken).digest('hex');
