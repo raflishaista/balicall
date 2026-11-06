@@ -671,6 +671,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     if (data.schedule) {
       setSchedules(prev => [data.schedule, ...prev].sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart)));
     }
+    return data.schedule;
   };
 
   const applyPostMeetingBatch = useCallback((job: PostMeetingBatchJob) => {
@@ -716,9 +717,15 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
   };
 
-  const handleJoinScheduledRoom = (scheduledRoomName: string) => {
-    setRoomName(scheduledRoomName);
-    openLobby('join');
+  const handleJoinScheduledRoom = (scheduledRoomOrCode: string) => {
+    const trimmed = scheduledRoomOrCode.trim();
+    const matched = schedules.find(
+      s => (s.roomCode && s.roomCode.toUpperCase() === trimmed.toUpperCase()) || s.roomName.toLowerCase() === trimmed.toLowerCase()
+    );
+    const resolvedCode = matched?.roomCode || (/^[A-Za-z0-9]{5}$/.test(trimmed) ? trimmed.toUpperCase() : '');
+    setRoomName(matched?.roomName || trimmed);
+    setRoomCode(resolvedCode);
+    openLobby('join', undefined, resolvedCode);
   };
 
   const openSchedule = () => {
@@ -1342,14 +1349,18 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     }).catch(() => setCallError('Tidak dapat menyalin ringkasan. Periksa izin clipboard browser.'));
   };
 
-  const openLobby = (intent: 'create' | 'join', preferences = userPreferences.preferences) => {
+  const openLobby = (intent: 'create' | 'join', preferences = userPreferences.preferences, presetRoomCode?: string) => {
     joinGeneration.current++; joinPending.current = false; setIsJoining(false);
     preJoinMedia.resetLobby();
     preJoinMedia.applyChoices(mediaChoices(preferences, qwenDiarizationForModel(preferences.transcriptionModel, backendHealth)));
     const targetIntent = isGuest ? 'join' : intent;
     setMeetingIntent(targetIntent);
     if (targetIntent === 'create') {
-      setRoomCode(generateRoomCode());
+      setRoomCode(presetRoomCode || generateRoomCode());
+    } else if (presetRoomCode !== undefined) {
+      setRoomCode(presetRoomCode);
+    } else if (!isGuest) {
+      setRoomCode('');
     }
     setJoinError(null);
     navigateTo({ view: 'lobby', intent: targetIntent });
@@ -1401,7 +1412,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
 
         <div className="header-meta">
-          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}setRoomName(room);openLobby('join');}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();navigateTo({ view: 'summary', meetingId: null });}}/>}
+          {authUser&&!isGuest&&<NotificationCenter onJoin={room=>{if(view==='in-call'){setCallError('Keluar dari rapat aktif sebelum membuka undangan lain.');return;}handleJoinScheduledRoom(room);}} onSummary={()=>{if(view==='in-call'){setCallError('Buka notulen setelah keluar dari rapat aktif.');return;}void fetchDbSummaries();navigateTo({ view: 'summary', meetingId: null });}}/>}
           {authUser&&!isGuest&&view==='in-call'&&meetingId&&token&&<EmployeeInvites meetingId={meetingId} token={token}/>}
           {view === 'in-call' && authUser && !isGuest && <button className="button-secondary" type="button" onClick={() => {
             void apiRequest<{inviteCode:string; roomCode?: string}>(meetingPath(meetingId!, 'guest-invite'), {method:'POST',headers:{Authorization:'Bearer '+token}})
@@ -1451,13 +1462,11 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           onCreate={() => openLobby('create')}
           onJoin={(code?: string) => {
             if (code) {
-              const clean = code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
-              setRoomCode(clean);
-              setRoomName(clean);
+              handleJoinScheduledRoom(code);
             } else {
               setRoomCode('');
+              openLobby('join', undefined, '');
             }
-            openLobby('join');
           }}
           onSchedule={openSchedule}
           upcomingSchedules={schedules}

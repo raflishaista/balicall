@@ -682,7 +682,7 @@ async function syncActionItemsToItProject(
     },
   }));
 
-  attachAuth(app, config, authStore, createGuestAccess(store));
+  attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
   attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
@@ -1061,13 +1061,44 @@ async function syncActionItemsToItProject(
       if(req.auth)employeeName=req.auth.user.name;
     }
 
-    const active = [...store.meetings.values()].find(meeting => {
+    let active = [...store.meetings.values()].find(meeting => {
       if (meeting.status !== 'active' || meeting.attendanceFinalization) return false;
       if (targetCode && meeting.roomCode && meeting.roomCode.toUpperCase() === targetCode) return true;
       if (roomName && meeting.roomName === roomName.trim()) return true;
       if (roomName && meeting.roomCode && meeting.roomCode.toUpperCase() === roomName.trim().toUpperCase()) return true;
       return false;
     });
+
+    let scheduled = null;
+    let scheduledHostId = '';
+
+    if (!guestMeeting) {
+      const schedules = await getUpcomingSchedules().catch(() => []);
+      const now = Date.now();
+      const cleanRoom = roomName ? roomName.trim() : '';
+      const upperRoom = cleanRoom.toUpperCase();
+
+      scheduled = schedules.find(item => {
+        if (item.status === 'cancelled' || Date.parse(item.scheduledEnd) <= now) return false;
+        if (targetCode && item.roomCode && item.roomCode.toUpperCase() === targetCode) return true;
+        if (upperRoom && item.roomCode && item.roomCode.toUpperCase() === upperRoom) return true;
+        if (cleanRoom && item.roomName && item.roomName.toLowerCase() === cleanRoom.toLowerCase()) return true;
+        return false;
+      }) || null;
+
+      scheduledHostId = scheduled?.hostId || '';
+
+      if (scheduled && !active) {
+        active = store.ensureScheduledRoom({
+          roomName: scheduled.roomName,
+          roomCode: scheduled.roomCode,
+          hostId: scheduledHostId || cleanId,
+          scheduleId: scheduled.id,
+          scheduledStart: scheduled.scheduledStart,
+          scheduledEnd: scheduled.scheduledEnd,
+        });
+      }
+    }
 
     if (intent === 'join' && !active && !guestMeeting) {
       return res.status(404).json({
@@ -1079,31 +1110,15 @@ async function syncActionItemsToItProject(
     if (duplicate && !duplicate.leftAt && (!req.auth?.user.isGuest || duplicate.guestTokenIssued) && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
     }
-    // const meeting = guestMeeting || store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
-    let scheduledHostId = '';
 
-    if (!guestMeeting) {
-      const schedules = await getUpcomingSchedules().catch(() => []);
-      const now = Date.now();
-
-      const scheduled = schedules.find(item =>
-        item.roomName === roomName.trim() &&
-        item.hostId &&
-        Date.parse(item.scheduledStart) <= now + 60_000 &&
-        Date.parse(item.scheduledEnd) > now
-      );
-
-      scheduledHostId = scheduled?.hostId || '';
-    }
-
-    const meeting = guestMeeting || store.join(active ? active.roomName : roomName.trim(), {
+    const meeting = guestMeeting || store.join(active ? active.roomName : (scheduled ? scheduled.roomName : roomName.trim()), {
       employeeId: cleanId,
       employeeName: employeeName.trim(),
       department: department.trim(),
-      hostId: scheduledHostId || cleanId,
-      roomCode: targetCode || (active ? active.roomCode : undefined),
+      hostId: scheduledHostId || (active?.hostId || cleanId),
+      roomCode: (active && active.roomCode) || (scheduled && scheduled.roomCode) || targetCode || undefined,
       intent,
-    }, { requireExisting: intent === 'join' && scheduledHostId !== cleanId });
+    }, { requireExisting: intent === 'join' && !active && !scheduled });
     if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
 
     // Asynchronously record meeting in PostgreSQL if configured
@@ -1152,7 +1167,22 @@ async function syncActionItemsToItProject(
 
   // 4. Meeting scheduling & calendar endpoints
   app.get('/api/schedules', asyncRoute(async (_req, res) => {
-    const schedules = await getUpcomingSchedules();
+    const rawSchedules = await getUpcomingSchedules();
+    const now = Date.now();
+    const schedules = rawSchedules.map(item => {
+      if (item.status !== 'cancelled' && Date.parse(item.scheduledEnd) > now) {
+        const room = store.ensureScheduledRoom({
+          roomName: item.roomName,
+          roomCode: item.roomCode,
+          hostId: item.hostId,
+          scheduleId: item.id,
+          scheduledStart: item.scheduledStart,
+          scheduledEnd: item.scheduledEnd,
+        });
+        return { ...item, roomCode: room.roomCode };
+      }
+      return item;
+    });
     res.json({
       success: true,
       count: schedules.length,
@@ -1229,8 +1259,13 @@ async function syncActionItemsToItProject(
       }
     }
 
+    const requestedRoomCode = typeof req.body?.roomCode === 'string' && /^[A-Za-z0-9]{5}$/.test(req.body.roomCode.trim())
+      ? req.body.roomCode.trim().toUpperCase()
+      : store.generateUniqueRoomCode();
+
     const schedule = await createSchedule({
       roomName: roomName.trim(),
+      roomCode: requestedRoomCode,
       title: title.trim(),
       description: (description || '').trim(),
       hostId: (hostId || '').trim(),
@@ -1239,6 +1274,16 @@ async function syncActionItemsToItProject(
       scheduledStart,
       scheduledEnd,
     });
+
+    const scheduledRoom = store.ensureScheduledRoom({
+      roomName: schedule.roomName,
+      roomCode: schedule.roomCode || requestedRoomCode,
+      hostId: schedule.hostId,
+      scheduleId: schedule.id,
+      scheduledStart: schedule.scheduledStart,
+      scheduledEnd: schedule.scheduledEnd,
+    });
+    schedule.roomCode = scheduledRoom.roomCode;
 
     res.status(201).json({
       success: true,
@@ -1313,6 +1358,16 @@ async function syncActionItemsToItProject(
     if (!updated) {
       return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
     }
+
+    const syncedRoom = store.ensureScheduledRoom({
+      roomName: updated.roomName,
+      roomCode: updated.roomCode,
+      hostId: updated.hostId,
+      scheduleId: updated.id,
+      scheduledStart: updated.scheduledStart,
+      scheduledEnd: updated.scheduledEnd,
+    });
+    updated.roomCode = syncedRoom.roomCode;
 
     res.json({
       success: true,

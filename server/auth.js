@@ -137,7 +137,7 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
     guestLimits.set(ip,bucket);
     const employeeToken=cookieToken(req);
     if(employeeToken&&await store.session(hashToken(employeeToken)))return res.status(409).json({error:'Keluar dari akun karyawan sebelum masuk sebagai tamu.'});
-    const joined=guestAccess.join(req.body);
+    const joined=await guestAccess.join(req.body);
     const previous=cookieToken(req,guestCookie);if(previous)guestAccess.revoke(previous);
     res.clearCookie(COOKIE,clearOptions);
     res.cookie(guestCookie,joined.token,cookieOptions).json({enabled:true,user:joined.user,csrfToken:csrfFor(joined.token)});
