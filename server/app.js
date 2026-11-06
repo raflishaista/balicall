@@ -1840,6 +1840,7 @@ async function syncActionItemsToItProject(
     res.json({
       meetingId: meeting.id,
       roomName: meeting.roomName,
+      roomCode: meeting.roomCode,
       status: meeting.status,
       isSummarizing: inFlightSummarize.has(meeting.id),
       hostId: meeting.hostId,

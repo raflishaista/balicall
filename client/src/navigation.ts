@@ -1,3 +1,5 @@
+import { normalizeRoomCode } from './roomCode.ts';
+
 export type AppView =
   | 'home'
   | 'lobby'
@@ -34,6 +36,7 @@ export interface RouteState {
   section?: SettingsSection;
   meetingId?: string | null;
   intent?: 'create' | 'join';
+  roomCode?: string;
   recordingId?: string | null;
 }
 
@@ -62,7 +65,11 @@ export function routeToHash(route: RouteState): string {
         ? `#/recordings/${encodeURIComponent(route.recordingId)}`
         : '#/recordings';
     case 'lobby':
-      return route.intent === 'join' ? '#/lobby?intent=join' : '#/lobby?intent=create';
+      if (route.intent === 'join') {
+        const code = normalizeRoomCode(route.roomCode);
+        return code ? `#/lobby?intent=join&code=${code}` : '#/lobby?intent=join';
+      }
+      return '#/lobby?intent=create';
     case 'in-call':
       return route.meetingId ? `#/call/${encodeURIComponent(route.meetingId)}` : '#/call';
     default:
@@ -121,16 +128,16 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
     }
 
     case 'lobby': {
+      const search = new URLSearchParams(queryPart);
       let intent: 'create' | 'join' = 'create';
       if (segments[1] === 'join' || segments[1] === 'create') {
         intent = segments[1];
-      } else if (queryPart) {
-        const search = new URLSearchParams(queryPart);
-        if (search.get('intent') === 'join') intent = 'join';
-      }
+      } else if (search.get('intent') === 'join') intent = 'join';
+      const roomCode = intent === 'join' ? normalizeRoomCode(search.get('code')) : undefined;
       return {
         view: 'lobby',
         intent,
+        ...(roomCode ? { roomCode } : {}),
       };
     }
 
@@ -160,7 +167,7 @@ export function isSameRoute(a: RouteState, b: RouteState): boolean {
     return (a.recordingId || null) === (b.recordingId || null);
   }
   if (a.view === 'lobby') {
-    return (a.intent || 'create') === (b.intent || 'create');
+    return (a.intent || 'create') === (b.intent || 'create') && a.roomCode === b.roomCode;
   }
   if (a.view === 'in-call') {
     return (a.meetingId || null) === (b.meetingId || null);
@@ -193,4 +200,3 @@ export function syncBrowserHistory(route: RouteState, replace = false): void {
     window.history.replaceState(route, '', targetHash);
   }
 }
-

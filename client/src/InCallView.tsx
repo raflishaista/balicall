@@ -46,6 +46,7 @@ export function InCallView({ callDuration,
   onEndMeeting,
   isSummarizing,
   meetingRole,
+  participantPanelRequest,
   meetingHostId,
   meetingCoHostIds,
   onManageParticipant,
@@ -123,6 +124,7 @@ export function InCallView({ callDuration,
         onEndMeeting={onEndMeeting}
         isSummarizing={isSummarizing}
         meetingRole={meetingRole}
+        participantPanelRequest={participantPanelRequest}
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
@@ -163,6 +165,7 @@ function RoomContent({
   roomName,
   roomCode,
   meetingRole,
+  participantPanelRequest,
   meetingHostId,
   meetingCoHostIds,
   onManageParticipant,
@@ -306,6 +309,7 @@ function RoomContent({
         qwenDiarizationReady={qwenDiarizationReady}
         callDuration={callDuration}
         meetingRole={meetingRole}
+        participantPanelRequest={participantPanelRequest}
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}

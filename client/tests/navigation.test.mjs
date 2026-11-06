@@ -34,6 +34,15 @@ test('routeToHash formats settings sections correctly', () => {
   assert.equal(routeToHash({ view: 'settings', section: 'profile' }), '#/settings/profile');
 });
 
+test('meeting invitations prefill a valid room code only on the join route', () => {
+  const invite = { view: 'lobby', intent: 'join', roomCode: 'N0C26' };
+  assert.deepEqual(hashToRoute(routeToHash(invite)), invite);
+  assert.deepEqual(hashToRoute('#/lobby?intent=join&code=n0c26'), invite);
+  assert.equal(hashToRoute('#/lobby?intent=create&code=N0C26').roomCode, undefined);
+  assert.equal(hashToRoute('#/lobby?intent=join&code=bad%2Fcode').roomCode, undefined);
+  assert.equal(isSameRoute(invite, { ...invite, roomCode: 'N0C27' }), false);
+});
+
 test('hashToRoute parses top-level and nested hashes accurately', () => {
   assert.deepEqual(hashToRoute(''), { view: 'home' });
   assert.deepEqual(hashToRoute('#'), { view: 'home' });
