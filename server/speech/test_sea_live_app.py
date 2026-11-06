@@ -86,7 +86,7 @@ class AppTests(unittest.TestCase):
                 with client.websocket_connect('/asr?ticket='+raw):pass
 
     def test_two_sessions_capacity_owner_isolation_and_signed_end(self):
-        app=create_app(Engine(),SECRET)
+        app=create_app(Engine(),SECRET,max_sessions=2)
         with TestClient(app) as client,patch('stream_tickets.time.time',return_value=100):
             for owner in ['a','b']:
                 with client.websocket_connect('/asr?ticket='+signed(nonce=owner,speakerId=owner)) as ws:

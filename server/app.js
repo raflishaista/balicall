@@ -19,7 +19,7 @@ import { attachRecordingUploads } from './recordingUploads.js';
 import { createPostMeetingBatch, publicBatch } from './postMeetingBatch.js';
 import { availableSttModels, QWEN_STT_MODEL } from './config.js';
 import { qwenDiarizationReady, qwenGgufReady } from './qwenCapabilities.js';
-import { createItProjectClient } from './itproject.js';
+import { createItProjectClient } from './itproject/client.js';
 import { createMcpReview } from './mcpReview.js';
 import { QWEN_LIVE_MODEL, qwenLiveCapabilities, validateLiveFinal, speakerAliasKey, applySpeakerAliases } from './qwenLiveConfig.js';
 import { QWEN_GGUF_LIVE_MODEL, qwenGgufLiveCapabilities, ggufSessionDiarized } from './qwenGgufLiveConfig.js';
@@ -40,6 +40,16 @@ import {
   cancelSchedule,
   updateSchedule,
 } from './db.js';
+import {
+  createProjectFromSummary,
+  createTasksFromSummary,
+} from './itproject/create.js';
+import {
+  updateExistingTaskStatuses,
+  editExistingTasks,
+  editExistingProjects,
+  applySprintOperations,
+} from './itproject/edit.js';
 
 const nonEmpty = (value, max = 160) => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const requestIdValid = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
@@ -214,35 +224,50 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return previousRow[compactReference.length] <= maxDistance;
   }
 
-  async function syncActionItemsToItProject(meeting, summary, {reviewClient=itProject,reviewStore=store} = {}) {
 
-     const actionItems = Array.isArray(summary.actionItems)
-      ? summary.actionItems
-      : [];
-    const taskUpdates = Array.isArray(summary.taskUpdates)
-      ? summary.taskUpdates
-      : [];
-    const taskEdits = Array.isArray(summary.taskEdits)
-      ? summary.taskEdits
-      : [];
-    const projectCreations = Array.isArray(summary.projectCreations)
-      ? summary.projectCreations
-      : [];
-    const projectUpdates = Array.isArray(summary.projectUpdates)
-      ? summary.projectUpdates
-      : [];
+async function syncActionItemsToItProject(
+  meeting,
+  summary,
+  { reviewClient = itProject, reviewStore = store } = {}
+) {
+  const meetingCreateEnabled = false;
 
-    const sprintOperations = Array.isArray(summary.sprintOperations)
-      ? summary.sprintOperations
-      : [];
+  const requestedActionItems = Array.isArray(summary.actionItems)
+    ? summary.actionItems
+    : [];
+  const requestedProjectCreations = Array.isArray(summary.projectCreations)
+    ? summary.projectCreations
+    : [];
+  const requestedSprintOperations = Array.isArray(summary.sprintOperations)
+    ? summary.sprintOperations
+    : [];
 
-    let targetProjectId = itProject.projectId;
-    let existingTasks = [];
+  // Mode rapat saat ini hanya mengedit data yang sudah ada.
+  const actionItems = meetingCreateEnabled ? requestedActionItems : [];
+  const projectCreations = meetingCreateEnabled
+    ? requestedProjectCreations
+    : [];
+  const sprintOperations = requestedSprintOperations.filter(
+    operation => meetingCreateEnabled || operation.operation !== 'create'
+  );
 
-    const existingTaskReferences = [
-      ...taskUpdates.map(update => update.task),
-      ...taskEdits.map(edit => edit.task),
-    ].map(reference => String(reference || '').trim());
+  const taskUpdates = Array.isArray(summary.taskUpdates)
+    ? summary.taskUpdates
+    : [];
+  const taskEdits = Array.isArray(summary.taskEdits)
+    ? summary.taskEdits
+    : [];
+  const projectUpdates = Array.isArray(summary.projectUpdates)
+    ? summary.projectUpdates
+    : [];
+
+  let targetProjectId = itProject.projectId;
+  let existingTasks = [];
+
+  const existingTaskReferences = [
+    ...taskUpdates.map(update => update.task),
+    ...taskEdits.map(edit => edit.task),
+  ].map(reference => String(reference || '').trim());
 
     // When there is no configured project ID, resolve task edits/status changes
     // against projects previously created by BaliCall and stored in MeetingStore.
@@ -354,14 +379,19 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     
     if (
       !projectCreations.length &&
-      (actionItems.length || sprintOperations.length) &&
-      !itProject.projectId
+      (
+        actionItems.length ||
+        sprintOperations.length ||
+        projectUpdates.length
+      ) &&
+      !targetProjectId
     ) {
       const projectReferences = [
         ...new Set(
           [
             ...actionItems.map(item => item.project),
             ...sprintOperations.map(operation => operation.project),
+            ...projectUpdates.map(update => update.project),
           ]
             .map(normalizeTaskReference)
             .filter(Boolean)
@@ -515,173 +545,23 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     }
 
     if (projectCreations.length) {
-      // Versi awal mendukung satu project per rapat.
-      // Hindari mengarahkan edit task lama ke project yang baru dibuat.
-      if (taskUpdates.length || taskEdits.length) {
-        console.warn('[ITPROJECT] Sync project baru dilewati: rapat yang sama juga mengubah task lama.', {
-          meetingId: meeting.id,
-        });
+      const creation = await createProjectFromSummary({
+        meeting,
+        summary,
+        projectCreations,
+        taskUpdates,
+        taskEdits,
+        reviewClient,
+        reviewStore,
+        escapeHtml,
+        isoDateInJakarta,
+      });
+
+      if (creation.skipped) {
         return;
       }
 
-      const requestedProject = projectCreations[0];
-      const projectDispatchKey = createHash('sha256')
-        .update(`${meeting.id}|${requestedProject.title.trim().toLowerCase()}`)
-        .digest('hex');
-
-      const previousProjectDispatch =
-        reviewStore.get(meeting.id)?.itProjectProjectDispatch?.[projectDispatchKey];
-
-      if (previousProjectDispatch?.status === 'created') {
-        targetProjectId = previousProjectDispatch.projectId;
-      } else if (
-        previousProjectDispatch?.status === 'creating' ||
-        previousProjectDispatch?.status === 'failed'
-      ) {
-        console.warn('[ITPROJECT] Create project tidak dicoba ulang otomatis; periksa dashboard untuk mencegah duplikat.', {
-          meetingId: meeting.id,
-          title: requestedProject.title,
-          previousStatus: previousProjectDispatch.status,
-          projectId: previousProjectDispatch.projectId || null,
-        });
-        return;
-      } else {
-        const projectOptionsResult = await reviewClient.projectOptions();
-        const projectOptions = projectOptionsResult.data?.data;
-
-        if (!projectOptions?.statuses || !projectOptions?.priorities) {
-          throw new Error('Opsi status atau prioritas project tidak tersedia.');
-        }
-
-        const requestedStatus =
-          projectOptions.statuses.find(option =>
-            option.name?.trim().toLowerCase() ===
-            requestedProject.status.trim().toLowerCase()
-          );
-
-        const requestedPriority =
-          projectOptions.priorities.find(option =>
-            option.name?.trim().toLowerCase() ===
-            requestedProject.priority.trim().toLowerCase()
-          );
-
-        if (!requestedStatus || !requestedPriority) {
-          throw new Error('Status atau prioritas project tidak cocok dengan opsi IT Project.');
-        }
-
-        const monthNumbers = {
-          januari: '01',
-          februari: '02',
-          maret: '03',
-          april: '04',
-          mei: '05',
-          juni: '06',
-          juli: '07',
-          agustus: '08',
-          september: '09',
-          oktober: '10',
-          november: '11',
-          desember: '12',
-        };
-
-        const parseProjectDate = value => {
-          const text = String(value || '').trim();
-
-          if (!text) return '';
-
-          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-            return text;
-          }
-
-          const match = text.match(
-            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
-          );
-
-          if (!match) {
-            throw new Error(`Tanggal project tidak dikenali: '${text}'.`);
-          }
-
-          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
-        };
-
-        const startDate =
-          parseProjectDate(requestedProject.startDate) ||
-          isoDateInJakarta(summary.generatedAt || meeting.createdAt || Date.now());
-
-        const dueDate = parseProjectDate(requestedProject.dueDate);
-
-        if (dueDate && dueDate < startDate) {
-          throw new Error('Due date project tidak boleh sebelum start date.');
-        }
-
-        reviewStore.transact(() => {
-          const current = reviewStore.get(meeting.id);
-          current.itProjectProjectDispatch ||= {};
-          current.itProjectProjectDispatch[projectDispatchKey] = {
-            status: 'creating',
-            title: requestedProject.title,
-            startedAt: new Date().toISOString(),
-          };
-        });
-
-        try {
-          const projectResult = await reviewClient.createProject({
-            title: requestedProject.title.trim(),
-            description: `<p>${escapeHtml(requestedProject.description)}</p>`,
-            emoji: requestedProject.emoji,
-            start_date: startDate,
-            ...(dueDate ? { due_date: dueDate } : {}),
-            status_id: requestedStatus.id,
-            priority_id: requestedPriority.id,
-          });
-
-          const createdProject =
-            projectResult.data?.data ||
-            projectResult.data?.project ||
-            projectResult.data;
-
-          if (!createdProject?.id) {
-            throw new Error('Respons create-project tidak berisi ID project.');
-          }
-
-          targetProjectId = createdProject.id;
-
-          reviewStore.transact(() => {
-            const current = reviewStore.get(meeting.id);
-            current.itProjectProjectDispatch[projectDispatchKey] = {
-              status: 'created',
-              title: requestedProject.title,
-              projectId: targetProjectId,
-              projectNo: createdProject.project_no || null,
-              createdAt: new Date().toISOString(),
-            };
-          });
-
-          console.info('[ITPROJECT] Project berhasil dibuat dari rapat.', {
-            meetingId: meeting.id,
-            projectId: targetProjectId,
-            projectNo: createdProject.project_no || null,
-            title: requestedProject.title,
-          });
-        } catch (error) {
-          reviewStore.transact(() => {
-            const current = reviewStore.get(meeting.id);
-            current.itProjectProjectDispatch[projectDispatchKey] = {
-              status: 'failed',
-              title: requestedProject.title,
-              error: error.message,
-              failedAt: new Date().toISOString(),
-            };
-          });
-
-          console.warn('[ITPROJECT] Project gagal dibuat dari rapat.', {
-            meetingId: meeting.id,
-            title: requestedProject.title,
-            message: error.message,
-          });
-          return;
-        }
-      }
+      targetProjectId = creation.projectId;
     }
 
     if (!targetProjectId && actionItems.length) {
@@ -724,1380 +604,63 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       existingTasks = flattenTaskTree(existingResult.data?.data || []);
     }
 
-    const activeSprint = (options.sprints || []).find(
-      sprint => sprint.status?.name?.trim().toLowerCase() === 'active'
-    );
+  const createdTaskReferences = actionItems.length
+  ? await createTasksFromSummary({
+      meeting,
+      summary,
+      actionItems,
+      targetProjectId,
+      options,
+      reviewClient,
+      reviewStore,
+      escapeHtml,
+      isoDateInJakarta,
+      flattenTaskTree,
+      taskMatchesReference,
+    })
+  : [];
 
-    if (actionItems.length && !activeSprint) {
-      console.warn('[ITPROJECT] Tidak ada sprint aktif; task akan tetap di backlog.', {
-        projectId: targetProjectId,
-      });
-    }
-
-    const numericIdByEncodedId = new Map([
-      ['UJeeXo83zdG0pYJFV7r6', '1'],
-      ['1moX49HDcroSUIwOANWL', '2'],
-      ['bNiTmH27qshwj46Fc8fi', '3'],
-      ['UCeeXo83zdG0pYJFV7r6', '4'],
-      ['BGpapXmIwrE2LC6eY1VT', '5'],
-    ]);
-
-    let status = null;
-    let defaultType = null;
-    let numericStatusId = null;
-
-    if (actionItems.length) {
-      status = options.taskStatuses.find(
-        option => option.name?.trim().toLowerCase() ===
-          reviewClient.taskStatusName.trim().toLowerCase()
-      );
-
-      defaultType = options.taskTypes.find(
-        option => option.id === reviewClient.taskTypeId
-      );
-
-      if (!status || !defaultType) {
-        throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
-      }
-
-      numericStatusId = numericIdByEncodedId.get(status.id);
-
-      if (!numericStatusId) {
-        throw new Error('Status awal task belum punya pemetaan numerik.');
-      }
-    }
-    const normalizeActionStatus = value => {
-    const key = String(value || '').trim().toLocaleLowerCase('id-ID');
-    const aliases = {
-      'to do': 'To Do',
-      todo: 'To Do',
-      blocked: 'Blocked',
-      terhambat: 'Blocked',
-      'in progress': 'In Progress',
-      'sedang dikerjakan': 'In Progress',
-      finished: 'Finished',
-      'selesai dikerjakan': 'Finished',
-      'in review': 'In Review',
-      'sedang ditinjau': 'In Review',
-      completed: 'Completed',
-      komplit: 'Completed',
-      tuntas: 'Completed',
-    };
-
-    return aliases[key] || '';
-  };
-
-    const orderedActionItems = [
-      ...actionItems.filter(item => !String(item.parent || '').trim()),
-      ...actionItems.filter(item => String(item.parent || '').trim()),
-    ];
-    const createdTaskReferences = [];
-
-    for (const item of orderedActionItems) {
-      const title = String(item.task || '').trim();
-      if (!title) continue;
-      const explicitStatusMatch = title.match(
-        /\bstatus(?:nya)?\s+(to\s+do|blocked|in\s+progress|finished|in\s+review|completed|komplit|tuntas)\b/i
-      );
-
-      const statusFromTaskText = explicitStatusMatch
-        ? normalizeActionStatus(explicitStatusMatch[1])
-        : '';
-
-      const requestedStatusName =
-        statusFromTaskText ||
-        normalizeActionStatus(item.status) ||
-        status.name;
-
-      const selectedStatus = options.taskStatuses.find(
-        option => option.name?.trim().toLowerCase() ===
-          requestedStatusName.toLowerCase()
-      );
-
-      if (!selectedStatus) {
-        console.warn('[ITPROJECT] Status task tidak tersedia; task dilewati.', {
-          meetingId: meeting.id,
-          title,
-          requestedStatus: item.status || '',
-        });
-        continue;
-      }
-      const requestedTypeName = String(item.type || '').trim().toLowerCase();
-      const selectedType = requestedTypeName
-        ? options.taskTypes.find(
-            option => option.name?.trim().toLowerCase() === requestedTypeName
-          )
-        : null;
-
-      const type = selectedType || defaultType;
-      const numericTypeId = numericIdByEncodedId.get(type.id);
-
-      if (!numericTypeId) {
-        console.warn('[ITPROJECT] Tipe task tidak punya pemetaan numerik; task dilewati.', {
-          meetingId: meeting.id,
-          title,
-          requestedType: item.type || '',
-        });
-        continue;
-      }
-
-      const key = createHash('sha256')
-        .update([
-          meeting.id,
-          title.toLowerCase(),
-          String(item.assignee || '').trim().toLowerCase(),
-          String(item.deadline || '').trim().toLowerCase(),
-        ].join('|'))
-        .digest('hex');
-
-      // Jangan kirim ulang item yang pernah dicoba agar tidak membuat duplikat
-      // jika respons server hilang setelah task sebenarnya berhasil dibuat.
-      const previousDispatch =
-        reviewStore.get(meeting.id)?.itProjectTaskDispatch?.[key];
-
-      if (previousDispatch?.status === 'created') {
-        if (previousDispatch.taskId) {
-          createdTaskReferences.push({
-            id: previousDispatch.taskId,
-            title: previousDispatch.title || title,
-          });
-        }
-        continue;
-      }
-
-      if (previousDispatch?.status === 'creating') {
-        continue;
-      }
-
-      const priorityName = String(item.priority || '').trim().toLowerCase();
-      const priority = options.taskPriorities.find(
-        option => option.name?.trim().toLowerCase() === priorityName
-      );
-
-      const numericPriorityId = priority
-        ? numericIdByEncodedId.get(priority.id)
-        : null;
-
-      if (!priority) {
-        reviewStore.transact(() => {
-          const current = reviewStore.get(meeting.id);
-          current.itProjectTaskDispatch ||= {};
-          current.itProjectTaskDispatch[key] = {
-            status: 'failed',
-            title,
-            error: `Prioritas '${item.priority}' tidak tersedia atau belum punya pemetaan numerik.`,
-          };
-        });
-        continue;
-      }
-
-      const assigneeName = String(item.assignee || '').trim();
-      const matches = assigneeName
-        ? options.assignableUsers.filter(user =>
-            user.name?.trim().toLowerCase() === assigneeName.toLowerCase() ||
-            user.email?.trim().toLowerCase() === assigneeName.toLowerCase())
-        : [];
-      const owner = matches.length === 1 ? matches[0] : null;
-
-      const description = [
-        `<p>Sumber: rapat ${escapeHtml(meeting.roomName)} (${escapeHtml(meeting.id)})</p>`,
-        assigneeName
-          ? `<p>PIC dari notulen: ${escapeHtml(assigneeName)}${owner ? '' : ' (belum cocok dengan anggota project)'}</p>`
-          : '',
-        item.deadline
-          ? `<p>Tenggat dari notulen: ${escapeHtml(item.deadline)}</p>`
-          : '',
-      ].filter(Boolean).join('');
-
-      const dueDateMatch = String(item.deadline || '').match(
-        /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
-      );
-
-      const mentionedStartDate = String(item.startDate || '').trim();
-      const startDate = /^\d{4}-\d{2}-\d{2}$/.test(mentionedStartDate)
-        ? mentionedStartDate
-        : isoDateInJakarta(
-            summary.generatedAt || meeting.createdAt || Date.now()
-          );
-
-      const monthNumbers = {
-        januari: '01',
-        februari: '02',
-        maret: '03',
-        april: '04',
-        mei: '05',
-        juni: '06',
-        juli: '07',
-        agustus: '08',
-        september: '09',
-        oktober: '10',
-        november: '11',
-        desember: '12',
-      };
-
-      const deadlineText = String(item.deadline || '').trim();
-      const isoDeadlineMatch = deadlineText.match(/\b(\d{4}-\d{2}-\d{2})\b/);
-
-      const dueDate = isoDeadlineMatch
-        ? isoDeadlineMatch[1]
-        : dueDateMatch
-          ? `${dueDateMatch[3]}-${monthNumbers[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`
-          : '';
-          
-      const parentReference = String(item.parent || '').trim();
-      let parentId = '';
-
-      if (parentReference) {
-        const parentCandidates = new Map();
-
-        for (const candidate of createdTaskReferences) {
-          if (taskMatchesReference(candidate, parentReference)) {
-            parentCandidates.set(candidate.id, candidate);
-          }
-        }
-
-        for (const candidate of options.taskParents || []) {
-          if (taskMatchesReference(candidate, parentReference)) {
-            parentCandidates.set(candidate.id, candidate);
-          }
-        }
-
-        if (parentCandidates.size !== 1) {
-          console.warn('[ITPROJECT] Subtask dilewati: parent tidak ditemukan secara unik.', {
-            meetingId: meeting.id,
-            title,
-            parentReference,
-            matches: parentCandidates.size,
-          });
-          continue;
-        }
-
-        const selectedCategory = (options.taskCategories || []).find(
-          category => category.id === reviewClient.taskCategoryId
-        );
-
-        if (selectedCategory?.name?.trim().toLowerCase() === 'epic') {
-          console.warn('[ITPROJECT] Subtask dilewati: task berkategori Epic tidak boleh menjadi subtask.', {
-            meetingId: meeting.id,
-            title,
-            parentReference,
-          });
-          continue;
-        }
-
-        parentId = [...parentCandidates.keys()][0];
-      }
-
-      reviewStore.transact(() => {
-        const current = reviewStore.get(meeting.id);
-        current.itProjectTaskDispatch ||= {};
-        current.itProjectTaskDispatch[key] = {
-          status: 'creating',
-          title,
-          startedAt: new Date().toISOString(),
-        };
+      await updateExistingTaskStatuses({
+        meeting,
+        taskUpdates,
+        existingTasks,
+        options,
+        reviewClient,
+        taskMatchesReference,
       });
 
-      try {
-        let task = null;
-        if (previousDispatch?.status === 'failed' && previousDispatch.startedAt) {
-          const existingResult = await reviewClient.projectTasks(targetProjectId);
-          const existingTasks = flattenTaskTree(existingResult.data?.data || []);
-          const previousStartedAt = Date.parse(previousDispatch.startedAt);
+      await editExistingTasks({
+        meeting,
+        taskEdits,
+        existingTasks,
+        options,
+        reviewClient,
+        normalizeTaskReference,
+        flattenTaskTree,
+        escapeHtml,
+      });
+
+      await editExistingProjects({
+        meeting,
+        projectUpdates,
+        targetProjectId,
+        reviewStore,
+        reviewClient,
+        normalizeTaskReference,
+        escapeHtml,
+      });
+
+      await applySprintOperations({
+        meeting,
+        sprintOperations,
+        targetProjectId,
+        reviewClient,
+        flattenTaskTree,
+        normalizeTaskReference,
+        taskMatchesReference,
+        createdTaskReferences,
+      });
 
-          task = existingTasks.find(candidate =>
-            candidate.title?.trim().toLowerCase() === title.toLowerCase() &&
-            Number.isFinite(Date.parse(candidate.created_at)) &&
-            Date.parse(candidate.created_at) >= previousStartedAt - 60_000
-          ) || null;
-        }
-
-        if (!task) {
-          const result = await reviewClient.createTask({
-            project: targetProjectId,
-            title,
-            status_id: numericStatusId,
-            priority_id: numericPriorityId,
-            type_id: numericTypeId,
-            task_category_id: reviewClient.taskCategoryId,
-            ...(parentId ? { parent_id: parentId } : {}),
-            assign_users: owner ? [owner.id] : [],
-            description,
-            start_date: startDate,
-            ...(dueDate ? { due_date: dueDate } : {}),
-          });
-
-          task = result.data?.data;
-        }
-
-        if (!task?.id) {
-          throw new Error('Respons create-task tidak berisi ID task.');
-        }
-
-        createdTaskReferences.push({
-          id: task.id,
-          title,
-        });
-
-        let statusUpdate = 'unchanged';
-
-        if (selectedStatus.id !== status.id) {
-          const selectedStatusName = selectedStatus.name.trim().toLowerCase();
-          const statusNeedsDueDate =
-            !['to do', 'blocked'].includes(selectedStatusName);
-          const statusDueDate = dueDate || task.due_date || '';
-
-          if (statusNeedsDueDate && !statusDueDate) {
-            statusUpdate = 'skipped_missing_due_date';
-            console.warn('[ITPROJECT] Status task tidak diubah karena due date wajib belum tersedia.', {
-              meetingId: meeting.id,
-              taskId: task.id,
-              requestedStatus: selectedStatus.name,
-            });
-          } else {
-            await reviewClient.updateTaskStatus({
-              task: task.id,
-              status_id: selectedStatus.id,
-              ...(statusDueDate ? { due_date: statusDueDate } : {}),
-            });
-            statusUpdate = 'updated';
-          }
-        }
-
-        let sprintAssignment = 'no_active_sprint';
-
-        if (activeSprint?.id) {
-          try {
-            await reviewClient.assignSprintTasks({
-              sprint: activeSprint.id,
-              task_ids: [task.id],
-            });
-            sprintAssignment = 'assigned';
-          } catch (error) {
-            sprintAssignment = 'failed';
-            console.warn('[ITPROJECT] Task dibuat, tetapi gagal ditambahkan ke sprint aktif:', {
-              meetingId: meeting.id,
-              taskId: task.id,
-              sprintId: activeSprint.id,
-              sprintName: activeSprint.name,
-              message: error.message,
-            });
-          }
-        }
-
-        reviewStore.transact(() => {
-          const current = reviewStore.get(meeting.id);
-          current.itProjectTaskDispatch[key] = {
-            status: 'created',
-            title,
-            taskId: task.id,
-            sprintAssignment,
-            createdAt: new Date().toISOString(),
-          };
-        });
-        console.info('[ITPROJECT] Task berhasil dibuat', {
-          meetingId: meeting.id,
-          taskId: task.id,
-          projectId: targetProjectId,
-          title,
-          taskType: type.name,
-          startDate,
-          dueDate: dueDate || null,
-          deadlineFromSummary: item.deadline || null,
-          sprintAssignment,
-          sprintName: activeSprint?.name || null,
-          taskStatus: selectedStatus.name,
-          statusUpdate,
-        });
-      } catch (error) {
-        reviewStore.transact(() => {
-          const current = reviewStore.get(meeting.id);
-          const previous = current.itProjectTaskDispatch?.[key];
-          current.itProjectTaskDispatch[key] = {
-            status: 'failed',
-            title,
-            error: error.message,
-            startedAt: previous?.startedAt,
-            failedAt: new Date().toISOString(),
-          };
-        });
-        console.warn('[ITPROJECT] Task gagal dibuat:', {
-          meetingId: meeting.id,
-          message: error.message,
-        });
-      }
-    }
-      for (const update of taskUpdates) {
-        const reference = normalizeTaskReference(update.task);
-
-        const matches = existingTasks.filter(candidate =>
-          taskMatchesReference(candidate, reference)
-        );
-
-        if (matches.length !== 1) {
-          console.warn('[ITPROJECT] Update status task lama dilewati: referensi tidak unik.', {
-            meetingId: meeting.id,
-            taskReference: update.task,
-            matches: matches.length,
-          });
-          continue;
-        }
-
-        const existingTask = matches[0];
-        const selectedStatus = options.taskStatuses.find(
-          option =>
-            option.name?.trim().toLowerCase() ===
-            String(update.status).trim().toLowerCase()
-        );
-
-        if (!selectedStatus) {
-          console.warn('[ITPROJECT] Update status task lama dilewati: status tidak tersedia.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            requestedStatus: update.status,
-          });
-          continue;
-        }
-
-        if (existingTask.status?.id === selectedStatus.id) {
-          console.info('[ITPROJECT] Status task lama tidak berubah.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            status: selectedStatus.name,
-          });
-          continue;
-        }
-
-        const existingDueDate = existingTask.due_date || '';
-        const statusNeedsDueDate =
-          !['to do', 'blocked'].includes(selectedStatus.name.trim().toLowerCase());
-
-        if (statusNeedsDueDate && !existingDueDate) {
-          console.warn('[ITPROJECT] Update status task lama dilewati: task belum memiliki due date.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            requestedStatus: selectedStatus.name,
-          });
-          continue;
-        }
-
-        try {
-          await reviewClient.updateTaskStatus({
-            task: existingTask.id,
-            status_id: selectedStatus.id,
-            ...(existingDueDate ? { due_date: existingDueDate } : {}),
-          });
-
-          console.info('[ITPROJECT] Status task lama berhasil diubah.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            previousStatus: existingTask.status?.name || null,
-            newStatus: selectedStatus.name,
-          });
-        } catch (error) {
-          console.warn('[ITPROJECT] Update status task lama gagal.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            requestedStatus: selectedStatus.name,
-            message: error.message,
-          });
-        }
-      }
-      for (const edit of taskEdits) {
-        const reference = normalizeTaskReference(edit.task);
-        const changes = edit.changes || {};
-
-        const matches = existingTasks.filter(candidate => {
-          const candidateTitle = normalizeTaskReference(candidate.title);
-
-          // Izinkan judul lengkap atau frasa khas dari judul.
-          // Tetap wajib cocok ke tepat satu task.
-          return (
-            candidateTitle === reference ||
-            (
-              reference.length >= 12 &&
-              candidateTitle.length >= 12 &&
-              (
-                candidateTitle.includes(reference) ||
-                reference.includes(candidateTitle)
-              )
-            )
-          );
-        });
-
-        if (matches.length !== 1) {
-          console.warn('[ITPROJECT] Edit task lama dilewati: referensi tidak unik.', {
-            meetingId: meeting.id,
-            taskReference: edit.task,
-            matches: matches.length,
-          });
-          continue;
-        }
-
-        const existingTask = matches[0];
-        const updateArgs = { task: existingTask.id };
-        const changedFields = [];
-
-        // Mencocokkan nama opsi secara persis setelah normalisasi.
-        // Jika tidak ada atau hasilnya ambigu, jangan menebak ID.
-        const findUniqueOption = (list, name, fieldName) => {
-          const normalizedName = normalizeTaskReference(name);
-
-          const aliases = {
-            prioritas: {},
-            'tipe task': {
-              dokumentasi: 'documentation',
-            },
-            kategori: {
-              isu: 'issue',
-            },
-            'parent task': {},
-            tag: {
-              tes: 'test',
-            },
-          };
-
-          const canonicalName =
-            aliases[fieldName]?.[normalizedName] || normalizedName;
-
-          const found = (list || []).filter(
-            option =>
-              normalizeTaskReference(option.name) === canonicalName
-          );
-
-          if (found.length !== 1) {
-            throw new Error(
-              `Opsi ${fieldName} '${name}' tidak ditemukan atau tidak unik.`
-            );
-          }
-
-          return found[0];
-        };
-
-        const findUniqueUser = name => {
-          const normalizedName = normalizeTaskReference(name);
-
-          // Koreksi salah dengar STT untuk nama assignee.
-          const userAliases = {
-            saini: 'bima',
-          };
-
-          const canonicalName =
-            userAliases[normalizedName] || normalizedName;
-
-          const found = (options.assignableUsers || []).filter(user =>
-            normalizeTaskReference(user.name) === canonicalName ||
-            normalizeTaskReference(user.email) === canonicalName
-          );
-
-          if (found.length !== 1) {
-            throw new Error(
-              `Anggota project '${name}' tidak ditemukan atau tidak unik.`
-            );
-          }
-
-          return found[0];
-        };
-
-        const parseEditDate = value => {
-          const text = String(value || '').trim();
-
-          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-            return text;
-          }
-
-          const match = text.match(
-            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
-          );
-
-          if (!match) {
-            throw new Error(
-              `Tanggal '${text}' tidak dikenali. Gunakan tanggal lengkap yang dapat diubah ke YYYY-MM-DD.`
-            );
-          }
-
-          const monthNumbers = {
-            januari: '01',
-            februari: '02',
-            maret: '03',
-            april: '04',
-            mei: '05',
-            juni: '06',
-            juli: '07',
-            agustus: '08',
-            september: '09',
-            oktober: '10',
-            november: '11',
-            desember: '12',
-          };
-
-          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
-        };
-
-        try {
-          if (Object.hasOwn(changes, 'title')) {
-            const value = String(changes.title || '').trim();
-            if (!value) {
-              throw new Error('Judul baru kosong.');
-            }
-            updateArgs.title = value;
-            changedFields.push('title');
-          }
-
-          if (Object.hasOwn(changes, 'description')) {
-            const value = String(changes.description || '').trim();
-            updateArgs.description = value
-              ? `<p>${escapeHtml(value)}</p>`
-              : '';
-            changedFields.push('description');
-          }
-
-          if (Object.hasOwn(changes, 'emoji')) {
-            const value = String(changes.emoji || '').trim();
-            if (!value) {
-              throw new Error('Emoji baru kosong.');
-            }
-            updateArgs.emoji = value;
-            changedFields.push('emoji');
-          }
-
-          if (Object.hasOwn(changes, 'startDate')) {
-            updateArgs.start_date = parseEditDate(changes.startDate);
-            changedFields.push('start_date');
-          }
-
-          if (Object.hasOwn(changes, 'dueDate')) {
-            updateArgs.due_date = parseEditDate(changes.dueDate);
-            changedFields.push('due_date');
-          }
-
-          if (
-            updateArgs.start_date &&
-            updateArgs.due_date &&
-            updateArgs.due_date < updateArgs.start_date
-          ) {
-            throw new Error('Due date tidak boleh sebelum start date.');
-          }
-
-          if (Object.hasOwn(changes, 'priority')) {
-            const option = findUniqueOption(
-              options.taskPriorities,
-              changes.priority,
-              'prioritas'
-            );
-            updateArgs.priority_id = option.id;
-            changedFields.push('priority');
-          }
-
-          if (Object.hasOwn(changes, 'type')) {
-            const option = findUniqueOption(
-              options.taskTypes,
-              changes.type,
-              'tipe task'
-            );
-            updateArgs.type_id = option.id;
-            changedFields.push('type');
-          }
-
-          if (Object.hasOwn(changes, 'category')) {
-            const value = String(changes.category || '').trim();
-
-            // String kosong hanya untuk permintaan eksplisit menghapus kategori.
-            updateArgs.task_category_id = value
-              ? findUniqueOption(
-                  options.taskCategories,
-                  value,
-                  'kategori'
-                ).id
-              : '';
-            changedFields.push('category');
-          }
-
-          if (Object.hasOwn(changes, 'parent')) {
-            const value = String(changes.parent || '').trim();
-
-            if (!value) {
-              updateArgs.parent_id = '';
-            } else {
-              const parent = findUniqueOption(
-                options.taskParents,
-                value,
-                'parent task'
-              );
-
-              const descendants = new Set(
-                flattenTaskTree(existingTask.sub_task_recursive || [])
-                  .map(task => task.id)
-              );
-
-              if (
-                parent.id === existingTask.id ||
-                descendants.has(parent.id)
-              ) {
-                throw new Error(
-                  'Task tidak boleh menjadi parent dirinya sendiri atau subtaksnya.'
-                );
-              }
-
-              updateArgs.parent_id = parent.id;
-            }
-
-            changedFields.push('parent');
-          }
-
-          if (Object.hasOwn(changes, 'owner')) {
-            const owner = findUniqueUser(changes.owner);
-            updateArgs.owned_id = owner.id;
-            changedFields.push('owner');
-          }
-
-                    const usersToAssign = Object.hasOwn(changes, 'assignUsers')
-            ? changes.assignUsers.map(findUniqueUser)
-            : [];
-
-          const assignedUserIds = new Set(
-            usersToAssign.map(user => user.id)
-          );
-
-          const usersToUnassign = Object.hasOwn(changes, 'unassignUsers')
-            ? changes.unassignUsers
-                .map(findUniqueUser)
-                .filter(user => !assignedUserIds.has(user.id))
-            : [];
-
-          if (usersToAssign.length) {
-            updateArgs.assign_users = usersToAssign.map(user => user.id);
-            changedFields.push('assignUsers');
-          }
-
-          if (usersToUnassign.length) {
-            updateArgs.unassign_users = usersToUnassign.map(user => user.id);
-            changedFields.push('unassignUsers');
-          }
-
-          if (Object.hasOwn(changes, 'tags')) {
-            const tags = changes.tags.map(name =>
-              findUniqueOption(options.tags, name, 'tag')
-            );
-            if (tags.length) {
-              updateArgs.tag_ids = tags.map(tag => tag.id);
-              changedFields.push('tags');
-            }
-          }
-
-          if (Object.hasOwn(changes, 'removeTags')) {
-            const tags = changes.removeTags.map(name =>
-              findUniqueOption(options.tags, name, 'tag')
-            );
-            if (tags.length) {
-              updateArgs.remove_tag_ids = tags.map(tag => tag.id);
-              changedFields.push('removeTags');
-            }
-          }
-
-          if (!changedFields.length) {
-            console.info('[ITPROJECT] Edit task lama dilewati: tidak ada field yang berubah.', {
-              meetingId: meeting.id,
-              taskId: existingTask.id,
-              title: existingTask.title,
-            });
-            continue;
-          }
-
-          // Tool meminta tanggal untuk task yang statusnya bukan To Do/Blocked.
-          // Jika tidak diedit dalam rapat, teruskan tanggal lama agar nilainya tetap.
-          const currentStatus = existingTask.status?.name
-            ?.trim()
-            .toLowerCase();
-
-          if (!['to do', 'blocked'].includes(currentStatus)) {
-            updateArgs.start_date ||= existingTask.start_date || '';
-            updateArgs.due_date ||= existingTask.due_date || '';
-
-            if (!updateArgs.start_date || !updateArgs.due_date) {
-              console.warn('[ITPROJECT] Edit task lama dilewati: start date atau due date task belum tersedia.', {
-                meetingId: meeting.id,
-                taskId: existingTask.id,
-                title: existingTask.title,
-                requestedFields: changedFields,
-              });
-              continue;
-            }
-          }
-
-          await reviewClient.updateTask(updateArgs);
-
-          console.info('[ITPROJECT] Field task lama berhasil diubah.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            changedFields,
-          });
-        } catch (error) {
-          console.warn('[ITPROJECT] Edit task lama gagal atau dilewati.', {
-            meetingId: meeting.id,
-            taskId: existingTask.id,
-            title: existingTask.title,
-            requestedFields: changedFields,
-            message: error.message,
-          });
-        }
-      }
-
-      if (projectUpdates.length) {
-        const projects = [...reviewStore.meetings.values()].flatMap(sourceMeeting =>
-          Object.values(sourceMeeting.itProjectProjectDispatch || {})
-            .filter(dispatch =>
-              dispatch.status === 'created' && dispatch.projectId
-            )
-            .map(dispatch => ({
-              id: dispatch.projectId,
-              title: dispatch.title,
-              project_no: dispatch.projectNo || null,
-            }))
-        );
-
-        const projectOptionsResult = await reviewClient.projectOptions();
-        const projectOptions = projectOptionsResult.data?.data;
-
-        if (!projectOptions?.statuses || !projectOptions?.priorities) {
-          throw new Error('Opsi status atau prioritas project tidak tersedia.');
-        }
-
-        const parseProjectUpdateDate = value => {
-          const text = String(value || '').trim();
-
-          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-            return text;
-          }
-
-          const match = text.match(
-            /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
-          );
-
-          if (!match) {
-            throw new Error(`Tanggal project tidak dikenali: '${text}'.`);
-          }
-
-          const monthNumbers = {
-            januari: '01',
-            februari: '02',
-            maret: '03',
-            april: '04',
-            mei: '05',
-            juni: '06',
-            juli: '07',
-            agustus: '08',
-            september: '09',
-            oktober: '10',
-            november: '11',
-            desember: '12',
-          };
-
-          return `${match[3]}-${monthNumbers[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`;
-        };
-
-        const findUniqueProjectOption = (list, name, fieldName) => {
-          const normalizedName = normalizeTaskReference(name);
-          const matches = (list || []).filter(option =>
-            normalizeTaskReference(option.name) === normalizedName
-          );
-
-          if (matches.length !== 1) {
-            throw new Error(
-              `Opsi ${fieldName} '${name}' tidak ditemukan atau tidak unik.`
-            );
-          }
-
-          return matches[0];
-        };
-
-        for (const edit of projectUpdates) {
-          const reference = normalizeTaskReference(edit.project);
-
-          const matches = projects.filter(project => {
-            const title = normalizeTaskReference(project.title);
-            const number = normalizeTaskReference(project.project_no);
-
-            return (
-              title === reference ||
-              number === reference ||
-              (
-                reference.length >= 12 &&
-                title.length >= 12 &&
-                (title.includes(reference) || reference.includes(title))
-              )
-            );
-          });
-
-          if (matches.length !== 1) {
-            console.warn('[ITPROJECT] Edit project dilewati: referensi tidak unik.', {
-              meetingId: meeting.id,
-              projectReference: edit.project,
-              matches: matches.length,
-            });
-            continue;
-          }
-
-          const existingProject = matches[0];
-          const changes = edit.changes || {};
-          const updateArgs = { project: existingProject.id };
-          const changedFields = [];
-
-          try {
-            const detailResult = await reviewClient.projectDetail(existingProject.id);
-            const projectDetail =
-              detailResult.data?.data?.project ||
-              detailResult.data?.project ||
-              detailResult.data;
-
-            if (!projectDetail?.id) {
-              throw new Error('Detail project tidak berisi data project.');
-            }
-            if (Object.hasOwn(changes, 'title')) {
-              const value = String(changes.title || '').trim();
-              if (!value) throw new Error('Judul project baru kosong.');
-              updateArgs.title = value;
-              changedFields.push('title');
-            }
-
-            if (Object.hasOwn(changes, 'description')) {
-              const value = String(changes.description || '').trim();
-              updateArgs.description = value
-                ? `<p>${escapeHtml(value)}</p>`
-                : '';
-              changedFields.push('description');
-            }
-
-            if (Object.hasOwn(changes, 'emoji')) {
-              const value = String(changes.emoji || '').trim();
-              if (!value) throw new Error('Emoji project baru kosong.');
-              updateArgs.emoji = value;
-              changedFields.push('emoji');
-            }
-
-            if (Object.hasOwn(changes, 'startDate')) {
-              updateArgs.start_date = parseProjectUpdateDate(changes.startDate);
-              changedFields.push('start_date');
-            }
-
-            if (Object.hasOwn(changes, 'dueDate')) {
-              updateArgs.due_date = parseProjectUpdateDate(changes.dueDate);
-              changedFields.push('due_date');
-            }
-
-            const existingStartDate = projectDetail.start_date
-            ? String(projectDetail.start_date).slice(0, 10)
-            : '';
-          const existingDueDate = projectDetail.due_date
-            ? String(projectDetail.due_date).slice(0, 10)
-            : '';
-
-          if (!updateArgs.start_date && existingStartDate) {
-            updateArgs.start_date = existingStartDate;
-          }
-
-          if (!updateArgs.due_date && existingDueDate) {
-            updateArgs.due_date = existingDueDate;
-          }
-
-          const startDate = updateArgs.start_date || existingStartDate;
-          const dueDate = updateArgs.due_date || existingDueDate;
-
-          if (!dueDate) {
-            console.warn('[ITPROJECT] Edit project dilewati: project belum memiliki due date.', {
-              meetingId: meeting.id,
-              projectId: existingProject.id,
-              title: existingProject.title,
-              requestedFields: changedFields,
-            });
-            continue;
-          }
-
-          if (startDate && dueDate < startDate) {
-            throw new Error('Due date project tidak boleh sebelum start date.');
-          }
-
-            if (startDate && dueDate && dueDate < startDate) {
-              throw new Error('Due date project tidak boleh sebelum start date.');
-            }
-
-            if (Object.hasOwn(changes, 'status')) {
-              updateArgs.status_id = findUniqueProjectOption(
-                projectOptions.statuses,
-                changes.status,
-                'status project'
-              ).id;
-              changedFields.push('status');
-            }
-
-            if (Object.hasOwn(changes, 'priority')) {
-              updateArgs.priority_id = findUniqueProjectOption(
-                projectOptions.priorities,
-                changes.priority,
-                'prioritas project'
-              ).id;
-              changedFields.push('priority');
-            }
-
-            if (!changedFields.length) {
-              console.info('[ITPROJECT] Edit project dilewati: tidak ada field yang berubah.', {
-                meetingId: meeting.id,
-                projectId: existingProject.id,
-                title: existingProject.title,
-              });
-              continue;
-            }
-
-            await reviewClient.updateProject(updateArgs);
-
-            console.info('[ITPROJECT] Project lama berhasil diubah.', {
-              meetingId: meeting.id,
-              projectId: existingProject.id,
-              projectNo: existingProject.project_no || null,
-              title: existingProject.title,
-              changedFields,
-            });
-          } catch (error) {
-            console.warn('[ITPROJECT] Edit project gagal atau dilewati.', {
-              meetingId: meeting.id,
-              projectId: existingProject.id,
-              title: existingProject.title,
-              requestedFields: changedFields,
-              message: error.message,
-            });
-          }
-        }
-      }
-
-      if (sprintOperations.length) {
-        const sprintResult = await reviewClient.projectSprints(targetProjectId);
-        const sprintData = sprintResult.data?.data;
-
-        if (!Array.isArray(sprintData?.sprints)) {
-          throw new Error('Respons get-project-sprints tidak berisi daftar sprint.');
-        }
-
-        const sprints = sprintData.sprints;
-        const backlog = Array.isArray(sprintData.backlog)
-          ? sprintData.backlog
-          : [];
-
-        const needsTaskLookup = sprintOperations.some(
-          operation => operation.operation === 'assign_tasks'
-        );
-
-        const projectTaskResult = needsTaskLookup
-          ? await reviewClient.projectTasks(targetProjectId)
-          : null;
-
-        const projectTaskTree = flattenTaskTree(
-          projectTaskResult?.data?.data || []
-        );
-
-        const createdSprints = new Map();
-        const sprintAliases = new Map();
-        const normalizeSprintReference = value =>
-          normalizeTaskReference(value).replace(
-            /\b(nol|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\b/g,
-            word =>
-              ({
-                nol: '0',
-                satu: '1',
-                dua: '2',
-                tiga: '3',
-                empat: '4',
-                lima: '5',
-                enam: '6',
-                tujuh: '7',
-                delapan: '8',
-                sembilan: '9',
-                sepuluh: '10',
-              })[word]
-          ).replace(/^sprint\s+/, '');
-        const findSprint = reference => {
-          const normalized = normalizeSprintReference(reference);
-          const created = createdSprints.get(normalized);
-          const alias = sprintAliases.get(normalized);
-
-          if (created) return [created];
-          if (alias) return [alias];
-
-          return sprints.filter(sprint =>
-            taskMatchesReference(
-              { title: normalizeSprintReference(sprint.name || '') },
-              normalized
-            )
-          );
-        };
-
-        const findTasks = reference => {
-          const normalized = normalizeTaskReference(reference);
-          const candidates = [
-            ...backlog,
-            ...sprints.flatMap(sprint => sprint.tasks || []),
-            ...projectTaskTree,
-            ...createdTaskReferences,
-          ];
-          const matches = new Map();
-
-          for (const task of candidates) {
-            if (taskMatchesReference(task, normalized)) {
-              matches.set(task.id, task);
-            }
-          }
-
-          return [...matches.values()];
-        };
-
-        const sprintDate = value => {
-          const date = String(value || '').trim();
-          if (!date) return '';
-
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            throw new Error(
-              `Tanggal sprint '${date}' harus dalam format YYYY-MM-DD.`
-            );
-          }
-
-          return date;
-        };
-
-        for (const operation of sprintOperations) {
-          const details = {
-            meetingId: meeting.id,
-            operation: operation.operation,
-            projectId: targetProjectId,
-            sprint: operation.sprint || operation.name || null,
-            tasks: operation.tasks || [],
-          };
-
-          try {
-            const args = operation;
-
-            if (args.duration &&
-                !['1 week', '2 weeks', '3 weeks', '4 weeks', 'Custom']
-                  .includes(args.duration)) {
-              throw new Error(`Durasi sprint '${args.duration}' tidak valid.`);
-            }
-
-            const startDate = sprintDate(args.startDate);
-            const endDate = sprintDate(args.endDate);
-
-            if (startDate && endDate && endDate < startDate) {
-              throw new Error('Tanggal akhir sprint tidak boleh sebelum tanggal mulai.');
-            }
-
-            if (operation.operation === 'create') {
-              const result = await reviewClient.createSprint({
-                project: targetProjectId,
-                ...(args.name ? { name: args.name.trim() } : {}),
-                ...(args.goal ? { goal: args.goal } : {}),
-                ...(startDate ? { start_date: startDate } : {}),
-                ...(endDate ? { end_date: endDate } : {}),
-                ...(args.duration ? { duration: args.duration } : {}),
-              });
-
-              const createdSprint =
-                result.data?.data ||
-                result.data?.sprint ||
-                result.data;
-
-              if (!createdSprint?.id) {
-                throw new Error('Respons create-sprint tidak berisi ID sprint.');
-              }
-
-              const sprintName = createdSprint.name || args.name;
-              createdSprints.set(
-                normalizeSprintReference(sprintName),
-                createdSprint
-              );
-
-              console.info('[ITPROJECT] Sprint berhasil dibuat.', {
-                ...details,
-                sprintId: createdSprint.id,
-                sprintName,
-              });
-              continue;
-            }
-
-            const sprintMatches = findSprint(args.sprint);
-
-            if (sprintMatches.length !== 1) {
-              console.warn('[ITPROJECT] Operasi sprint dilewati: referensi sprint tidak unik.', {
-                ...details,
-                matches: sprintMatches.length,
-              });
-              continue;
-            }
-
-            const sprint = sprintMatches[0];
-
-            if (operation.operation === 'update') {
-              const updateArgs = { sprint: sprint.id };
-
-              if (args.name) updateArgs.name = args.name.trim();
-              if (args.goal) updateArgs.goal = args.goal;
-              if (startDate) updateArgs.start_date = startDate;
-              if (endDate) updateArgs.end_date = endDate;
-              if (args.duration) updateArgs.duration = args.duration;
-
-              if (Object.keys(updateArgs).length === 1) {
-                console.info('[ITPROJECT] Update sprint dilewati: tidak ada field perubahan.', details);
-                continue;
-              }
-
-              await reviewClient.updateSprint(updateArgs);
-              sprintAliases.set(
-                normalizeSprintReference(args.sprint),
-                sprint
-              );
-
-              if (args.name) {
-                sprintAliases.set(
-                  normalizeSprintReference(args.name),
-                  sprint
-                );
-                sprint.name = args.name.trim();
-              }
-              console.info('[ITPROJECT] Sprint berhasil diperbarui.', details);
-              continue;
-            }
-
-            if (operation.operation === 'start') {
-              await reviewClient.startSprint({
-                sprint: sprint.id,
-                ...(args.goal ? { goal: args.goal } : {}),
-                ...(startDate ? { start_date: startDate } : {}),
-                ...(endDate ? { end_date: endDate } : {}),
-                ...(args.duration ? { duration: args.duration } : {}),
-              });
-
-              console.info('[ITPROJECT] Sprint berhasil dimulai.', details);
-              continue;
-            }
-
-            if (operation.operation === 'complete') {
-              const completeArgs = { sprint: sprint.id };
-
-              if (args.retrospective) {
-                completeArgs.retrospective = args.retrospective;
-              }
-
-              const destination = normalizeTaskReference(args.moveIncompleteTo);
-
-              if (destination === 'backlog') {
-                completeArgs.move_incomplete_to = { other: 'backlog' };
-              } else if (destination === 'new sprint') {
-                completeArgs.move_incomplete_to = { other: 'new_sprint' };
-              } else if (destination) {
-                const destinationMatches = findSprint(args.moveIncompleteTo);
-
-                if (destinationMatches.length !== 1) {
-                  console.warn('[ITPROJECT] Complete sprint dilewati: sprint tujuan task belum cocok unik.', {
-                    ...details,
-                    destination: args.moveIncompleteTo,
-                    matches: destinationMatches.length,
-                  });
-                  continue;
-                }
-
-                completeArgs.move_incomplete_to = {
-                  existing_sprint: destinationMatches[0].id,
-                };
-              }
-
-              await reviewClient.completeSprint(completeArgs);
-              console.info('[ITPROJECT] Sprint berhasil diselesaikan.', details);
-              continue;
-            }
-
-            if (operation.operation === 'delete') {
-              if (sprint.status?.name?.trim().toLowerCase() === 'active') {
-                console.warn('[ITPROJECT] Sprint aktif tidak dihapus; selesaikan sprint terlebih dahulu.', details);
-                continue;
-              }
-
-              await reviewClient.deleteSprint({ sprint: sprint.id });
-              console.info('[ITPROJECT] Sprint berhasil dihapus.', details);
-              continue;
-            }
-
-            if (operation.operation === 'assign_tasks') {
-              const taskIds = new Set();
-
-              for (const reference of args.tasks) {
-                const matches = findTasks(reference);
-
-                if (matches.length !== 1) {
-                  throw new Error(
-                    `Task '${reference}' tidak ditemukan secara unik di project.`
-                  );
-                }
-
-                if (matches[0].category?.name?.trim().toLowerCase() === 'epic') {
-                  throw new Error(
-                    `Epic '${reference}' tidak bisa ditambahkan langsung ke sprint.`
-                  );
-                }
-
-                taskIds.add(matches[0].id);
-              }
-
-              if (!taskIds.size) {
-                console.info('[ITPROJECT] Assign sprint dilewati: tidak ada task yang disebut.', details);
-                continue;
-              }
-
-              await reviewClient.assignSprintTasks({
-                sprint: sprint.id,
-                task_ids: [...taskIds],
-              });
-
-              console.info('[ITPROJECT] Task berhasil ditambahkan ke sprint.', {
-                ...details,
-                taskIds: [...taskIds],
-              });
-              continue;
-            }
-
-            if (operation.operation === 'remove_task') {
-              const matches = (sprint.tasks || []).filter(task =>
-                taskMatchesReference(task, args.task)
-              );
-
-              if (matches.length !== 1) {
-                console.warn('[ITPROJECT] Remove task dari sprint dilewati: task tidak cocok unik.', {
-                  ...details,
-                  task: args.task,
-                  matches: matches.length,
-                });
-                continue;
-              }
-
-              await reviewClient.removeSprintTask({
-                sprint: sprint.id,
-                task: matches[0].id,
-              });
-
-              console.info('[ITPROJECT] Task berhasil dikembalikan ke backlog.', {
-                ...details,
-                taskId: matches[0].id,
-                title: matches[0].title,
-              });
-            }
-          } catch (error) {
-            console.warn('[ITPROJECT] Operasi sprint gagal atau dilewati.', {
-              ...details,
-              message: error.message,
-            });
-          }
-        }
-      }
   }
 
   app.use('/api', (req,res,next)=>{
@@ -2119,7 +682,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     },
   }));
 
-  attachAuth(app, config, authStore, createGuestAccess(store));
+  attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
   attachRecordingUploads(app, config, { fetchImpl });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
@@ -2498,13 +1061,44 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       if(req.auth)employeeName=req.auth.user.name;
     }
 
-    const active = [...store.meetings.values()].find(meeting => {
+    let active = [...store.meetings.values()].find(meeting => {
       if (meeting.status !== 'active' || meeting.attendanceFinalization) return false;
       if (targetCode && meeting.roomCode && meeting.roomCode.toUpperCase() === targetCode) return true;
       if (roomName && meeting.roomName === roomName.trim()) return true;
       if (roomName && meeting.roomCode && meeting.roomCode.toUpperCase() === roomName.trim().toUpperCase()) return true;
       return false;
     });
+
+    let scheduled = null;
+    let scheduledHostId = '';
+
+    if (!guestMeeting) {
+      const schedules = await getUpcomingSchedules().catch(() => []);
+      const now = Date.now();
+      const cleanRoom = roomName ? roomName.trim() : '';
+      const upperRoom = cleanRoom.toUpperCase();
+
+      scheduled = schedules.find(item => {
+        if (item.status === 'cancelled' || Date.parse(item.scheduledEnd) <= now) return false;
+        if (targetCode && item.roomCode && item.roomCode.toUpperCase() === targetCode) return true;
+        if (upperRoom && item.roomCode && item.roomCode.toUpperCase() === upperRoom) return true;
+        if (cleanRoom && item.roomName && item.roomName.toLowerCase() === cleanRoom.toLowerCase()) return true;
+        return false;
+      }) || null;
+
+      scheduledHostId = scheduled?.hostId || '';
+
+      if (scheduled && !active) {
+        active = store.ensureScheduledRoom({
+          roomName: scheduled.roomName,
+          roomCode: scheduled.roomCode,
+          hostId: scheduledHostId || cleanId,
+          scheduleId: scheduled.id,
+          scheduledStart: scheduled.scheduledStart,
+          scheduledEnd: scheduled.scheduledEnd,
+        });
+      }
+    }
 
     if (intent === 'join' && !active && !guestMeeting) {
       return res.status(404).json({
@@ -2516,31 +1110,15 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (duplicate && !duplicate.leftAt && (!req.auth?.user.isGuest || duplicate.guestTokenIssued) && Date.now() - Date.parse(duplicate.lastSeen) < 45000) {
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
     }
-    // const meeting = guestMeeting || store.join(roomName.trim(), { employeeId: cleanId, employeeName: employeeName.trim(), department: department.trim() });
-    let scheduledHostId = '';
 
-    if (!guestMeeting) {
-      const schedules = await getUpcomingSchedules().catch(() => []);
-      const now = Date.now();
-
-      const scheduled = schedules.find(item =>
-        item.roomName === roomName.trim() &&
-        item.hostId &&
-        Date.parse(item.scheduledStart) <= now + 60_000 &&
-        Date.parse(item.scheduledEnd) > now
-      );
-
-      scheduledHostId = scheduled?.hostId || '';
-    }
-
-    const meeting = guestMeeting || store.join(active ? active.roomName : roomName.trim(), {
+    const meeting = guestMeeting || store.join(active ? active.roomName : (scheduled ? scheduled.roomName : roomName.trim()), {
       employeeId: cleanId,
       employeeName: employeeName.trim(),
       department: department.trim(),
-      hostId: scheduledHostId || cleanId,
-      roomCode: targetCode || (active ? active.roomCode : undefined),
+      hostId: scheduledHostId || (active?.hostId || cleanId),
+      roomCode: (active && active.roomCode) || (scheduled && scheduled.roomCode) || targetCode || undefined,
       intent,
-    }, { requireExisting: intent === 'join' && scheduledHostId !== cleanId });
+    }, { requireExisting: intent === 'join' && !active && !scheduled });
     if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
 
     // Asynchronously record meeting in PostgreSQL if configured
@@ -2589,7 +1167,22 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
 
   // 4. Meeting scheduling & calendar endpoints
   app.get('/api/schedules', asyncRoute(async (_req, res) => {
-    const schedules = await getUpcomingSchedules();
+    const rawSchedules = await getUpcomingSchedules();
+    const now = Date.now();
+    const schedules = rawSchedules.map(item => {
+      if (item.status !== 'cancelled' && Date.parse(item.scheduledEnd) > now) {
+        const room = store.ensureScheduledRoom({
+          roomName: item.roomName,
+          roomCode: item.roomCode,
+          hostId: item.hostId,
+          scheduleId: item.id,
+          scheduledStart: item.scheduledStart,
+          scheduledEnd: item.scheduledEnd,
+        });
+        return { ...item, roomCode: room.roomCode };
+      }
+      return item;
+    });
     res.json({
       success: true,
       count: schedules.length,
@@ -2666,8 +1259,13 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       }
     }
 
+    const requestedRoomCode = typeof req.body?.roomCode === 'string' && /^[A-Za-z0-9]{5}$/.test(req.body.roomCode.trim())
+      ? req.body.roomCode.trim().toUpperCase()
+      : store.generateUniqueRoomCode();
+
     const schedule = await createSchedule({
       roomName: roomName.trim(),
+      roomCode: requestedRoomCode,
       title: title.trim(),
       description: (description || '').trim(),
       hostId: (hostId || '').trim(),
@@ -2676,6 +1274,16 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
       scheduledStart,
       scheduledEnd,
     });
+
+    const scheduledRoom = store.ensureScheduledRoom({
+      roomName: schedule.roomName,
+      roomCode: schedule.roomCode || requestedRoomCode,
+      hostId: schedule.hostId,
+      scheduleId: schedule.id,
+      scheduledStart: schedule.scheduledStart,
+      scheduledEnd: schedule.scheduledEnd,
+    });
+    schedule.roomCode = scheduledRoom.roomCode;
 
     res.status(201).json({
       success: true,
@@ -2750,6 +1358,16 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     if (!updated) {
       return res.status(404).json({ error: 'Jadwal rapat tidak ditemukan atau sudah dibatalkan.' });
     }
+
+    const syncedRoom = store.ensureScheduledRoom({
+      roomName: updated.roomName,
+      roomCode: updated.roomCode,
+      hostId: updated.hostId,
+      scheduleId: updated.id,
+      scheduledStart: updated.scheduledStart,
+      scheduledEnd: updated.scheduledEnd,
+    });
+    updated.roomCode = syncedRoom.roomCode;
 
     res.json({
       success: true,
@@ -3222,6 +1840,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     res.json({
       meetingId: meeting.id,
       roomName: meeting.roomName,
+      roomCode: meeting.roomCode,
       status: meeting.status,
       isSummarizing: inFlightSummarize.has(meeting.id),
       hostId: meeting.hostId,

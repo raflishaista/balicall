@@ -1,3 +1,8 @@
+export function normalizeRoomCode(value: string | null | undefined): string | undefined {
+  const code = value?.trim().toUpperCase();
+  return code && /^[A-Z0-9]{5}$/.test(code) ? code : undefined;
+}
+
 export function generateRoomCode(): string {
   const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   let code = '';

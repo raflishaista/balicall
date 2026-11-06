@@ -1,3 +1,4 @@
+import os
 import unittest
 from contextlib import ExitStack
 from unittest.mock import patch
@@ -27,12 +28,49 @@ class LiveCapacityTests(unittest.TestCase):
                         ws.send_bytes(b'')
                         while ws.receive_json()['type']!='ready_to_stop':pass
 
-    def test_capacity_is_bounded_and_default_stays_two(self):
+    def test_sea_has_no_default_cap_across_rooms_and_keeps_microphones_isolated(self):
+        app=sea_app(SeaEngine(),SECRET)
+        with patch.dict(os.environ),patch('stream_tickets.time.time',return_value=100):
+            os.environ.pop('SEA_LIVE_MAX_SESSIONS',None)
+            with TestClient(app) as client,ExitStack() as stack:
+                sockets=[]
+                for index in range(9):
+                    owner=f'owner-{index}'
+                    proof=sea_ticket(meetingId='meeting' if index<8 else 'other-room',speakerId=owner,
+                        streamId=f'microphone-stream-{index}',nonce=f'sea-session-{index}')
+                    ws=stack.enter_context(client.websocket_connect('/asr?ticket='+proof))
+                    self.assertEqual(ws.receive_json()['type'],'config')
+                    sockets.append((ws,owner))
+                health=client.get('/health').json()
+                self.assertIsNone(health['maxSessions'])
+                self.assertEqual(health['activeSessions'],9)
+                for ws,_ in sockets:
+                    ws.send_bytes(sea_packet())
+                segment_ids=set()
+                for ws,owner in sockets:
+                    self.assertTrue(ws.receive_json()['interim'])
+                    ws.send_bytes(b'')
+                    final=ws.receive_json()['final'][0]
+                    self.assertEqual(final['sourceId'],owner)
+                    segment_ids.add(final['segmentId'])
+                    self.assertEqual(ws.receive_json()['type'],'ready_to_stop')
+                self.assertEqual(len(segment_ids),9)
+                stack.close()
+                self.assertEqual(client.get('/health').json()['activeSessions'],0)
+
+    def test_qwen_default_stays_two_and_explicit_limits_are_bounded(self):
+        with TestClient(qwen_app(QwenEngine(),SECRET)) as client:
+            self.assertEqual(client.get('/health').json()['maxSessions'],2)
         for factory,engine in [(qwen_app,QwenEngine),(sea_app,SeaEngine)]:
-            with TestClient(factory(engine(),SECRET)) as client:self.assertEqual(client.get('/health').json()['maxSessions'],2)
             for limit in [0,9,True]:
                 with self.assertRaises(ValueError):
                     with TestClient(factory(engine(),SECRET,max_sessions=limit)):pass
+
+    def test_sea_environment_can_override_the_default(self):
+        for setting,limit in [('0',None),('2',2)]:
+            with self.subTest(setting=setting),patch.dict(os.environ,SEA_LIVE_MAX_SESSIONS=setting):
+                with TestClient(sea_app(SeaEngine(),SECRET)) as client:
+                    self.assertEqual(client.get('/health').json()['maxSessions'],limit)
 
     def test_signed_end_replays_saved_final_on_both_workers_and_can_be_retried(self):
         for factory,engine,sign,packet in [(qwen_app,QwenEngine,qwen_ticket,qwen_packet),(sea_app,SeaEngine,sea_ticket,sea_packet)]:

@@ -21,9 +21,10 @@ class Slot:
 
 class RetainedSessions:
     def __init__(self, limit=2, ttl=45, clock=time.monotonic):
-        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=8:
+        if limit is not None and (type(limit) is not int or not 1<=limit<=8):
             raise ValueError('Live transcription session limit must be an integer between 1 and 8')
         self.limit,self.ttl,self.clock=limit,ttl,clock
+        self.completed_limit=128 if limit is None else limit*2
         self.slots={}
         self.completed={}
         self.lock=asyncio.Lock()
@@ -49,7 +50,8 @@ class RetainedSessions:
                 if previous.attached: raise ValueError('Microphone session already connected')
                 previous.attached=True
                 return previous,True
-            if len(self.slots)>=self.limit: raise ValueError('Streaming capacity exceeded')
+            if self.limit is not None and len(self.slots)>=self.limit:
+                raise ValueError('Streaming capacity exceeded')
             slot=Slot(key,await factory(),bool(ticket.get('streamId')))
             self.completed.pop(key,None)
             self.slots[key]=slot
@@ -85,7 +87,7 @@ class RetainedSessions:
                 history=[dict(type='transcript',interim='',final=list(slot.finals))] if slot.finals else []
                 frames=history + await slot.session.finish()
                 # Keep only immutable text for retries; release the model/speaker state.
-                while len(self.completed)>=self.limit*2:
+                while len(self.completed)>=self.completed_limit:
                     self.completed.pop(next(iter(self.completed)))
                 self.completed[key]=(self.clock()+self.ttl,frames)
                 return frames

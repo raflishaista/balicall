@@ -57,6 +57,63 @@ export class MeetingStore {
     }
     return Math.random().toString(36).substring(2, 7).toUpperCase();
   }
+  ensureScheduledRoom({ roomName, roomCode, hostId = '', scheduleId = null, scheduledStart = null, scheduledEnd = null }) {
+    return this.transact(() => {
+      const cleanRoomName = String(roomName || '').trim();
+      const cleanCode = roomCode && /^[A-Za-z0-9]{5}$/.test(String(roomCode).trim())
+        ? String(roomCode).trim().toUpperCase()
+        : this.generateUniqueRoomCode();
+      let meeting = [...this.meetings.values()].find(value => {
+        if (value.status !== 'active' || value.attendanceFinalization) return false;
+        if (scheduleId && value.scheduleId === scheduleId) return true;
+        if (value.roomCode && value.roomCode.toUpperCase() === cleanCode) return true;
+        if (cleanRoomName && value.roomName === cleanRoomName) return true;
+        return false;
+      });
+      if (meeting && meeting.participants.size > 0 && [...meeting.participants.values()].every(person => person.leftAt || Date.now() - Date.parse(person.lastSeen) >= 45000)) {
+        meeting.status = 'ended';
+        meeting.endedAt = new Date().toISOString();
+        meeting = undefined;
+      }
+      if (!meeting) {
+        const id = randomUUID();
+        meeting = {
+          id,
+          roomName: cleanRoomName || cleanCode,
+          roomCode: cleanCode,
+          scheduleId,
+          scheduledStart,
+          scheduledEnd,
+          livekitRoom: `meeting-${id}`,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          endedAt: null,
+          hostId: hostId || '',
+          coHostIds: [],
+          participants: new Map(),
+          transcripts: [],
+          emptyAudioRequests: [],
+          summary: null,
+          recording: {
+            egressId: null,
+            status: 'idle',
+            startedAt: null,
+            stoppedAt: null,
+            filepath: null,
+          },
+        };
+        this.meetings.set(id, meeting);
+      } else {
+        if (!meeting.roomCode) meeting.roomCode = cleanCode;
+        if (cleanRoomName && meeting.roomName !== cleanRoomName) meeting.roomName = cleanRoomName;
+        if (hostId && !meeting.hostId) meeting.hostId = hostId;
+        if (scheduleId) meeting.scheduleId = scheduleId;
+        if (scheduledStart) meeting.scheduledStart = scheduledStart;
+        if (scheduledEnd) meeting.scheduledEnd = scheduledEnd;
+      }
+      return meeting;
+    });
+  }
   join(roomName, participant, { requireExisting = participant.intent === 'join' } = {}) {
     return this.transact(() => {
       const roomCode = participant.roomCode ? String(participant.roomCode).trim().toUpperCase() : null;
@@ -67,7 +124,7 @@ export class MeetingStore {
         if (value.roomCode && value.roomCode.toUpperCase() === String(roomName).trim().toUpperCase()) return true;
         return false;
       });
-      if (meeting && [...meeting.participants.values()].every(person => person.leftAt || Date.now() - Date.parse(person.lastSeen) >= 45000)) {
+      if (meeting && meeting.participants.size > 0 && [...meeting.participants.values()].every(person => person.leftAt || Date.now() - Date.parse(person.lastSeen) >= 45000)) {
         meeting.status = 'ended';
         meeting.endedAt = new Date().toISOString();
         meeting = undefined;
@@ -111,6 +168,9 @@ export class MeetingStore {
       }
       if (!meeting.roomCode) {
         meeting.roomCode = this.generateUniqueRoomCode();
+      }
+      if (!meeting.hostId) {
+        meeting.hostId = participant.hostId || participant.employeeId;
       }
       const previous = meeting.participants.get(participant.employeeId);
       meeting.participants.set(participant.employeeId, {

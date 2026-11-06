@@ -16,6 +16,23 @@ let pool = null;
 let isConnected = false;
 const standbySchedules = new Map();
 
+export function deriveScheduleRoomCode(id = '', roomName = '') {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const seed = `${id}:${roomName}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  let code = '';
+  let state = hash >>> 0;
+  for (let i = 0; i < 5; i++) {
+    code += chars[state % chars.length];
+    state = Math.imul(state ^ (i + 17), 2246822519) >>> 0;
+  }
+  return code;
+}
+
 export function getPool() {
   const url = process.env.DATABASE_URL || '';
   if (!pool && url) {
@@ -162,6 +179,7 @@ export async function initDb(customUrl) {
         CREATE TABLE IF NOT EXISTS balicall_schedules (
           id VARCHAR(128) PRIMARY KEY,
           room_name VARCHAR(128) NOT NULL,
+          room_code VARCHAR(16),
           title VARCHAR(255) NOT NULL,
           description TEXT,
           host_id VARCHAR(64) NOT NULL,
@@ -173,6 +191,7 @@ export async function initDb(customUrl) {
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
       `);
+      await client.query('ALTER TABLE balicall_schedules ADD COLUMN IF NOT EXISTS room_code VARCHAR(16);');
 
       // 7. Create performance indexes
       await client.query(`
@@ -598,6 +617,7 @@ export async function createSchedule(schedule) {
   const {
     id = `sched-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     roomName,
+    roomCode,
     title,
     description = '',
     hostId = '',
@@ -607,19 +627,24 @@ export async function createSchedule(schedule) {
     scheduledEnd,
   } = schedule;
 
+  const cleanRoomCode = roomCode && /^[A-Za-z0-9]{5}$/.test(String(roomCode).trim())
+    ? String(roomCode).trim().toUpperCase()
+    : deriveScheduleRoomCode(id, roomName);
+
   const activePool = getPool();
   if (activePool && isConnected) {
     const query = `
       INSERT INTO balicall_schedules (
-        id, room_name, title, description, host_id, host_name, department,
+        id, room_name, room_code, title, description, host_id, host_name, department,
         scheduled_start, scheduled_end, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'scheduled', NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'scheduled', NOW())
       RETURNING *;
     `;
     try {
       const res = await activePool.query(query, [
         id,
         roomName,
+        cleanRoomCode,
         title,
         description,
         hostId,
@@ -632,6 +657,7 @@ export async function createSchedule(schedule) {
       return {
         id: row.id,
         roomName: row.room_name,
+        roomCode: row.room_code || cleanRoomCode,
         title: row.title,
         description: row.description,
         hostId: row.host_id,
@@ -651,6 +677,7 @@ export async function createSchedule(schedule) {
   const record = {
     id,
     roomName,
+    roomCode: cleanRoomCode,
     title,
     description,
     hostId,
@@ -673,7 +700,7 @@ export async function getUpcomingSchedules() {
   if (activePool && isConnected) {
     try {
       const res = await activePool.query(`
-        SELECT id, room_name, title, description, host_id, host_name, department,
+        SELECT id, room_name, room_code, title, description, host_id, host_name, department,
                scheduled_start, scheduled_end, status, created_at
         FROM balicall_schedules
         WHERE status != 'cancelled'
@@ -683,6 +710,7 @@ export async function getUpcomingSchedules() {
       return res.rows.map(row => ({
         id: row.id,
         roomName: row.room_name,
+        roomCode: row.room_code || deriveScheduleRoomCode(row.id, row.room_name),
         title: row.title,
         description: row.description,
         hostId: row.host_id,
@@ -702,6 +730,10 @@ export async function getUpcomingSchedules() {
   const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
   return [...standbySchedules.values()]
     .filter(s => s.status !== 'cancelled' && Date.parse(s.scheduledEnd) >= twoHoursAgo)
+    .map(s => ({
+      ...s,
+      roomCode: s.roomCode || deriveScheduleRoomCode(s.id, s.roomName),
+    }))
     .sort((a, b) => Date.parse(a.scheduledStart) - Date.parse(b.scheduledStart));
 }
 
@@ -769,6 +801,7 @@ export async function updateSchedule(id, updates = {}) {
         return {
           id: row.id,
           roomName: row.room_name,
+          roomCode: row.room_code || deriveScheduleRoomCode(row.id, row.room_name),
           title: row.title,
           description: row.description,
           hostId: row.host_id,
@@ -793,6 +826,7 @@ export async function updateSchedule(id, updates = {}) {
     if (title) item.title = title;
     if (description !== undefined) item.description = description;
     if (roomName) item.roomName = roomName;
+    if (!item.roomCode) item.roomCode = deriveScheduleRoomCode(item.id, item.roomName);
     item.status = 'scheduled';
     return item;
   }

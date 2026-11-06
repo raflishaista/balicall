@@ -29,6 +29,7 @@ import { useScheduleForm } from './useScheduleForm';
 export interface ScheduledMeeting {
   id: string;
   roomName: string;
+  roomCode?: string;
   title: string;
   description?: string;
   hostId: string;
@@ -55,7 +56,7 @@ interface ScheduleViewProps {
     department: string;
     scheduledStart: string;
     scheduledEnd: string;
-  }) => Promise<void>;
+  }) => Promise<ScheduledMeeting | void>;
   onReschedule?: (id: string, updateData: {
     scheduledStart: string;
     scheduledEnd: string;
@@ -174,7 +175,7 @@ export function ScheduleView({
 
     setIsSubmitting(true);
     try {
-      await onCreateSchedule({
+      const created = await onCreateSchedule({
         title: form.title.trim(),
         roomName: slugify(form.roomSlug.trim()),
         description: form.description.trim(),
@@ -185,7 +186,8 @@ export function ScheduleView({
         scheduledEnd: form.validation.endDateTime.toISOString(),
       });
 
-      setFormSuccess(`Jadwal rapat "${form.title.trim()}" berhasil dibuat! Ruang: #${slugify(form.roomSlug.trim())}`);
+      const codeNotice = created?.roomCode ? ` · Kode Ruang: ${created.roomCode}` : '';
+      setFormSuccess(`Jadwal rapat "${form.title.trim()}" berhasil dibuat! Ruang: #${slugify(form.roomSlug.trim())}${codeNotice}`);
       form.resetForm();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Gagal membuat jadwal rapat. Silakan coba lagi.');
@@ -201,7 +203,8 @@ export function ScheduleView({
     const timeFormatted = isCrossDay
       ? `${start.toLocaleString('id-ID')} - ${end.toLocaleString('id-ID')}`
       : `${start.toLocaleString('id-ID')} - ${end.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
-    const text = `Rapat BaliCall: ${sched.title}\nRuang: #${sched.roomName}\nWaktu: ${timeFormatted}\nPenyelenggara: ${sched.hostName} (${sched.department})`;
+    const codeLine = sched.roomCode ? `\nKode Ruang (5 Digit): ${sched.roomCode}` : '';
+    const text = `Rapat BaliCall: ${sched.title}\nRuang: #${sched.roomName}${codeLine}\nWaktu: ${timeFormatted}\nPenyelenggara: ${sched.hostName} (${sched.department})`;
     navigator.clipboard.writeText(text).then(() => {
       setCopiedId(sched.id);
       setTimeout(() => setCopiedId(null), 2000);
@@ -627,6 +630,12 @@ export function ScheduleView({
                           <div className="schedule-room-tag">
                             <span>Ruang:</span>
                             <code>#{item.roomName}</code>
+                            {item.roomCode && (
+                              <>
+                                <span>· Kode:</span>
+                                <code>{item.roomCode}</code>
+                              </>
+                            )}
                           </div>
 
                           {item.description && (
@@ -645,8 +654,8 @@ export function ScheduleView({
                           <button
                             type="button"
                             className="button-primary compact-btn"
-                            onClick={() => onJoinRoom(item.roomName)}
-                            title="Masuk langsung ke ruang rapat ini"
+                            onClick={() => onJoinRoom(item.roomCode || item.roomName)}
+                            title="Masuk langsung ke ruang rapat ini (dapat dimasuki sebelum jadwal dimulai)"
                           >
                             <Video size={14} />
                             <span>Gabung Sekarang</span>

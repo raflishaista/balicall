@@ -117,9 +117,9 @@ export function HomeDashboard({ backendHealth, lastMeeting, employeeName, onCrea
             <div className="upcoming-widget-item">
               <div className="upcoming-widget-info">
                 <strong>{upcomingSchedules[0].title}</strong>
-                <span>#{upcomingSchedules[0].roomName} · {new Date(upcomingSchedules[0].scheduledStart).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}, {new Date(upcomingSchedules[0].scheduledStart).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</span>
+                <span>#{upcomingSchedules[0].roomName}{upcomingSchedules[0].roomCode ? ` (Kode: ${upcomingSchedules[0].roomCode})` : ''} · {new Date(upcomingSchedules[0].scheduledStart).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}, {new Date(upcomingSchedules[0].scheduledStart).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</span>
               </div>
-              <button type="button" className="button-primary compact-btn" onClick={() => onJoin(upcomingSchedules[0].roomName)}>
+              <button type="button" className="button-primary compact-btn" onClick={() => onJoin(upcomingSchedules[0].roomCode || upcomingSchedules[0].roomName)}>
                 Masuk <ArrowRight size={13} />
               </button>
             </div>
