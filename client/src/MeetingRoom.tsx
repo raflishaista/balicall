@@ -16,7 +16,8 @@ import {
   AudioLines,
   Check,
   ChevronDown,
-  FileText,
+  MessageSquare,
+  MessageSquareText,
   Loader2,
   Mic,
   Send,
@@ -745,7 +746,7 @@ export function MeetingRoom({
           className="meeting-panel-divider"
           role="separator"
           tabIndex={0}
-          aria-label="Ubah lebar panel transkrip"
+          aria-label="Ubah lebar panel chat dan transkrip"
           aria-orientation="vertical"
           aria-valuemin={Math.round(minPercent)}
           aria-valuemax={42}
@@ -788,8 +789,8 @@ export function MeetingRoom({
             onKeyDown={tabKeys}
             onClick={() => setActiveTab('transcript')}
           >
-            <FileText size={17} />
-            Transkrip
+            <MessageSquareText size={17} />
+            Chat/Transkrip {transcripts.length > 0 && <span>{transcripts.length}</span>}
           </button>
           <button
             ref={attendanceTab}
@@ -956,39 +957,40 @@ export function MeetingRoom({
             onScroll={handleTranscriptScroll}
             className="live-transcript-list"
             role="log"
-            aria-label="Transkrip langsung"
+            aria-label="Chat dan transkrip langsung"
             aria-live="polite"
             aria-relevant="additions"
             tabIndex={0}
           >
             {transcripts.length ? (
               transcripts.flatMap(entry => {
+                const isLocal = entry.speakerId === employeeId;
+                const timeLabel = new Date(entry.timestamp).toLocaleTimeString('id-ID', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                });
                 if (entry.segments?.length) {
                   return entry.segments.map((segment, index) => (
                     <article
-                      className="live-transcript-entry diarized"
+                      className={`live-transcript-entry chat-message-item diarized ${isLocal ? 'is-local' : ''}`}
                       data-speaker={segment.speaker}
                       key={`${entry.id}-${index}`}
                     >
-                      <time>
-                        {new Date(entry.timestamp).toLocaleTimeString('id-ID', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </time>
                       <span
-                        className={`transcript-avatar diarized ${
-                          entry.speakerId === employeeId ? 'local' : ''
-                        }`}
+                        className={`transcript-avatar diarized ${isLocal ? 'local' : ''}`}
                         data-speaker={segment.speaker}
                         title={`${entry.speakerName} · ${segment.speaker}`}
                       >
                         {segment.attribution === 'participant' ? initials(entry.speakerName) : segment.speaker ? segment.speaker.replace('Pembicara ', 'P') : initials(entry.speakerName)}
                       </span>
-                      <div>
-                        <strong className="transcript-username">
-                          {entry.speakerName}
-                        </strong>
+                      <div className="chat-message-bubble">
+                        <div className="chat-message-meta">
+                          <strong className="transcript-username">
+                            {entry.speakerName}
+                            {isLocal && <em className="chat-self-tag">Anda</em>}
+                          </strong>
+                          <time>{timeLabel}</time>
+                        </div>
                         <div className="transcript-diarized-row">
                           <span
                             className="transcript-diarized-speaker"
@@ -1001,8 +1003,8 @@ export function MeetingRoom({
                           <span className="segment-time-pill">
                             {segment.start.toFixed(1)}s–{segment.end.toFixed(1)}s
                           </span>
+                          <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Transkrip</span>
                         </div>
-                        <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
                         <p>{segment.text}</p>
                       </div>
                     </article>
@@ -1010,25 +1012,27 @@ export function MeetingRoom({
                 }
 
                 return [
-                  <article className="live-transcript-entry" key={entry.id}>
-                    <time>
-                      {new Date(entry.timestamp).toLocaleTimeString('id-ID', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </time>
+                  <article className={`live-transcript-entry chat-message-item ${isLocal ? 'is-local' : ''}`} key={entry.id}>
                     <span
                       className={
-                        entry.speakerId === employeeId
+                        isLocal
                           ? 'transcript-avatar local'
                           : 'transcript-avatar'
                       }
                     >
                       {initials(entry.speakerName)}
                     </span>
-                    <div>
-                      <strong>{entry.speakerName}</strong>
-                      <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
+                    <div className="chat-message-bubble">
+                      <div className="chat-message-meta">
+                        <strong className="transcript-username">
+                          {entry.speakerName}
+                          {isLocal && <em className="chat-self-tag">Anda</em>}
+                        </strong>
+                        <div className="chat-meta-right">
+                          <span className="transcript-phase final" title="Teks final; status penyimpanan ditampilkan terpisah">Final</span>
+                          <time>{timeLabel}</time>
+                        </div>
+                      </div>
                       <p>{entry.text}</p>
                     </div>
                   </article>,
@@ -1036,12 +1040,10 @@ export function MeetingRoom({
               })
             ) : (
               <div className="transcript-empty">
-                <span><AudioLines size={31} /></span>
-                <h3>Ruang untuk setiap suara.</h3>
+                <span><MessageSquareText size={31} /></span>
+                <h3>Chat &amp; Transkrip Rapat</h3>
                 <p>
-                  {isListening
-                    ? 'Mulai berbicara. Ucapan yang dikenali akan muncul di sini.'
-                    : 'Transkrip akan tampil setelah layanan mulai mendengarkan mikrofonmu.'}
+                  Kirim pesan teks melalui kolom chat di bawah atau mulai berbicara untuk menampilkan transkrip suara secara langsung.
                 </p>
               </div>
             )}
@@ -1053,44 +1055,6 @@ export function MeetingRoom({
               <div><strong className="transcript-phase provisional">Sementara · dapat berubah</strong><p>{interimText}</p></div>
             </div>
           )}
-
-          <div className="meeting-chat-bar">
-            <form
-              className="meeting-chat-form"
-              onSubmit={event => {
-                event.preventDefault();
-                if (manualText.trim()) {
-                  onAddSpeechLine(manualText.trim());
-                  setManualText('');
-                  isScrolledToBottomRef.current = true;
-                  requestAnimationFrame(() => {
-                    if (transcriptListRef.current) {
-                      transcriptListRef.current.scrollTo({
-                        top: transcriptListRef.current.scrollHeight,
-                        behavior: 'smooth',
-                      });
-                    }
-                  });
-                }
-              }}
-            >
-              <input
-                aria-label="Pesan chat"
-                value={manualText}
-                disabled={busy || saveBlocked}
-                onChange={event => setManualText(event.target.value)}
-                placeholder="Ketik pesan chat…"
-              />
-              <button
-                type="submit"
-                aria-label="Kirim pesan"
-                title="Kirim pesan"
-                disabled={busy || saveBlocked || !manualText.trim()}
-              >
-                <Send size={16} />
-              </button>
-            </form>
-          </div>
 
           <div
             className={`listening-footer ${isListening ? 'listening' : ''} ${
@@ -1115,6 +1079,48 @@ export function MeetingRoom({
             <span>
               {currentTranscriptionStatus.label}
             </span>
+          </div>
+
+          <div className="meeting-chat-bar">
+            <form
+              className="meeting-chat-form"
+              onSubmit={event => {
+                event.preventDefault();
+                if (manualText.trim()) {
+                  onAddSpeechLine(manualText.trim());
+                  setManualText('');
+                  isScrolledToBottomRef.current = true;
+                  requestAnimationFrame(() => {
+                    if (transcriptListRef.current) {
+                      transcriptListRef.current.scrollTo({
+                        top: transcriptListRef.current.scrollHeight,
+                        behavior: 'smooth',
+                      });
+                    }
+                  });
+                }
+              }}
+            >
+              <div className="meeting-chat-input-wrap">
+                <MessageSquare size={15} className="meeting-chat-input-icon" aria-hidden="true" />
+                <input
+                  aria-label="Pesan chat"
+                  value={manualText}
+                  disabled={busy || saveBlocked}
+                  onChange={event => setManualText(event.target.value)}
+                  placeholder="Ketik pesan chat ke ruang rapat…"
+                />
+              </div>
+              <button
+                type="submit"
+                aria-label="Kirim pesan"
+                title="Kirim pesan"
+                disabled={busy || saveBlocked || !manualText.trim()}
+              >
+                <Send size={15} />
+                <span>Kirim</span>
+              </button>
+            </form>
           </div>
         </div>
 

@@ -65,3 +65,33 @@ test('SummaryView empty dialogue state is neutral with gray colors, circular ico
   assert.ok(css.includes('.summary-neutral-notice'), 'App.css must define .summary-neutral-notice');
   assert.ok(css.includes('background: #f8fafc;'), 'Neutral notice must use neutral light gray background');
 });
+
+
+test('In-call menus from Rekaman to Lainnya are centered and Transkrip is switched to Chat/Transkrip with chat design', () => {
+  const controlsSrc = readFileSync(new URL('../src/MeetingControls.tsx', import.meta.url), 'utf8');
+  const roomSrc = readFileSync(new URL('../src/MeetingRoom.tsx', import.meta.url), 'utf8');
+  const layoutCss = readFileSync(new URL('../src/MeetingLayout.css', import.meta.url), 'utf8');
+  const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8');
+
+  // 1. Control bar splits left media controls and centered Rekaman-to-Lainnya controls
+  assert.ok(controlsSrc.includes('call-controls-left'), 'MeetingControls must have call-controls-left for mic/camera');
+  assert.ok(controlsSrc.includes('call-controls-center'), 'MeetingControls must have call-controls-center for Rekaman to Lainnya');
+  const centerIdx = controlsSrc.indexOf('call-controls-center');
+  const leaveIdx = controlsSrc.indexOf('leave-controls');
+  const rekamanIdx = controlsSrc.indexOf("'Rekaman'");
+  const lainnyaIdx = controlsSrc.indexOf('Lainnya');
+  assert.ok(rekamanIdx > centerIdx && rekamanIdx < leaveIdx, 'Rekaman must be inside call-controls-center');
+  assert.ok(lainnyaIdx > centerIdx && lainnyaIdx < leaveIdx, 'Lainnya must be inside call-controls-center');
+
+  // 2. Chat/Transkrip button and icon
+  assert.ok(controlsSrc.includes('aria-label="Chat/Transkrip"'), 'Control button aria-label must be Chat/Transkrip');
+  assert.ok(controlsSrc.includes('<span>Chat/Transkrip</span>'), 'Control button label must be Chat/Transkrip');
+  assert.ok(controlsSrc.includes('MessageSquareText'), 'Control button must use MessageSquareText icon');
+
+  // 3. Panel tab and chat bubble design in MeetingRoom.tsx
+  assert.ok(roomSrc.includes('Chat/Transkrip'), 'MeetingRoom panel tab must say Chat/Transkrip');
+  assert.ok(roomSrc.includes('chat-message-bubble'), 'MeetingRoom must render chat-message-bubble for entries');
+  assert.ok(roomSrc.includes('meeting-chat-input-wrap'), 'MeetingRoom must render enhanced chat input bar');
+  assert.ok(layoutCss.includes('.call-controls-center'), 'MeetingLayout.css must center .call-controls-center');
+  assert.ok(appCss.includes('.chat-message-bubble'), 'App.css must style .chat-message-bubble');
+});

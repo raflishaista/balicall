@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Circle, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, FileText, Sparkles } from 'lucide-react';
+import { AudioLines, Circle, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
 
 export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
@@ -24,57 +24,60 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
     return () => document.removeEventListener('pointerdown', outside);
   }, [moreOpen]);
   return <footer className="call-control-bar" role="group" aria-label="Kontrol rapat" id="meeting-controls">
-    <div className="call-controls">
-    <button
-      type="button"
-      className={`call-control ${
-        isMuted || microphoneRestricted ? 'control-muted' : ''
-      }`}
-      aria-label={
-        microphoneRestricted
-          ? 'Minta izin bicara'
-          : isMuted
-            ? 'Aktifkan mikrofon'
-            : 'Matikan mikrofon'
-      }
-      aria-pressed={!isMuted && !microphoneRestricted}
-      aria-busy={microphonePending || speakRequestPending}
-      disabled={
-        busy ||
-        devicePending ||
-        microphonePending ||
-        speakRequestPending ||
-        !connected
-      }
-      onClick={() =>
-        void (
+    <div className="call-controls call-controls-left">
+      <button
+        type="button"
+        className={`call-control ${
+          isMuted || microphoneRestricted ? 'control-muted' : ''
+        }`}
+        aria-label={
           microphoneRestricted
-            ? onRequestToSpeak()
-            : onToggleMute()
-        )
-      }
-    >
-      {microphonePending || speakRequestPending ? (
-        <Loader2 className="ui-spinner" size={22} aria-hidden="true" />
-      ) : isMuted || microphoneRestricted ? (
-        <MicOff size={22} />
-      ) : (
-        <Mic size={22} />
-      )}
-
-      <span>
-        {microphonePending || speakRequestPending
-          ? 'Memproses…'
-          : microphoneRestricted
-            ? 'Minta Izin Bicara'
+            ? 'Minta izin bicara'
             : isMuted
-              ? 'Aktifkan mic'
-              : 'Mikrofon'}
-      </span>
-    </button>
+              ? 'Aktifkan mikrofon'
+              : 'Matikan mikrofon'
+        }
+        aria-pressed={!isMuted && !microphoneRestricted}
+        aria-busy={microphonePending || speakRequestPending}
+        disabled={
+          busy ||
+          devicePending ||
+          microphonePending ||
+          speakRequestPending ||
+          !connected
+        }
+        onClick={() =>
+          void (
+            microphoneRestricted
+              ? onRequestToSpeak()
+              : onToggleMute()
+          )
+        }
+      >
+        {microphonePending || speakRequestPending ? (
+          <Loader2 className="ui-spinner" size={22} aria-hidden="true" />
+        ) : isMuted || microphoneRestricted ? (
+          <MicOff size={22} />
+        ) : (
+          <Mic size={22} />
+        )}
+
+        <span>
+          {microphonePending || speakRequestPending
+            ? 'Memproses…'
+            : microphoneRestricted
+              ? 'Minta Izin Bicara'
+              : isMuted
+                ? 'Aktifkan mic'
+                : 'Mikrofon'}
+        </span>
+      </button>
       <button type="button" className={`call-control ${isCameraEnabled ? 'control-active' : 'control-muted'}`} aria-label={isCameraEnabled ? 'Matikan kamera' : 'Aktifkan kamera'} aria-pressed={isCameraEnabled} aria-busy={cameraPending} disabled={busy || cameraPending || devicePending || !connected} onClick={() => void onToggleCamera()}>
         {cameraPending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isCameraEnabled ? <Video size={22} /> : <VideoOff size={22} />}<span>{cameraPending ? 'Memproses…' : isCameraEnabled ? 'Kamera' : 'Aktifkan kamera'}</span>
       </button>
+    </div>
+
+    <div className="call-controls call-controls-center" role="group" aria-label="Menu rapat utama">
       {canManageMeeting && (
         <button
           type="button"
@@ -94,7 +97,7 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
         {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
       </button>
       <button type="button" className="call-control" aria-label="Peserta" onClick={onParticipants}><Users size={22} /><span>Peserta</span></button>
-      <button id="toggle-meeting-transcript" type="button" className={`call-control ${transcriptOpen ? 'control-active' : ''}`} aria-label="Transkrip" aria-pressed={transcriptOpen} onClick={onTranscript}><FileText size={22} /><span>Transkrip</span></button>
+      <button id="toggle-meeting-transcript" type="button" className={`call-control ${transcriptOpen ? 'control-active' : ''}`} aria-label="Chat/Transkrip" aria-pressed={transcriptOpen} onClick={onTranscript}><MessageSquareText size={22} /><span>Chat/Transkrip</span></button>
       <div className="meeting-more" ref={more}
         onBlur={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false); }}
         onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setMoreOpen(false); moreButton.current?.focus(); } }}>
@@ -105,6 +108,7 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
         </div>
       </div>
     </div>
+
     <div className="leave-controls">
       <button type="button" className="leave-simple" disabled={busy} onClick={() => onFinish(false)} aria-label="Keluar dari rapat">
         <LogOut size={18} />
