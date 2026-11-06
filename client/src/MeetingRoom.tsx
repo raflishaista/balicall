@@ -1,6 +1,6 @@
 import { TranscriptionStatus } from './TranscriptionFeedback';
 import { transcriptionStatus } from './transcriptionStatus';
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
@@ -163,6 +163,7 @@ interface MeetingRoomProps {
 
   meetingRole: MeetingRole;
   meetingHostId: string | null;
+  participantPanelRequest?: number;
   meetingCoHostIds: string[];
   microphoneRestricted: boolean;
   speakRequestPending: boolean;
@@ -253,6 +254,7 @@ export function MeetingRoom({
   backgroundControl,
   meetingRole,
   meetingHostId,
+  participantPanelRequest,
   meetingCoHostIds,
   onRequestToSpeak,
   speakRequestPending,
@@ -313,6 +315,13 @@ export function MeetingRoom({
   usePresentationEscape(presentation.focused, presentation.toggleFocus);
   const panelVisible=presentation.panelVisible;
   const changePanel=(value:boolean)=>{if(sharing)presentation.setPanelVisible(value);else setPanelOpen(value);};
+  const showParticipantPanel = useEffectEvent(() => {
+    changePanel(true);
+    setActiveTab('attendance');
+  });
+  useEffect(() => {
+    if (participantPanelRequest) showParticipantPanel();
+  }, [participantPanelRequest]);
   const minPercent = Math.max(20, roomWidth ? 280 / roomWidth * 100 : 20);
   const panelWidth = Math.max(minPercent, Math.min(42, panelPercent));
 

@@ -12,6 +12,7 @@ import { NotificationCenter } from './NotificationCenter';
 import { EmployeeInvites } from './EmployeeInvites';
 import { AIProcessingIndicator } from './AIProcessingIndicator';
 import { BalitowerLoading } from './BalitowerLoading';
+import { MeetingInfo } from './MeetingInfo';
 import { ScheduleReminders } from './ScheduleReminders';
 import { useScheduleFeed } from './useScheduleFeed';
 import { usePreferences } from './usePreferences';
@@ -29,7 +30,7 @@ import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
 import { BrandLogo, HomeDashboard, LobbyView, WorkspaceSidebar } from './Workspace';
-import { generateRoomCode } from './roomCode';
+import { generateRoomCode, normalizeRoomCode } from './roomCode';
 import { ScheduleView, type ScheduledMeeting } from './ScheduleView';
 import { initials } from './presentation';
 import { supportsSharedMicrophone, qwenDiarizationForModel } from './preferences';
@@ -108,6 +109,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
+  const [lobbyInviteCode, setLobbyInviteCode] = useState(initialRoute.roomCode);
   const [view, setView] = useState<AppView>(initialRoute.view);
   const contentRef = useRef<HTMLElement>(null);
   usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
@@ -144,9 +146,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       : (authUser?.guestRoomName || (import.meta.env.DEV ? 'Rapat Tim NOC & Core Network' : ''))
   );
   const [roomCode, setRoomCode] = useState(() =>
-    shouldRestoreCall && (initialCallSession as any)?.roomCode
-      ? (initialCallSession as any).roomCode
-      : (authUser?.guestRoomCode || generateRoomCode())
+    shouldRestoreCall ? initialCallSession?.roomCode || ''
+      : authUser?.guestRoomCode || initialRoute.roomCode || (initialRoute.intent === 'join' ? '' : generateRoomCode())
   );
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -165,6 +166,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [meetingId, setMeetingId] = useState<string | null>(() => shouldRestoreCall ? initialCallSession!.meetingId : null);
   const [meetingRole, setMeetingRole] = useState<MeetingRole>('participant');
   const [meetingHostId, setMeetingHostId] = useState<string | null>(null);
+  const [meetingHost, setMeetingHost] = useState<{ meetingId: string; name?: string } | null>(null);
+  const [participantPanelRequest, setParticipantPanelRequest] = useState(0);
   const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
@@ -215,6 +218,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           status?: string;
           currentRole?: MeetingRole;
           hostId?: string;
+          roomCode?: string;
+          participants?: Array<{ employeeId: string; employeeName: string }>;
           coHostIds?: string[];
           microphoneRestricted?: boolean;
           speakRequestAt?: string | null;
@@ -237,6 +242,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
+        const hostName = data.participants?.find(person => person.employeeId === data.hostId)?.employeeName;
+        setMeetingHost(current => current?.meetingId === meetingId && current.name === hostName
+          ? current : { meetingId, name: hostName });
+        const confirmedCode = normalizeRoomCode(data.roomCode);
+        if (confirmedCode) setRoomCode(confirmedCode);
         setMeetingCoHostIds(data.coHostIds || []);
         setMicrophoneRestricted(Boolean(data.microphoneRestricted));
         setSpeakRequestAt(data.speakRequestAt || null);
@@ -265,6 +275,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     section: settingsSection,
     meetingId: summaryMeetingId,
     intent: meetingIntent,
+    roomCode: lobbyInviteCode,
     recordingId,
   });
   currentRouteRef.current = {
@@ -272,6 +283,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     section: settingsSection,
     meetingId: summaryMeetingId,
     intent: meetingIntent,
+    roomCode: lobbyInviteCode,
     recordingId,
   };
 
@@ -312,6 +324,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }
     if (sanitized.view === 'lobby') {
       setMeetingIntent(sanitized.intent || (isGuest ? 'join' : 'create'));
+      setLobbyInviteCode(sanitized.roomCode);
+      if (sanitized.roomCode) setRoomCode(sanitized.roomCode);
     }
   }, [isGuest, preJoinMedia]);
 
@@ -403,6 +417,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
       if (nextRoute.view === 'lobby') {
         setMeetingIntent(nextRoute.intent || (isGuest ? 'join' : 'create'));
+        setLobbyInviteCode(nextRoute.roomCode);
+        if (nextRoute.roomCode) setRoomCode(nextRoute.roomCode);
       }
     };
 
@@ -808,6 +824,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
+      setMeetingRole('participant');
+      setMeetingHost(null);
+      setParticipantPanelRequest(0);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       navigateTo({ view: 'in-call', meetingId: data.meetingId });
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
@@ -1355,6 +1374,11 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     navigateTo({ view: 'lobby', intent: targetIntent });
   };
 
+  const shareCode = normalizeRoomCode(roomCode);
+  const inviteLink = token && shareCode && !isGuest
+    ? `${window.location.origin}${window.location.pathname}${routeToHash({ view: 'lobby', intent: 'join', roomCode: shareCode })}`
+    : undefined;
+
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
       <a className="skip-link" href="#main-content">Lewati navigasi ke konten</a>
@@ -1392,7 +1416,14 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
       <div className="workspace-body">
       <header className={`app-header ${view === 'in-call' ? 'app-header-call' : ''}`}>
         {view === 'in-call' ? (
-          <div className="call-brand"><BrandLogo inverse /><span>Bali Tower Sentra</span></div>
+          <div className="call-brand">
+            <BrandLogo inverse />
+            {token && meetingId ? <MeetingInfo key={meetingId} roomName={roomName} roomCode={shareCode}
+              hostName={meetingHost?.meetingId === meetingId ? meetingHost.name : undefined}
+              role={meetingRole} inviteLink={inviteLink}
+              onOpenHostTools={!isGuest && meetingRole !== 'participant' ? () => setParticipantPanelRequest(value => value + 1) : undefined} />
+              : <span>Bali Tower Sentra</span>}
+          </div>
         ) : (
           <div className="page-identity">
             <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'documentation' ? 'Dokumentasi' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
@@ -1571,6 +1602,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <Suspense fallback={<BalitowerLoading variant="meeting" reduceMotion={userPreferences.preferences.reduceMotion} />}><InCallView qwenBatchConfigured={backendHealth?.qwenBatchConfigured} callDuration={callDuration}
             meetingId={meetingId!} onTranscriptEntries={receiveTranscripts} onTranscriptSyncError={setSyncError} registerTranscriptPublisher={transcriptDelivery.register}
             meetingRole={meetingRole}
+            participantPanelRequest={participantPanelRequest}
             meetingHostId={meetingHostId}
             meetingCoHostIds={meetingCoHostIds}
             onManageParticipant={manageParticipant}
