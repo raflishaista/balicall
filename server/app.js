@@ -2,6 +2,7 @@ import { SUMMARY_VERSION, summaryTranscriptDigest } from './summaryGrounding.js'
 import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLiveConfig.js';
 import express from 'express';
 import { attachAuth, isOriginAllowed } from './auth.js';
+import { attachAdminApi } from './adminApi.js';
 import cors from 'cors';
 import PDFDocument from 'pdfkit';
 import { existsSync, statSync, realpathSync } from 'node:fs';
@@ -684,7 +685,8 @@ async function syncActionItemsToItProject(
 
   attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
-  attachRecordingUploads(app, config, { fetchImpl });
+  const { recordingCapabilities } = attachRecordingUploads(app, config, { fetchImpl });
+  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {

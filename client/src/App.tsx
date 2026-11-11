@@ -25,7 +25,7 @@ import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, n
 import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
-import { routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory } from './navigation';
+import { ADMIN_SECTIONS, routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory, type AdminSection } from './navigation';
 import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
@@ -48,6 +48,7 @@ import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, C
 type MeetingRole = 'host' | 'co-host' | 'participant';
 
 const InCallView = lazy(() => import('./InCallView').then(module => ({ default: module.InCallView })));
+const AdminDashboard = lazy(() => import('./AdminDashboard'));
 
 const PRESET_PERSONAS = [
   { id: 'BT-10492', name: 'Rafli Aditya', dept: 'NOC & Core Network' },
@@ -107,6 +108,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [isLoadingDb, setIsLoadingDb] = useState(false);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initialRoute.section || 'overview');
+  const [adminSection, setAdminSection] = useState<AdminSection>(initialRoute.adminSection ?? 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
   const [lobbyInviteCode, setLobbyInviteCode] = useState(initialRoute.roomCode);
@@ -273,6 +275,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const currentRouteRef = useRef<RouteState>({
     view,
     section: settingsSection,
+    adminSection,
     meetingId: summaryMeetingId,
     intent: meetingIntent,
     roomCode: lobbyInviteCode,
@@ -281,6 +284,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   currentRouteRef.current = {
     view,
     section: settingsSection,
+    adminSection,
     meetingId: summaryMeetingId,
     intent: meetingIntent,
     roomCode: lobbyInviteCode,
@@ -310,6 +314,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setView(sanitized.view);
     if (sanitized.view === 'settings') {
       setSettingsSection(sanitized.section || 'overview');
+    }
+    if (sanitized.view === 'admin') {
+      setAdminSection(sanitized.adminSection ?? 'overview');
     }
     if (sanitized.view === 'summary') {
       setSummaryMeetingId(sanitized.meetingId || null);
@@ -382,6 +389,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setView(nextRoute.view);
       if (nextRoute.view === 'settings') {
         setSettingsSection(nextRoute.section || 'overview');
+      }
+      if (nextRoute.view === 'admin') {
+        setAdminSection(nextRoute.adminSection ?? 'overview');
       }
       if (nextRoute.view === 'summary') {
         const targetMeetingId = nextRoute.meetingId || null;
@@ -1415,6 +1425,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             saveActiveView('documentation');
             navigateTo({ view: 'documentation' });
           }}
+          adminSection={adminSection}
+          onAdmin={section => navigateTo({ view: 'admin', adminSection: section })}
           onSummary={() => {
             saveActiveView('summary');
             navigateTo({ view: 'summary', meetingId: null });
@@ -1434,6 +1446,11 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               role={meetingRole} inviteLink={inviteLink}
               onOpenHostTools={!isGuest && meetingRole !== 'participant' ? () => setParticipantPanelRequest(value => value + 1) : undefined} />
               : <span>Bali Tower Sentra</span>}
+          </div>
+        ) : view === 'admin' ? (
+          <div className="page-identity">
+            <span>Admin / {ADMIN_SECTIONS[adminSection]}</span>
+            <strong>Administrasi BaliCall</strong>
           </div>
         ) : (
           <div className="page-identity">
@@ -1485,7 +1502,8 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah'}[view]}>
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah',admin:'Admin'}[view]}>
+        {view === 'admin' && <Suspense fallback={<BalitowerLoading variant="workspace" reduceMotion={userPreferences.preferences.reduceMotion} />}><AdminDashboard section={adminSection} /></Suspense>}
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}

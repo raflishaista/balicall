@@ -121,7 +121,9 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
       await store.revoke(hashToken(previous));
     }
     const token=randomBytes(32).toString('base64url');
-    await store.createSession(hashToken(token),account.employee_id,8);
+    if (await store.createSession(hashToken(token),account.employee_id,8) === false) {
+      return res.status(401).json({error:invalidLogin});
+    }
     const guestToken=cookieToken(req,guestCookie);
     if(guestToken){guestAccess?.revoke(guestToken);res.clearCookie(guestCookie,clearOptions);}
     res.cookie(COOKIE,token,cookieOptions).json({enabled:true,user:publicUser(account),csrfToken:csrfFor(token)});

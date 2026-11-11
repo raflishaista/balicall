@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, FileText, Home, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, ClipboardList, FileText, Home, LayoutDashboard, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, ShieldCheck, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
+import { ADMIN_SECTIONS, type AdminSection } from './navigation';
 
 export interface WorkspaceHealth {
   livekitStatus?: string;
@@ -21,15 +22,42 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
   return <img className="brand-logo" src={inverse ? '/brand/balitower-logo-white.png' : '/brand/balitower-logo.png'} alt="BaliTower" />;
 }
 
-export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, isGuest = false, authUser }: {
+const adminIcons = {
+  overview: LayoutDashboard,
+  employees: Users,
+  meetings: Calendar,
+  system: Activity,
+  audit: ClipboardList,
+} satisfies Record<AdminSection, typeof Calendar>;
+const adminSections = Object.keys(ADMIN_SECTIONS) as AdminSection[];
+
+export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, adminSection, onAdmin, isGuest = false, authUser }: {
   authUser?: AuthUser|null; isGuest?: boolean;
   view: string; intent: 'create' | 'join'; employeeName: string; hasSummary: boolean;
   onHome: () => void; onCreate: () => void; onJoin: () => void; onSummary: () => void; onSchedule?: () => void; onSettings: () => void; onDocumentation: () => void;
+  adminSection: AdminSection;
+  onAdmin: (section: AdminSection) => void;
 }) {
+  const canAccessAdmin = !isGuest && authUser?.isSuperAdmin;
+  const inAdmin = view === 'admin' && canAccessAdmin;
   return <aside className="workspace-sidebar">
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
-    <p className="sidebar-label">WORKSPACE</p>
-    <nav className="sidebar-navigation" aria-label="Navigasi utama">
+    <p className="sidebar-label">{inAdmin ? 'ADMIN' : 'WORKSPACE'}</p>
+    {inAdmin ? <nav className="sidebar-navigation" aria-label="Menu Admin">
+      {adminSections.map(section => {
+        const Icon = adminIcons[section];
+        const active = adminSection === section;
+        return <button key={section} type="button" className={active ? 'sidebar-link active' : 'sidebar-link'}
+          aria-current={active ? 'page' : undefined} onClick={() => onAdmin(section)}>
+          <Icon size={19} aria-hidden="true" />
+          <span>{ADMIN_SECTIONS[section]}</span>
+        </button>;
+      })}
+      <button type="button" className="sidebar-link sidebar-link--workspace" onClick={onHome}>
+        <ArrowLeft size={19} aria-hidden="true" />
+        <span>Ke Workspace</span>
+      </button>
+    </nav> : <nav className="sidebar-navigation" aria-label="Navigasi utama">
       {!isGuest && <button className={view === 'home' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'home' ? 'page' : undefined} onClick={onHome}><Home size={19} /><span>Beranda</span></button>}
       {!isGuest && <button className={view === 'lobby' && intent === 'create' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'create' ? 'page' : undefined} onClick={onCreate}><Plus size={19} /><span>Buat rapat</span></button>}
       <button className={view === 'lobby' && intent === 'join' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'lobby' && intent === 'join' ? 'page' : undefined} onClick={onJoin}><LogIn size={19} /><span>Gabung rapat</span></button>
@@ -41,10 +69,11 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
       </button>}
       <button className={view === 'settings' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'settings' ? 'page' : undefined} onClick={onSettings}><Settings size={19} /><span>Pengaturan</span></button>
       <button type="button" className={view === 'documentation' ? 'sidebar-link active' : 'sidebar-link'} aria-current={view === 'documentation' ? 'page' : undefined} onClick={onDocumentation}><BookOpen size={19} /><span>Dokumentasi</span></button>
-    </nav>
+      {canAccessAdmin && <button type="button" className="sidebar-link" onClick={() => onAdmin('overview')}><ShieldCheck size={19} aria-hidden="true" /><span>Admin</span></button>}
+    </nav>}
     <div className="sidebar-bottom">
-      <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>
-      <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>Internal meeting workspace</span></div></div>
+      {!inAdmin && <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>}
+      <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>{inAdmin ? 'Super Admin' : 'Internal meeting workspace'}</span></div></div>
     </div>
   </aside>;
 }

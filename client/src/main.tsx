@@ -50,6 +50,10 @@ class RootErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState
   }
 }
 
+if (/^\/admin\/?$/.test(window.location.pathname)) {
+  window.history.replaceState(null, '', '/#/admin');
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RootErrorBoundary>

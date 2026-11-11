@@ -3,7 +3,45 @@ import { getPool } from './db.js';
 import { initWorkspaceDb } from './workspaceStore.js';
 
 export const hashToken = value => createHash('sha256').update(value).digest('hex');
-export const publicUser = row => ({ employeeId: row.employee_id, name: row.display_name||row.name, legalName:row.name, email: row.login_email, department: row.department, position: row.position, photoVersion:row.photo_version||null });
+export const publicUser = row => ({ employeeId: row.employee_id, name: row.display_name||row.name, legalName:row.name, email: row.login_email, department: row.department, position: row.position, photoVersion:row.photo_version||null, ...(row.is_super_admin ? { isSuperAdmin: true } : {}) });
+const superAdminColumn = "EXISTS (SELECT 1 FROM balicall_admin_roles r WHERE r.employee_id=a.employee_id AND r.role='super_admin') AS is_super_admin";
+
+export async function initAdminDb(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS balicall_admin_roles (
+      employee_id VARCHAR(32) PRIMARY KEY REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role = 'super_admin')
+    );
+    CREATE TABLE IF NOT EXISTS balicall_admin_audit (
+      id BIGSERIAL PRIMARY KEY,
+      actor_id VARCHAR(32),
+      target_id VARCHAR(32) NOT NULL,
+      action TEXT NOT NULL,
+      result TEXT NOT NULL CHECK (result IN ('succeeded', 'no_change', 'denied')),
+      previous_value TEXT,
+      new_value TEXT,
+      reason TEXT,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+  `);
+}
+
+export async function issueActivationInvite(client, employeeId, { activationOnly = false } = {}) {
+  const { rows: [account] } = await client.query(`
+    SELECT a.login_email, a.password_hash IS NOT NULL AS activated
+    FROM balicall_auth_accounts a JOIN balicall_employees e USING (employee_id)
+    WHERE a.employee_id=$1 AND e.status='active' FOR UPDATE OF a
+  `, [employeeId]);
+  if (!account) throw new Error('Akun karyawan aktif tidak ditemukan.');
+  if (activationOnly && account.activated) {
+    throw Object.assign(new Error('Akun ini sudah diaktivasi.'), { code: 'ACCOUNT_ALREADY_ACTIVATED' });
+  }
+  const activationCode = randomBytes(32).toString('base64url');
+  await client.query('UPDATE balicall_auth_invites SET used_at=NOW() WHERE employee_id=$1 AND used_at IS NULL', [employeeId]);
+  await client.query("INSERT INTO balicall_auth_invites(token_hash,employee_id,expires_at) VALUES($1,$2,NOW()+interval '24 hours')",
+    [hashToken(activationCode), employeeId]);
+  return { email: account.login_email, employeeId, activationCode, expiresIn: '24 jam' };
+}
 export async function initAuthDb(pool = getPool()) {
   if (!pool) throw new Error('Login memerlukan PostgreSQL.');
   const client = await pool.connect();
@@ -42,6 +80,7 @@ export async function initAuthDb(pool = getPool()) {
       WHERE status='active' AND email IS NOT NULL AND trim(email) LIKE '%@%'
       ON CONFLICT DO NOTHING;
     `);
+    await initAdminDb(client);
     await client.query('COMMIT');
   } catch(error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
@@ -54,16 +93,24 @@ export class PgAuthStore {
     return this.pool.query(sql, params);
   }
   async account(email) {
-    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,e.status,p.display_name,p.photo_version FROM balicall_auth_accounts a JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE a.login_email=$1`,[email]);
+    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,e.status,p.display_name,p.photo_version,${superAdminColumn} FROM balicall_auth_accounts a JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE a.login_email=$1`,[email]);
     return rows[0];
   }
   async session(tokenHash) {
-    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,p.display_name,p.photo_version FROM balicall_auth_sessions s JOIN balicall_auth_accounts a USING(employee_id) JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE s.token_hash=$1 AND s.expires_at>NOW() AND e.status='active' AND a.password_hash IS NOT NULL`,[tokenHash]);
+    const {rows} = await this.query(`SELECT a.*,e.name,e.department,e.position,p.display_name,p.photo_version,${superAdminColumn} FROM balicall_auth_sessions s JOIN balicall_auth_accounts a USING(employee_id) JOIN balicall_employees e USING(employee_id) LEFT JOIN balicall_profiles p USING(employee_id) WHERE s.token_hash=$1 AND s.expires_at>NOW() AND e.status='active' AND a.password_hash IS NOT NULL`,[tokenHash]);
     return rows[0] ? publicUser(rows[0]) : null;
   }
   async createSession(tokenHash, employeeId, hours) {
     await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');
-    await this.query('INSERT INTO balicall_auth_sessions(token_hash,employee_id,expires_at) VALUES($1,$2,NOW()+$3*interval \'1 hour\')',[tokenHash,employeeId,hours]);
+    const { rows } = await this.query(`
+      INSERT INTO balicall_auth_sessions(token_hash,employee_id,expires_at)
+      SELECT $1,e.employee_id,NOW()+$3*interval '1 hour'
+      FROM balicall_employees e JOIN balicall_auth_accounts a USING (employee_id)
+      WHERE e.employee_id=$2 AND e.status='active' AND a.password_hash IS NOT NULL
+      FOR UPDATE OF e
+      RETURNING employee_id
+    `, [tokenHash, employeeId, hours]);
+    return rows.length === 1;
   }
   async hasActiveSession(employeeId, exceptTokenHash = null) {
     await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');
@@ -107,16 +154,12 @@ export class PgAuthStore {
     finally {client.release();}
   }
   async invite(employeeId) {
-    const token=randomBytes(32).toString('base64url');
     const client=await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const {rows}=await client.query(`SELECT a.login_email FROM balicall_auth_accounts a JOIN balicall_employees e USING(employee_id) WHERE a.employee_id=$1 AND e.status='active' FOR UPDATE OF a`,[employeeId]);
-      if(!rows[0]) throw new Error('Akun karyawan aktif tidak ditemukan.');
-      await client.query('UPDATE balicall_auth_invites SET used_at=NOW() WHERE employee_id=$1 AND used_at IS NULL',[employeeId]);
-      await client.query("INSERT INTO balicall_auth_invites(token_hash,employee_id,expires_at) VALUES($1,$2,NOW()+interval '24 hours')",[hashToken(token),employeeId]);
+      const invite = await issueActivationInvite(client, employeeId);
       await client.query('COMMIT');
-      return {email:rows[0].login_email,employeeId,activationCode:token,expiresIn:'24 jam'};
+      return invite;
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
 }
