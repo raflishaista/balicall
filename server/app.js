@@ -270,6 +270,65 @@ async function syncActionItemsToItProject(
     ...taskEdits.map(edit => edit.task),
   ].map(reference => String(reference || '').trim());
 
+    const explicitProjectReferences = [
+    ...actionItems.map(item => item.project),
+    ...sprintOperations.map(operation => operation.project),
+    ...projectUpdates.map(update => update.project),
+  ]
+    .map(reference => normalizeTaskReference(reference))
+    .filter(Boolean);
+
+  const normalizedRoomName = normalizeTaskReference(meeting.roomName);
+
+  if (
+    !projectCreations.length &&
+    !explicitProjectReferences.length &&
+    normalizedRoomName
+  ) {
+    try {
+      const result = await reviewClient.userProjects();
+      const projects = result.data?.data;
+
+      if (!Array.isArray(projects)) {
+        throw new Error('Respons daftar project tidak berisi array data.');
+      }
+
+      const paddedRoomName = ` ${normalizedRoomName} `;
+      const roomMatches = projects.filter(project => {
+        const projectTitle = normalizeTaskReference(project.title);
+        return project?.id && projectTitle &&
+          paddedRoomName.includes(` ${projectTitle} `);
+      });
+
+      if (roomMatches.length === 1) {
+        targetProjectId = roomMatches[0].id;
+
+        console.info('[ITPROJECT] Project ditemukan dari judul room.', {
+          meetingId: meeting.id,
+          roomName: meeting.roomName,
+          projectId: targetProjectId,
+          projectTitle: roomMatches[0].title,
+        });
+      } else if (roomMatches.length > 1) {
+        console.warn('[ITPROJECT] Project dari judul room tidak unik; sync dilewati.', {
+          meetingId: meeting.id,
+          roomName: meeting.roomName,
+          matches: roomMatches.map(project => ({
+            id: project.id,
+            title: project.title,
+          })),
+        });
+        return;
+      }
+    } catch (error) {
+      console.warn('[ITPROJECT] Project dari judul room tidak dapat dicari.', {
+        meetingId: meeting.id,
+        roomName: meeting.roomName,
+        message: error.message,
+      });
+    }
+  }
+  
     // When there is no configured project ID, resolve task edits/status changes
     // against projects previously created by BaliCall and stored in MeetingStore.
     if (
@@ -412,6 +471,7 @@ async function syncActionItemsToItProject(
 
       const reference = projectReferences[0];
       const matches = new Map();
+      let availableProjects = [];
 
       const addMatchingProject = project => {
         const rawReference = normalizeTaskReference(reference);
@@ -469,6 +529,7 @@ async function syncActionItemsToItProject(
             throw new Error('Respons daftar project tidak berisi array data.');
           }
 
+          availableProjects = projects;
           projects.forEach(addMatchingProject);
         } catch (error) {
           console.warn(
@@ -479,6 +540,40 @@ async function syncActionItemsToItProject(
               message: error.message,
             }
           );
+          return;
+        }
+      }
+
+      if (matches.size === 0 && availableProjects.length) {
+        const normalizedRoomName = normalizeTaskReference(meeting.roomName);
+        const paddedRoomName = ` ${normalizedRoomName} `;
+
+        const roomMatches = availableProjects.filter(project => {
+          const projectTitle = normalizeTaskReference(project.title);
+
+          return project?.id &&
+            projectTitle &&
+            paddedRoomName.includes(` ${projectTitle} `);
+        });
+
+        if (roomMatches.length === 1) {
+          matches.set(roomMatches[0].id, roomMatches[0]);
+
+          console.info('[ITPROJECT] Project ditemukan dari judul room.', {
+            meetingId: meeting.id,
+            roomName: meeting.roomName,
+            projectId: roomMatches[0].id,
+            projectTitle: roomMatches[0].title,
+          });
+        } else if (roomMatches.length > 1) {
+          console.warn('[ITPROJECT] Project dari judul room tidak unik.', {
+            meetingId: meeting.id,
+            roomName: meeting.roomName,
+            matches: roomMatches.map(project => ({
+              id: project.id,
+              title: project.title,
+            })),
+          });
           return;
         }
       }
