@@ -103,6 +103,8 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.equal((await request('/admin/system', 'employee')).status, 403);
   assert.equal((await request('/admin/meetings', 'employee')).status, 403);
   assert.equal((await request('/admin/audit', 'guest')).status, 403);
+  assert.equal((await request('/admin/audit?from=2025-01-02&page=2', 'employee')).status, 403);
+  assert.equal((await request('/admin/audit?page=2')).status, 401);
 
   const { PgAdminStore } = await import('../adminStore.js');
   const admin = new PgAdminStore();
@@ -250,6 +252,44 @@ test('admin permissions are enforced and account changes are audited', async t =
     livekitAvailable = true;
   });
 
+  await t.test('meeting history pages all finished records and filters by title and WIB date', async () => {
+    await query(`
+      INSERT INTO balicall_meetings(id,room_name,status,created_at,ended_at)
+      SELECT 'history-' || n, CASE WHEN n IN (1,2) THEN 'Rapat Arsip 100%' ELSE 'Rapat Arsip' END,
+        CASE WHEN n = 57 THEN 'active' ELSE 'ended' END,
+        TIMESTAMPTZ '2025-01-01 17:00:00+00',
+        CASE WHEN n IN (2,56,57) THEN NULL WHEN n = 1 THEN TIMESTAMPTZ '2025-01-01 18:00:00+00'
+             ELSE TIMESTAMPTZ '2025-01-01 18:00:00+00' + n * INTERVAL '1 day' END
+      FROM generate_series(1,57) n
+    `);
+    await query(`INSERT INTO balicall_attendees(meeting_id,employee_id,employee_name,joined_at)
+      VALUES ('history-1',$1,'Fixture host',TIMESTAMPTZ '2025-01-01 17:05:00+00'),
+             ('history-1',$2,'Fixture invitee',NULL)`, [adminId, employeeId]);
+    const path = '/admin/meetings/history';
+    assert.equal((await request(path)).status, 401);
+    assert.equal((await request(path, 'employee')).status, 403);
+    assert.equal((await request(path, 'guest')).status, 403);
+    const first = await request(path + '?q=rapat%20arsip', 'admin');
+    assert.equal(first.status, 200);
+    const page1 = await first.json();
+    assert.equal(page1.total, 56);
+    assert.equal(page1.meetings.length, page1.pageSize);
+    assert.equal(page1.meetings[0].id, 'history-55');
+    const last = await (await request(path + '?q=Rapat%20Arsip&page=999', 'admin')).json();
+    assert.equal(last.page, Math.ceil(56 / page1.pageSize));
+    assert.ok(last.meetings.some(meeting => meeting.id === 'history-1'));
+    const matching = await (await request(path + '?q=100%25&from=2025-01-02&to=2025-01-02', 'admin')).json();
+    assert.equal(matching.total, 2);
+    assert.deepEqual(matching.meetings.map(meeting => meeting.id), ['history-1', 'history-2']);
+    assert.equal(matching.meetings[0].participantCount, 1);
+    assert.equal(matching.meetings[0].durationSeconds, 3300);
+    assert.equal(matching.meetings[1].endedAt, null);
+    assert.equal(matching.meetings[1].durationSeconds, null);
+    assert.equal((await (await request(path + '?q=missing', 'admin')).json()).total, 0);
+    assert.equal((await request(path + '?from=2025-01-03&to=2025-01-02', 'admin')).status, 400);
+    assert.equal((await request(path + '?page=0', 'admin')).status, 400);
+  });
+
   await t.test('monitoring uses the configured WhisperLiveKit health address for a proxied worker', async () => {
     const proxy = await start({ ...config, liveSttHealthUrl: 'http://whisper-fixture.test/worker/health' });
     const system = await (await proxy('/admin/system', 'admin')).json();
@@ -282,6 +322,42 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.ok(entries.some(entry => entry.action === 'admin.revoke' && entry.result === 'denied'));
   assert.ok(entries.some(entry => entry.action === 'admin.bootstrap' && entry.actorId === null));
   assert.ok(!JSON.stringify(entries).includes('fixture-hash'));
+
+  await t.test('audit pages include older entries and combine action and inclusive WIB date filters', async () => {
+    await query(`
+      INSERT INTO balicall_admin_audit(target_id, action, result, occurred_at)
+      SELECT 'AUDIT-' || n, CASE WHEN n % 2 = 0 THEN 'admin.grant' ELSE 'account.invite' END,
+        'succeeded', CASE
+          WHEN n = 1 THEN TIMESTAMPTZ '2025-01-01 16:59:59+00'
+          WHEN n <= 4 THEN TIMESTAMPTZ '2025-01-01 17:00:00+00'
+          ELSE TIMESTAMPTZ '2025-01-02 17:00:00+00' END
+      FROM generate_series(1, 56) n ORDER BY n
+    `);
+    const first = await (await request('/admin/audit', 'admin')).json();
+    const second = await (await request('/admin/audit?page=2', 'admin')).json();
+    assert.equal(first.pageSize, 50);
+    assert.equal(first.total, entries.length + 56);
+    assert.equal(first.entries.length, 50);
+    assert.equal(second.page, 2);
+    assert.equal(second.total, first.total);
+    assert.equal(second.entries.at(-1).targetId, 'AUDIT-1');
+    assert.equal(new Set([...first.entries, ...second.entries].map(entry => entry.id)).size, first.total);
+    assert.ok(first.actions.includes('admin.grant'));
+
+    const day = '/admin/audit?from=2025-01-02&to=2025-01-02';
+    const datesOnly = await (await request(day, 'admin')).json();
+    assert.deepEqual(datesOnly.entries.map(entry => entry.targetId), ['AUDIT-4', 'AUDIT-3', 'AUDIT-2']);
+    const filtered = await (await request(day + '&action=admin.grant&page=2', 'admin')).json();
+    assert.equal(filtered.page, 1);
+    assert.equal(filtered.total, 2);
+    assert.deepEqual(filtered.entries.map(entry => entry.targetId), ['AUDIT-4', 'AUDIT-2']);
+    const empty = await (await request(day + '&action=admin.revoke', 'admin')).json();
+    assert.equal(empty.total, 0);
+    assert.deepEqual(empty.entries, []);
+    for (const queryString of ['from=2025-02-30', 'from=2025-01-03&to=2025-01-02', 'page=0', 'action=admin.grant&action=admin.revoke']) {
+      assert.equal((await request('/admin/audit?' + queryString, 'admin')).status, 400, queryString);
+    }
+  });
   const disabled = await start({ ...config, authEnabled: false });
   assert.equal((await disabled('/admin/access', 'admin')).status, 503);
 });

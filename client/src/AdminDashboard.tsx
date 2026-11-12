@@ -17,6 +17,16 @@ interface AuditEntry {
   occurredAt: string;
 }
 
+interface AuditPage {
+  entries: AuditEntry[];
+  actions: string[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+const initialAuditFilters = { from: '', to: '', action: '', page: '1' };
+
 const permissionLabels: Record<string, string> = {
   'accounts:manage': 'Kelola akun dan akses',
   'meetings:read': 'Lihat metadata rapat',
@@ -49,7 +59,8 @@ const reasonLabels: Record<string, string> = {
   login_email_conflict: 'Email login sudah dipakai akun lain',
   admin_access_revoked: 'Akses pelaku sudah dicabut',
 };
-const auditDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+const adminDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+const adminWibDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' });
 const numberFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 function useAdminData<T>(path: string) {
   const [result, setResult] = useState<{ key: string; data: T | null; error: string | null } | null>(null);
@@ -261,10 +272,10 @@ function durationLabel(seconds: number | null) {
 }
 
 function CheckTime({ value }: { value: string }) {
-  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{auditDate.format(new Date(value))}</time></p>;
+  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{adminDate.format(new Date(value))}</time></p>;
 }
 
-function AdminMeetings() {
+function AdminMeetingMonitoring() {
   const [status, setStatus] = useState('');
   const { data, loading, error, reload } = useAdminData<{
     meetings: MonitoredMeeting[]; livekitStatus: string; checkedAt: string;
@@ -300,8 +311,8 @@ function AdminMeetings() {
                 const startedSeparately = meeting.scheduledStart && meeting.startedAt;
                 return <tr key={meeting.id}>
                   <td><strong>{meeting.title ?? 'Judul belum tercatat'}</strong></td>
-                  <td>{date ? <time dateTime={date}>{auditDate.format(new Date(date))}</time> : '—'}
-                    {startedSeparately && <small>Mulai {auditDate.format(new Date(startedSeparately))}</small>}
+                  <td>{date ? <time dateTime={date}>{adminDate.format(new Date(date))}</time> : '—'}
+                    {startedSeparately && <small>Mulai {adminDate.format(new Date(startedSeparately))}</small>}
                   </td>
                   <td>{meeting.hostName ?? 'Belum tercatat'}</td>
                   <td>{meeting.participantCount === null ? '—' :
@@ -314,6 +325,118 @@ function AdminMeetings() {
           </div>}
       </>}
     </section>
+  );
+}
+
+interface MeetingHistoryPage {
+  meetings: Array<{
+    id: string;
+    title: string;
+    createdAt: string | null;
+    endedAt: string | null;
+    startedAt: string | null;
+    participantCount: number;
+    durationSeconds: number | null;
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+const initialMeetingHistoryFilters = { q: '', from: '', to: '', page: '1' };
+
+function AdminMeetingHistory() {
+  const [filters, setFilters] = useState(initialMeetingHistoryFilters);
+  const { data, loading, error, reload } = useAdminData<MeetingHistoryPage>(`/admin/meetings/history?${new URLSearchParams(filters)}`);
+  const applyFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setFilters({
+      q: String(form.get('q') ?? '').trim(),
+      from: String(form.get('from') ?? ''),
+      to: String(form.get('to') ?? ''),
+      page: '1',
+    });
+  };
+  const goToPage = (page: number) => setFilters(previous => ({ ...previous, page: String(page) }));
+  const filtered = filters.q || filters.from || filters.to;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-history-heading">
+      <div className="admin-section-heading">
+        <h2 id="admin-history-heading">Riwayat rapat selesai</h2>
+        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+          <RefreshCw size={16} aria-hidden="true" /> Perbarui
+        </button>
+      </div>
+      <form className="admin-filters" aria-label="Filter riwayat rapat" onSubmit={applyFilters}
+        onReset={() => setFilters(initialMeetingHistoryFilters)}>
+        <label className="admin-field">Judul rapat
+          <input type="search" name="q" maxLength={100} placeholder="Cari judul rapat" />
+        </label>
+        <label className="admin-field">Tanggal awal (WIB)
+          <input type="date" name="from" aria-describedby="admin-history-date-note" />
+        </label>
+        <label className="admin-field">Tanggal akhir (WIB)
+          <input type="date" name="to" aria-describedby="admin-history-date-note" />
+        </label>
+        <button type="submit" className="button-primary">Terapkan</button>
+        <button type="reset" className="button-secondary">Reset filter</button>
+      </form>
+      <p className="admin-check-time" id="admin-history-date-note">
+        Filter memakai tanggal selesai. Jika waktu selesai belum tercatat, filter memakai tanggal pembuatan.
+      </p>
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && (
+        data.total === 0 ? <p role="status">{filtered ? 'Tidak ada rapat yang cocok dengan filter.' : 'Belum ada rapat selesai yang tersimpan.'}</p> : <>
+          <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel riwayat rapat">
+            <table className="admin-table" aria-label="Daftar rapat selesai">
+              <thead><tr>
+                <th scope="col">Rapat</th><th scope="col">Waktu (WIB)</th>
+                <th scope="col">Peserta tercatat</th><th scope="col">Durasi</th>
+              </tr></thead>
+              <tbody>{data.meetings.map(meeting => <tr key={meeting.id}>
+                <td><strong>{meeting.title}</strong></td>
+                <td>
+                  {meeting.endedAt ? <>Selesai <time dateTime={meeting.endedAt}>{adminWibDate.format(new Date(meeting.endedAt))}</time></>
+                    : meeting.createdAt ? <>Dibuat <time dateTime={meeting.createdAt}>{adminWibDate.format(new Date(meeting.createdAt))}</time></>
+                    : '—'}
+                  {meeting.startedAt && <small>Mulai <time dateTime={meeting.startedAt}>{adminWibDate.format(new Date(meeting.startedAt))}</time></small>}
+                </td>
+                <td>{numberFormat.format(meeting.participantCount)}</td>
+                <td>{durationLabel(meeting.durationSeconds)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <div className="admin-pagination">
+            <p role="status">{numberFormat.format(data.total)} rapat · Halaman {data.page} dari {pages}</p>
+            <div>
+              <button type="button" className="button-secondary" disabled={data.page <= 1}
+                onClick={() => goToPage(data.page - 1)}>Sebelumnya</button>
+              <button type="button" className="button-secondary" disabled={data.page >= pages}
+                onClick={() => goToPage(data.page + 1)}>Berikutnya</button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function AdminMeetings() {
+  const [view, setView] = useState<'monitoring' | 'history'>('monitoring');
+  return (
+    <div className="admin-section">
+      <div className="admin-meeting-views" role="group" aria-label="Tampilan rapat admin">
+        <button type="button" aria-pressed={view === 'monitoring'}
+          className={view === 'monitoring' ? 'button-primary' : 'button-secondary'}
+          onClick={() => setView('monitoring')}>Monitoring</button>
+        <button type="button" aria-pressed={view === 'history'}
+          className={view === 'history' ? 'button-primary' : 'button-secondary'}
+          onClick={() => setView('history')}>Riwayat rapat</button>
+      </div>
+      {view === 'monitoring' ? <AdminMeetingMonitoring /> : <AdminMeetingHistory />}
+    </div>
   );
 }
 
@@ -366,7 +489,21 @@ function AdminSystem() {
 }
 
 function AdminAudit({ permissions }: { permissions: string[] }) {
-  const { data, loading, error, reload } = useAdminData<{ entries: AuditEntry[] }>('/admin/audit');
+  const [filters, setFilters] = useState(initialAuditFilters);
+  const { data, loading, error, reload } = useAdminData<AuditPage>(`/admin/audit?${new URLSearchParams(filters)}`);
+  const applyFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    setFilters({
+      from: String(values.get('from') ?? ''),
+      to: String(values.get('to') ?? ''),
+      action: String(values.get('action') ?? ''),
+      page: '1',
+    });
+  };
+  const goToPage = (page: number) => setFilters(previous => ({ ...previous, page: String(page) }));
+  const filtered = filters.from || filters.to || filters.action;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   return (
     <div className="admin-section">
       <section className="surface-card" aria-labelledby="admin-access-heading">
@@ -382,30 +519,59 @@ function AdminAudit({ permissions }: { permissions: string[] }) {
             <RefreshCw size={16} aria-hidden="true" /> Perbarui
           </button>
         </div>
+        <form className="admin-filters" aria-label="Filter audit admin" onSubmit={applyFilters}
+          onReset={() => setFilters(initialAuditFilters)}>
+          <label className="admin-field">Tanggal awal (WIB)
+            <input type="date" name="from" />
+          </label>
+          <label className="admin-field">Tanggal akhir (WIB)
+            <input type="date" name="to" />
+          </label>
+          <label className="admin-field">Jenis tindakan
+            <select name="action">
+              <option value="">Semua tindakan</option>
+              {data?.actions.map(action => <option key={action} value={action}>{actionLabels[action] ?? action}</option>)}
+            </select>
+          </label>
+          <button type="submit" className="button-primary">Terapkan</button>
+          <button type="reset" className="button-secondary">Reset filter</button>
+        </form>
         {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && (
-          data.entries.length === 0 ? <p>Belum ada tindakan yang tercatat.</p> :
-          <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel audit admin">
-            <table className="admin-table" aria-label="50 tindakan admin terbaru">
-              <thead><tr>
-                <th scope="col">Waktu</th><th scope="col">Pelaku</th><th scope="col">Target</th>
-                <th scope="col">Tindakan</th><th scope="col">Hasil</th>
-              </tr></thead>
-              <tbody>{data.entries.map(entry => <tr key={entry.id}>
-                <td><time dateTime={entry.occurredAt}>{auditDate.format(new Date(entry.occurredAt))}</time></td>
-                <td>{entry.actorId ?? 'Skrip penetapan awal'}</td>
-                <td>{entry.targetId}</td>
-                <td>{actionLabels[entry.action] ?? entry.action}</td>
-                <td>
-                  <strong>{resultLabels[entry.result] ?? entry.result}</strong>
-                  {entry.result === 'succeeded' && entry.newValue && <small>
-                    {entry.previousValue && <>{valueLabels[entry.previousValue] ?? entry.previousValue} → </>}
-                    {valueLabels[entry.newValue] ?? entry.newValue}
-                  </small>}
-                  {entry.reason && <small>{reasonLabels[entry.reason] ?? entry.reason}</small>}
-                </td>
-              </tr>)}</tbody>
-            </table>
-          </div>
+          data.total === 0 ? <p role="status">
+            {filtered ? 'Tidak ada tindakan yang cocok dengan filter.' : 'Belum ada tindakan yang tercatat.'}
+          </p> : <>
+            <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel audit admin">
+              <table className="admin-table" aria-label="Riwayat tindakan admin">
+                <thead><tr>
+                  <th scope="col">Waktu (WIB)</th><th scope="col">Pelaku</th><th scope="col">Target</th>
+                  <th scope="col">Tindakan</th><th scope="col">Hasil</th>
+                </tr></thead>
+                <tbody>{data.entries.map(entry => <tr key={entry.id}>
+                  <td><time dateTime={entry.occurredAt}>{adminWibDate.format(new Date(entry.occurredAt))}</time></td>
+                  <td>{entry.actorId ?? 'Skrip penetapan awal'}</td>
+                  <td>{entry.targetId}</td>
+                  <td>{actionLabels[entry.action] ?? entry.action}</td>
+                  <td>
+                    <strong>{resultLabels[entry.result] ?? entry.result}</strong>
+                    {entry.result === 'succeeded' && entry.newValue && <small>
+                      {entry.previousValue && <>{valueLabels[entry.previousValue] ?? entry.previousValue} → </>}
+                      {valueLabels[entry.newValue] ?? entry.newValue}
+                    </small>}
+                    {entry.reason && <small>{reasonLabels[entry.reason] ?? entry.reason}</small>}
+                  </td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+            <div className="admin-pagination">
+              <p role="status">{numberFormat.format(data.total)} entri audit · Halaman {data.page} dari {pages}</p>
+              <div>
+                <button type="button" className="button-secondary" disabled={data.page <= 1}
+                  onClick={() => goToPage(data.page - 1)}>Sebelumnya</button>
+                <button type="button" className="button-secondary" disabled={data.page >= pages}
+                  onClick={() => goToPage(data.page + 1)}>Berikutnya</button>
+              </div>
+            </div>
+          </>
         )}
       </section>
     </div>

@@ -9,6 +9,8 @@ export const AdminPermission = Object.freeze({
 });
 const superAdminPermissions = Object.freeze(Object.values(AdminPermission));
 const EMPLOYEE_PAGE_SIZE = 20;
+const AUDIT_PAGE_SIZE = 50;
+const MEETING_HISTORY_PAGE_SIZE = 20;
 export const validAdminEmployeeId = value =>
   typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/i.test(value);
 
@@ -68,13 +70,29 @@ export class PgAdminStore {
     return await isActiveSuperAdmin(this.requirePool(), employeeId) ? superAdminPermissions : [];
   }
 
-  async listAudit(limit = 50) {
-    const { rows } = await this.requirePool().query(`
-      SELECT id::text AS id, actor_id AS "actorId", target_id AS "targetId", action, result,
-        previous_value AS "previousValue", new_value AS "newValue", reason, occurred_at AS "occurredAt"
-      FROM balicall_admin_audit ORDER BY id DESC LIMIT $1
-    `, [limit]);
-    return rows;
+  async listAudit({ from, to, action, page }) {
+    const { rows: [result] } = await this.requirePool().query(`
+      WITH matching AS (
+        SELECT * FROM balicall_admin_audit
+        WHERE ($1::date IS NULL OR occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($2::date IS NULL OR occurred_at < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($3 = '' OR action = $3)
+      ), page_info AS (
+        SELECT COUNT(*)::int AS total,
+          LEAST($4::bigint, GREATEST(1, (COUNT(*) + $5::int - 1) / $5::int))::int AS page
+        FROM matching
+      ), page_rows AS (
+        SELECT id::text AS id, actor_id AS "actorId", target_id AS "targetId", action, result,
+          previous_value AS "previousValue", new_value AS "newValue", reason, occurred_at AS "occurredAt"
+        FROM matching ORDER BY occurred_at DESC, matching.id DESC
+        LIMIT $5 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $5)
+      )
+      SELECT page_info.*,
+        COALESCE((SELECT JSON_AGG(p ORDER BY p."occurredAt" DESC, p.id::bigint DESC) FROM page_rows p), '[]'::json) AS entries,
+        ARRAY(SELECT DISTINCT action FROM balicall_admin_audit ORDER BY action) AS actions
+      FROM page_info
+    `, [from, to, action, page, AUDIT_PAGE_SIZE]);
+    return { ...result, pageSize: AUDIT_PAGE_SIZE };
   }
 
   async listMeetingMetadata() {
@@ -90,6 +108,43 @@ export class PgAdminStore {
       ORDER BY COALESCE(m.ended_at, attendance.first_join, m.created_at) DESC, m.id DESC LIMIT 50
     `);
     return rows;
+  }
+
+  async listMeetingHistory({ search, from, to, page }) {
+    const { rows: [result] } = await this.requirePool().query(`
+      WITH matching AS (
+        SELECT id, room_name, created_at, ended_at, COALESCE(ended_at, created_at) AS archive_date
+        FROM balicall_meetings
+        WHERE (status = 'ended' OR ended_at IS NOT NULL)
+          AND ($1 = '' OR STRPOS(LOWER(room_name), LOWER($1)) > 0)
+          AND ($2::date IS NULL OR COALESCE(ended_at, created_at) >= ($2::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($3::date IS NULL OR COALESCE(ended_at, created_at) < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+      ), page_info AS (
+        SELECT COUNT(*)::int AS total,
+          LEAST($4::bigint, GREATEST(1, (COUNT(*) + $5::int - 1) / $5::int))::int AS page
+        FROM matching
+      ), page_rows AS (
+        SELECT * FROM matching ORDER BY archive_date DESC NULLS LAST, id DESC
+        LIMIT $5 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $5)
+      ), metadata AS (
+        SELECT m.id, m.room_name AS title, m.created_at AS "createdAt", m.ended_at AS "endedAt",
+          attendance.first_join AS "startedAt", attendance.attendee_count AS "participantCount",
+          CASE WHEN m.ended_at >= attendance.first_join
+            THEN FLOOR(EXTRACT(EPOCH FROM (m.ended_at - attendance.first_join)))::double precision
+          END AS "durationSeconds"
+        FROM page_rows m
+        CROSS JOIN LATERAL (
+          SELECT MIN(joined_at) AS first_join, COUNT(joined_at)::int AS attendee_count
+          FROM balicall_attendees WHERE meeting_id = m.id
+        ) attendance
+      )
+      SELECT page_info.*, COALESCE((
+        SELECT JSON_AGG(m ORDER BY COALESCE(m."endedAt", m."createdAt") DESC NULLS LAST, m.id DESC)
+        FROM metadata m
+      ), '[]'::json) AS meetings
+      FROM page_info
+    `, [search, from, to, page, MEETING_HISTORY_PAGE_SIZE]);
+    return { ...result, pageSize: MEETING_HISTORY_PAGE_SIZE };
   }
 
   async listScheduleMetadata() {

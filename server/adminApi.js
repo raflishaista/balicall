@@ -18,6 +18,12 @@ function sendOutcome(res, outcome, status = 200) {
   res.status(status).json({ success: true, changed: outcome.changed, ...(outcome.invite && { invite: outcome.invite }) });
 }
 
+function isAdminDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith('0000-')) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch }) {
   const router = Router();
   const store = new PgAdminStore();
@@ -36,14 +42,37 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
   router.get('/access', (req, res) => res.json({
     role: 'super_admin', employeeId: req.admin.employeeId, permissions: req.admin.permissions,
   }));
-  router.get('/audit', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (_req, res) => {
-    res.json({ entries: await store.listAudit() });
+  router.get('/audit', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
+    const { from = '', to = '', action = '', page = '1' } = req.query;
+    if ((from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))) {
+      return res.status(400).json({ error: 'Tanggal audit tidak valid.' });
+    }
+    if (from && to && from > to) {
+      return res.status(400).json({ error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' });
+    }
+    if (typeof action !== 'string' || (action !== '' && !/^[a-z0-9][a-z0-9_.-]{0,99}$/i.test(action))
+      || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) {
+      return res.status(400).json({ error: 'Jenis tindakan atau nomor halaman tidak valid.' });
+    }
+    res.json(await store.listAudit({ from: from || null, to: to || null, action, page: Number(page) }));
   }));
   router.get('/meetings', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (_req, res) => {
     const [history, schedules, rooms] = await Promise.all([
       store.listMeetingMetadata(), store.listScheduleMetadata(), readLiveKitRooms(probe),
     ]);
     res.json(compileAdminMeetings({ history, schedules, rooms, snapshots: meetingStore.meetings.values() }));
+  }));
+  router.get('/meetings/history', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { q = '', from = '', to = '', page = '1' } = req.query;
+    if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
+      || (from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))
+      || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) {
+      return res.status(400).json({ error: 'Filter riwayat rapat atau nomor halaman tidak valid.' });
+    }
+    if (from && to && from > to) {
+      return res.status(400).json({ error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' });
+    }
+    res.json(await store.listMeetingHistory({ search: q.trim(), from: from || null, to: to || null, page: Number(page) }));
   }));
   router.get('/system', requirePermission(AdminPermission.READ_SYSTEM), asyncRoute(async (_req, res) => {
     res.json(await readAdminSystem({

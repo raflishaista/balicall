@@ -18,7 +18,8 @@
   gap: 12px;
 }
 
-.admin-pagination > div {
+.admin-pagination > div,
+.admin-meeting-views {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
