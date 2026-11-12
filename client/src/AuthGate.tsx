@@ -17,7 +17,7 @@ function WorkspaceLoading() {
   return <BalitowerLoading variant="workspace" reduceMotion={preferences.reduceMotion} />;
 }
 
-export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
+export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; isSuperAdmin?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
 export function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);
@@ -79,7 +79,8 @@ export function AuthGate() {
   };
   if (!checking && session && (!session.enabled || session.user)) {
     return <><Suspense fallback={<WorkspaceLoading />}><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
-      onProfileUpdated={user=>setSession(current=>current?{...current,user}:current)}
+      onProfileUpdated={user=>setSession(current=>current?.user?.employeeId===user.employeeId
+        ? {...current,user:{...current.user,...user}} : current)}
       onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} /></Suspense>
       {error && <div className="login-session-error" role="alert">{error}</div>}</>;
   }

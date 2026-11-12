@@ -12,7 +12,7 @@ const {normalizePhoto,validSubscription}=await import('../workspaceApi.js');
 const {createNotifications}=await import('../notifications.js');
 const {createApp}=await import('../app.js');
 const {loadConfig}=await import('../config.js');
-const {hashToken,PgAuthStore,publicUser}=await import('../authStore.js');
+const {hashToken,initAdminDb,PgAuthStore,publicUser}=await import('../authStore.js');
 
 async function database(t){
   const db=new PGlite();await db.exec(`CREATE TABLE balicall_employees(employee_id VARCHAR(32) PRIMARY KEY,name TEXT,email TEXT,department TEXT,position TEXT,status TEXT);
@@ -50,6 +50,7 @@ test('photo validation rejects SVG, corrupt data, animated/oversized images',asy
 test('PostgreSQL login and cookie session expose updated profile without changing login email',async t=>{
   const {workspace,db,pool}=await database(t);
   await db.exec('CREATE TABLE balicall_auth_sessions(token_hash CHAR(64) PRIMARY KEY,employee_id VARCHAR(32),expires_at TIMESTAMPTZ)');
+  await initAdminDb(pool);
   const auth=new PgAuthStore(pool),tokenHash=hashToken('isolated-session');
   await auth.createSession(tokenHash,'BT-99001',8);
   assert.equal((await auth.session(tokenHash)).name,'Official One');

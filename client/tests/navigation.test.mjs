@@ -34,6 +34,16 @@ test('routeToHash formats settings sections correctly', () => {
   assert.equal(routeToHash({ view: 'settings', section: 'profile' }), '#/settings/profile');
 });
 
+test('admin sidebar routes preserve the section and keep the overview URL', () => {
+  const employees = { view: 'admin', adminSection: 'employees' };
+  assert.deepEqual(hashToRoute(routeToHash(employees)), employees);
+  assert.equal(routeToHash({ view: 'admin', adminSection: 'overview' }), '#/admin');
+  assert.deepEqual(hashToRoute('#/admin/unknown'), { view: 'admin' });
+  assert.equal(isSameRoute(employees, { view: 'admin', adminSection: 'audit' }), false);
+  assert.equal(isSameRoute({ view: 'admin' }, { view: 'admin', adminSection: 'overview' }), true);
+  assert.deepEqual(sanitizeRouteForGuest(employees, true), { view: 'lobby', intent: 'join' });
+});
+
 test('meeting invitations prefill a valid room code only on the join route', () => {
   const invite = { view: 'lobby', intent: 'join', roomCode: 'N0C26' };
   assert.deepEqual(hashToRoute(routeToHash(invite)), invite);

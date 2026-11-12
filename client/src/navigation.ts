@@ -8,6 +8,7 @@ export type AppView =
   | 'schedule'
   | 'settings'
   | 'recordings'
+  | 'admin'
   | 'documentation';
 
 export type SettingsSection =
@@ -31,9 +32,19 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   'security',
 ] as const;
 
+export const ADMIN_SECTIONS = {
+  overview: 'Overview',
+  employees: 'Karyawan',
+  meetings: 'Rapat',
+  system: 'Layanan',
+  audit: 'Audit',
+} as const;
+export type AdminSection = keyof typeof ADMIN_SECTIONS;
+
 export interface RouteState {
   view: AppView;
   section?: SettingsSection;
+  adminSection?: AdminSection;
   meetingId?: string | null;
   intent?: 'create' | 'join';
   roomCode?: string;
@@ -52,6 +63,10 @@ export function routeToHash(route: RouteState): string {
       return '#/schedule';
     case 'documentation':
       return '#/documentation';
+    case 'admin':
+      return route.adminSection && route.adminSection !== 'overview'
+        ? `#/admin/${route.adminSection}`
+        : '#/admin';
     case 'settings':
       return route.section && route.section !== 'overview'
         ? `#/settings/${route.section}`
@@ -102,6 +117,12 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
 
     case 'documentation':
       return { view: 'documentation' };
+    case 'admin': {
+      const section = segments[1]?.toLowerCase();
+      return section && Object.hasOwn(ADMIN_SECTIONS, section)
+        ? { view: 'admin', adminSection: section as AdminSection }
+        : { view: 'admin' };
+    }
 
     case 'settings': {
       const section = segments[1]?.toLowerCase();
@@ -157,6 +178,9 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
 
 export function isSameRoute(a: RouteState, b: RouteState): boolean {
   if (a.view !== b.view) return false;
+  if (a.view === 'admin') {
+    return (a.adminSection ?? 'overview') === (b.adminSection ?? 'overview');
+  }
   if (a.view === 'settings') {
     return (a.section || 'overview') === (b.section || 'overview');
   }

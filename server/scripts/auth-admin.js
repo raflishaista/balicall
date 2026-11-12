@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { getPool } from '../db.js';
 import { initAuthDb, PgAuthStore } from '../authStore.js';
+import { PgAdminStore, validAdminEmployeeId } from '../adminStore.js';
 
 const args=process.argv.slice(2), value=flag=>args[args.indexOf(flag)+1];
 const pool=getPool();
@@ -14,6 +15,13 @@ try {
   }
   await initAuthDb(pool);
   if(args.includes('--migrate-only')) { console.log('Skema login berhasil diperbarui.'); }
+  else if(args.includes('--bootstrap-super-admin')) {
+    const id=value('--employee-id');
+    if(!args.includes('--employee-id')||!validAdminEmployeeId(id))throw new Error('Gunakan --employee-id dengan ID karyawan aktif yang sudah diaktivasi.');
+    const result=await new PgAdminStore(pool).bootstrap(id);
+    if(!result.ok)throw new Error(result.error);
+    console.log(result.changed?'Super Admin pertama ditetapkan.':'Akses Super Admin sudah tersedia.');
+  }
   else {
     const id=args.includes('--create-test-account')?'BT-99001':value('--employee-id');
     if(!id||!/^BT-\d{5}$/.test(id))throw new Error('Gunakan --employee-id BT-XXXXX atau --create-test-account.');

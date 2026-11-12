@@ -42,6 +42,7 @@ export function loadConfig(env = process.env) {
     sttKey: env.STT_API_KEY || '',
     liveSttSecret: env.LIVE_STT_SECRET || '',
     liveSttUrl: env.LIVE_STT_URL || '',
+    liveSttHealthUrl: env.LIVE_STT_HEALTH_URL || '',
     qwenLiveSttUrl: env.QWEN_LIVE_STT_URL || '',
     qwenLiveSttSecret: env.QWEN_LIVE_STT_SECRET || '',
     qwenLiveHealthUrl: env.QWEN_LIVE_HEALTH_URL || 'http://127.0.0.1:8008/health',
@@ -117,6 +118,12 @@ export function loadConfig(env = process.env) {
     (!/^[\w-]{87}$/.test(config.vapidPublicKey)||!/^[\w-]{43}$/.test(config.vapidPrivateKey)||!(/^(mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/.test(config.vapidSubject))))throw new Error('Configure all VAPID keys and a valid mailto/HTTPS subject, or leave all empty.');
   if (!Number.isInteger(config.attendanceGraceMs) || config.attendanceGraceMs < 0 || config.attendanceGraceMs > 30000) throw new Error('ATTENDANCE_FINALIZE_GRACE_MS must be 0–30000 milliseconds');
   if (Boolean(config.liveSttUrl) !== Boolean(config.liveSttSecret) || (config.liveSttSecret && config.liveSttSecret.length < 32)) throw new Error('WhisperLiveKit requires LIVE_STT_URL and LIVE_STT_SECRET of at least 32 characters');
+  if (config.liveSttHealthUrl) {
+    const health = new URL(config.liveSttHealthUrl);
+    if (!['http:', 'https:'].includes(health.protocol) || health.username || health.password || health.search || health.hash) {
+      throw new Error('LIVE_STT_HEALTH_URL must be an HTTP(S) URL without credentials, query, or fragment');
+    }
+  }
   if (Boolean(config.qwenLiveSttUrl) !== Boolean(config.qwenLiveSttSecret) || (config.qwenLiveSttSecret && config.qwenLiveSttSecret.length < 32)) throw new Error('Qwen streaming requires QWEN_LIVE_STT_URL and a secret of at least 32 characters');
   if(config.qwenLiveSttUrl&&!/^\/[\w/-]+$/.test(config.qwenLiveSttUrl))throw new Error('Qwen streaming URL must be a same-origin path');
   if (Boolean(config.seaLiveSttUrl) !== Boolean(config.seaLiveSttSecret) || (config.seaLiveSttSecret && config.seaLiveSttSecret.length < 32)) throw new Error('SEA streaming requires paired URL and secret of at least 32 characters');

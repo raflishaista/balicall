@@ -273,6 +273,20 @@ const ORTHOGRAPHIC_CORRECTIONS = [
   [/\b(bali\s*tower|balitower)\b/gi, 'Bali Tower'],
   [/\blive\s*kit\b/gi, 'LiveKit'],
   [/\bwebrtc\b/gi, 'WebRTC'],
+  [/\b(?:grad\s*cam|gerak\s*cam|grap\s*cam|grab\s*cam|great\s*cam|grand\s*cam|grade\s*cam)\b/gi, 'Grad-CAM'],
+  [/\b(?:dino\s*v\s*2|di\s*nov\s*2|di\s*novel\s*2|dinov2)\b/gi, 'DINOv2'],
+  [/\b(?:dino\s*v\s*3|di\s*nov\s*3|di\s*novel\s*3|dinov3)\b/gi, 'DINOv3'],
+  [/\b(?:yolo\s*v?\s*12\s*s|yolov12s)\b/gi, 'YOLOv12s'],
+  [/\b(?:yolo\s*v?\s*12|yolov12)\b/gi, 'YOLOv12'],
+  [/\b(?:yolo\s*v?\s*11\s*s|yolov11s)\b/gi, 'YOLOv11s'],
+  [/\b(?:yolo\s*v?\s*11|yolov11)\b/gi, 'YOLOv11'],
+  [/\b(?:yolo\s*v?\s*8|yolov8)\b/gi, 'YOLOv8'],
+  [/\b(?:rf[\s-]*detr\s*seg|rfd\s*tr\s*sec|rfd\s*tr\s*sex|rf\s*dtr\s*seg)\b/gi, 'RF-DETR Seg'],
+  [/\b(?:rf[\s-]*detr|rfd\s*tr|rf\s*dtr)\b/gi, 'RF-DETR'],
+  [/\b(?:rt[\s-]*detr|rtd\s*tr|rt\s*dtr)\b/gi, 'RT-DETR'],
+  [/\b(?:focal\s*loss|vokal\s*los|fokal\s*los|focal\s*los)\b/gi, 'Focal Loss'],
+  [/\b(?:rapid\s*ocr|rapit\s*ocr|rapidocr)\b/gi, 'RapidOCR'],
+  [/\bnilai\s+agamanya\b/gi, 'nilai gammanya'],
 ];
 
 export function normalizeTranscriptText(text) {

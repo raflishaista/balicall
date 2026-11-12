@@ -378,4 +378,5 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     await uploads.deleteUpload(row.id);
     res.json({ success: true });
   }));
+  return { recordingCapabilities };
 }

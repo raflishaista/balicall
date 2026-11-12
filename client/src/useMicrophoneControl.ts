@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Track } from 'livekit-client';
-import type { LocalParticipant, LocalTrack } from 'livekit-client';
+import type { AudioCaptureOptions, LocalParticipant, LocalTrack } from 'livekit-client';
 
-export function useMicrophoneControl(participant: LocalParticipant, connected: boolean) {
+export function useMicrophoneControl(
+  participant: LocalParticipant,
+  connected: boolean,
+  audioCaptureOptions?: boolean | AudioCaptureOptions,
+) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false), active = useRef(false), inFlight = useRef(false);
@@ -28,7 +32,7 @@ export function useMicrophoneControl(participant: LocalParticipant, connected: b
         if (enable && existing?.track) captured.current = [existing.track];
         publication = await participant.setMicrophoneEnabled(enable);
       } else {
-        const tracks = await participant.createTracks({ audio: true, video: false });
+        const tracks = await participant.createTracks({ audio: audioCaptureOptions ?? true, video: false });
         if (!isCurrent()) { tracks.forEach(track => track.stop()); return; }
         captured.current = tracks;
         const audio = tracks.find(track => track.kind === Track.Kind.Audio);
@@ -45,6 +49,6 @@ export function useMicrophoneControl(participant: LocalParticipant, connected: b
       captured.current = []; inFlight.current = false;
       if (mounted.current) setPending(false);
     }
-  }, [participant]);
+  }, [participant, audioCaptureOptions]);
   return { pending, error, toggleMicrophone };
 }

@@ -132,7 +132,14 @@ if errorlevel 1 (
 if "!NEED_BACKEND!"=="1" (
     echo [3/4] Starting Backend Server on Port 3001...
     start "BaliCall Backend" /D "%~dp0server" cmd /k "node index.js"
-    ping -n 3 127.0.0.1 >nul
+    echo [*] Waiting for Backend Server on Port 3001 to become ready...
+    for /l %%i in (1,1,15) do (
+        curl -s -m 1 http://127.0.0.1:3001/api/health >nul 2>&1
+        if not errorlevel 1 goto :backend_ready
+        ping -n 2 127.0.0.1 >nul
+    )
+    :backend_ready
+    echo [OK] Backend Server is ready.
 )
 
 :: Launch 4: Client Workspace

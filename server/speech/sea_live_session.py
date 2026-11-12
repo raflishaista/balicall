@@ -1,10 +1,14 @@
 """Windowed SEA inference; interim hypotheses are replaceable, finals immutable."""
 import asyncio
+import os
 import numpy as np
 from qwen_live_protocol import RATE, decode_pcm, final_segment, transcript_frame
 
 MODEL='sea-asr-id-live'
-ROLLING_OVERLAP=int(.75*RATE)
+ROLLING_OVERLAP=int(float(os.getenv('SEA_ROLLING_OVERLAP_SECONDS','0.75'))*RATE)
+ROLLING_WINDOW_SAMPLES=int(float(os.getenv('SEA_ROLLING_WINDOW_SECONDS','12'))*RATE)
+SILENCE_ENDPOINT_SAMPLES=int(os.getenv('SEA_SILENCE_SAMPLES','12800'))
+PREROLL_SAMPLES=int(os.getenv('SEA_PREROLL_SAMPLES','4800'))
 
 
 class SeaLiveSession:
@@ -29,11 +33,11 @@ class SeaLiveSession:
                 self.voiced=True
                 self.last_voice=self.total
             if not self.voiced:
-                self._trim(max(self.base,self.total-4800))
+                self._trim(max(self.base,self.total-PREROLL_SAMPLES))
                 continue
-            if self.total-self.last_voice>=12800:
+            if self.total-self.last_voice>=SILENCE_ENDPOINT_SAMPLES:
                 frames+=await self._decode(final=True)
-            elif len(self.audio)>=12*RATE:
+            elif len(self.audio)>=ROLLING_WINDOW_SAMPLES:
                 frames+=await self._decode(final=True,rolling=True)
             elif len(self.audio)>=RATE and self.total-self.last_decode>=RATE:
                 frames+=await self._decode()
