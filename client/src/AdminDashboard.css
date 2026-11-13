@@ -249,3 +249,47 @@
 .admin-service-state--unavailable {
   color: #a12424;
 }
+
+.admin-request-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+
+.admin-request-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d5e1ef;
+  border-radius: 10px;
+  background: #f9fbfe;
+}
+
+.admin-request-card-body {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-request-card-body h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #162a42;
+}
+
+.admin-request-email {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #2f4b6e;
+  word-break: break-word;
+}
+
+.admin-request-meta {
+  color: #496482;
+  font-size: 0.82rem;
+}
+
+.admin-request-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

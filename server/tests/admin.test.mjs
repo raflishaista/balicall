@@ -358,6 +358,41 @@ test('admin permissions are enforced and account changes are audited', async t =
       assert.equal((await request('/admin/audit?' + queryString, 'admin')).status, 400, queryString);
     }
   });
+  await t.test('activation requests can be submitted, searched, declined, and approved for login', async () => {
+    const pass = 'applicant-password-12345';
+    assert.equal((await request('/auth/request-activation', undefined, { name: 'Rina', email: 'rina@balitower.co.id', password: 'short' }, true, 'POST')).status, 400);
+    assert.equal((await request('/auth/request-activation', undefined, { name: 'Rina Putri', email: 'rina@balitower.co.id', password: pass }, true, 'POST')).status, 201);
+    assert.equal((await request('/auth/request-activation', undefined, { name: 'Budi Santoso', email: 'budi@balitower.co.id', password: pass }, true, 'POST')).status, 201);
+
+    assert.equal((await request('/admin/activation-requests')).status, 401);
+    assert.equal((await request('/admin/activation-requests', 'guest')).status, 403);
+    const all = await (await request('/admin/activation-requests', 'admin')).json();
+    assert.equal(all.requests.length, 2);
+    const filtered = await (await request('/admin/activation-requests?q=budi', 'admin')).json();
+    assert.deepEqual(filtered.requests.map(r => r.email), ['budi@balitower.co.id']);
+
+    const rinaReq = all.requests.find(r => r.email === 'rina@balitower.co.id');
+    const budiReq = all.requests.find(r => r.email === 'budi@balitower.co.id');
+
+    assert.equal((await request('/admin/activation-requests/' + budiReq.id + '/decline', 'admin', {}, true, 'POST')).status, 200);
+    assert.equal((await request('/admin/activation-requests/' + budiReq.id + '/decline', 'admin', {}, true, 'POST')).status, 409);
+
+    assert.equal((await request('/admin/activation-requests/' + rinaReq.id + '/approve', 'admin', {}, true, 'POST')).status, 200);
+    const remaining = await (await request('/admin/activation-requests', 'admin')).json();
+    assert.equal(remaining.requests.length, 0);
+
+    const loginRes = await request('/auth/login', undefined, { email: 'rina@balitower.co.id', password: pass }, true, 'POST');
+    assert.equal(loginRes.status, 200);
+    const loginBody = await loginRes.json();
+    assert.equal(loginBody.user.email, 'rina@balitower.co.id');
+
+    const declinedLogin = await request('/auth/login', undefined, { email: 'budi@balitower.co.id', password: pass }, true, 'POST');
+    assert.equal(declinedLogin.status, 401);
+
+    const audit = await (await request('/admin/audit', 'admin')).json();
+    assert.ok(audit.entries.some(e => e.action === 'account.request.approve' && e.result === 'succeeded'));
+    assert.ok(audit.entries.some(e => e.action === 'account.request.decline' && e.result === 'succeeded'));
+  });
   const disabled = await start({ ...config, authEnabled: false });
   assert.equal((await disabled('/admin/access', 'admin')).status, 503);
 });

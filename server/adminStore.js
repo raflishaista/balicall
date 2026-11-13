@@ -316,4 +316,95 @@ export class PgAdminStore {
       }
     });
   }
+
+  async listActivationRequests(search = '') {
+    const { rows } = await this.requirePool().query(`
+      SELECT id::text AS id, name, email, status, created_at AS "createdAt"
+      FROM balicall_activation_requests
+      WHERE status = 'pending'
+        AND ($1 = '' OR STRPOS(LOWER(name), LOWER($1)) > 0 OR STRPOS(LOWER(email), LOWER($1)) > 0)
+      ORDER BY created_at DESC, id DESC
+    `, [search]);
+    return rows;
+  }
+
+  reviewActivationRequest(actorId, requestId, approve) {
+    const action = approve ? 'account.request.approve' : 'account.request.decline';
+    return this.mutate({
+      actorId,
+      targetId: String(requestId),
+      action,
+      newValue: approve ? 'approved' : 'declined',
+    }, async client => {
+      const { rows } = await client.query(`
+        SELECT id, name, email, password_hash, status
+        FROM balicall_activation_requests
+        WHERE id=$1 FOR UPDATE
+      `, [requestId]);
+      const request = rows[0];
+      if (!request) return denied(404, 'request_not_found', 'Permintaan aktivasi tidak ditemukan.');
+      if (request.status !== 'pending') {
+        return denied(409, 'request_already_reviewed', 'Permintaan aktivasi ini sudah diproses sebelumnya.');
+      }
+      if (!approve) {
+        await client.query(`
+          UPDATE balicall_activation_requests
+          SET status='declined', reviewed_by=$2, reviewed_at=NOW()
+          WHERE id=$1
+        `, [requestId, actorId]);
+        return { ...changed(), previousValue: 'pending', request: { id: String(request.id), name: request.name, email: request.email } };
+      }
+
+      const { rows: existingEmp } = await client.query(`
+        SELECT employee_id FROM balicall_employees WHERE LOWER(TRIM(email))=$1 LIMIT 1
+      `, [request.email]);
+      let employeeId = existingEmp[0]?.employee_id;
+      if (employeeId) {
+        await client.query(`
+          UPDATE balicall_employees SET status='active', name=COALESCE(NULLIF(BTRIM(name), ''), $2)
+          WHERE employee_id=$1
+        `, [employeeId, request.name]);
+      } else {
+        let candidateNum = 50000 + Number(request.id);
+        while (true) {
+          const candidateId = `BT-${String(candidateNum).padStart(5, '0')}`;
+          const { rows: collision } = await client.query(
+            'SELECT 1 FROM balicall_employees WHERE employee_id=$1',
+            [candidateId]
+          );
+          if (!collision.length) {
+            employeeId = candidateId;
+            break;
+          }
+          candidateNum++;
+        }
+        await client.query(`
+          INSERT INTO balicall_employees (employee_id, name, email, department, position, status)
+          VALUES ($1, $2, $3, 'General', 'Staff', 'active')
+        `, [employeeId, request.name, request.email]);
+      }
+
+      await client.query(`
+        INSERT INTO balicall_auth_accounts (employee_id, login_email, password_hash, password_changed_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (employee_id) DO UPDATE SET
+          login_email = EXCLUDED.login_email,
+          password_hash = EXCLUDED.password_hash,
+          password_changed_at = NOW()
+      `, [employeeId, request.email, request.password_hash]);
+
+      await client.query(`
+        UPDATE balicall_activation_requests
+        SET status='approved', reviewed_by=$2, reviewed_at=NOW()
+        WHERE id=$1
+      `, [requestId, actorId]);
+
+      return {
+        ...changed(),
+        previousValue: 'pending',
+        employeeId,
+        request: { id: String(request.id), name: request.name, email: request.email },
+      };
+    });
+  }
 }

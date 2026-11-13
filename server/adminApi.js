@@ -121,5 +121,20 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     if (!validAdminEmployeeId(employeeId)) return res.status(400).json({ error: 'ID karyawan tidak valid.' });
     sendOutcome(res, await store.inviteEmployee(req.admin.employeeId, employeeId), 201);
   }));
+  router.get('/activation-requests', manage, asyncRoute(async (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    if (q.length > 100) return res.status(400).json({ error: 'Kata kunci pencarian terlalu panjang.' });
+    res.json({ requests: await store.listActivationRequests(q.trim()) });
+  }));
+  router.post('/activation-requests/:requestId/approve', manage, asyncRoute(async (req, res) => {
+    const { requestId } = req.params;
+    if (!/^[1-9]\d*$/.test(requestId)) return res.status(400).json({ error: 'ID permintaan tidak valid.' });
+    sendOutcome(res, await store.reviewActivationRequest(req.admin.employeeId, Number(requestId), true));
+  }));
+  router.post('/activation-requests/:requestId/decline', manage, asyncRoute(async (req, res) => {
+    const { requestId } = req.params;
+    if (!/^[1-9]\d*$/.test(requestId)) return res.status(400).json({ error: 'ID permintaan tidak valid.' });
+    sendOutcome(res, await store.reviewActivationRequest(req.admin.employeeId, Number(requestId), false));
+  }));
   app.use('/api/admin', router);
 }

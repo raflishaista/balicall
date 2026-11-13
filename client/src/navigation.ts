@@ -35,6 +35,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 export const ADMIN_SECTIONS = {
   overview: 'Overview',
   employees: 'Karyawan',
+  requests: 'Permintaan',
   meetings: 'Rapat',
   system: 'Layanan',
   audit: 'Audit',

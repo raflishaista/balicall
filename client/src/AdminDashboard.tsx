@@ -39,6 +39,8 @@ const actionLabels: Record<string, string> = {
   'admin.revoke': 'Cabut akses Super Admin',
   'account.status.change': 'Ubah status akun',
   'account.invite': 'Buat undangan aktivasi',
+  'account.request.approve': 'Setujui permintaan aktivasi',
+  'account.request.decline': 'Tolak permintaan aktivasi',
 };
 const resultLabels: Record<string, string> = {
   succeeded: 'Berhasil',
@@ -58,6 +60,8 @@ const reasonLabels: Record<string, string> = {
   employee_email_missing: 'Email karyawan belum tersedia atau tidak valid',
   login_email_conflict: 'Email login sudah dipakai akun lain',
   admin_access_revoked: 'Akses pelaku sudah dicabut',
+  request_not_found: 'Permintaan aktivasi tidak ditemukan',
+  request_already_reviewed: 'Permintaan aktivasi sudah diproses',
 };
 const adminDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
 const adminWibDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' });
@@ -578,6 +582,122 @@ function AdminAudit({ permissions }: { permissions: string[] }) {
   );
 }
 
+interface AdminActivationRequest {
+  id: number;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+function AdminActivationRequests() {
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const path = search ? `/admin/activation-requests?${new URLSearchParams({ q: search })}` : '/admin/activation-requests';
+  const { data, loading, error, reload } = useAdminData<{ requests: AdminActivationRequest[] }>(path);
+
+  const applySearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSearch(query.trim());
+  };
+
+  const reviewRequest = async (request: AdminActivationRequest, approve: boolean) => {
+    if (busyId !== null) return;
+    setBusyId(request.id);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await apiRequest(`/admin/activation-requests/${request.id}/${approve ? 'approve' : 'decline'}`, {
+        method: 'POST',
+      });
+      setNotice(
+        approve
+          ? `Permintaan ${request.name} (${request.email}) diterima. Akun telah diaktifkan dan dapat digunakan untuk masuk.`
+          : `Permintaan ${request.name} (${request.email}) ditolak dan dihapus dari daftar.`,
+      );
+      reload();
+    } catch (failure: unknown) {
+      setActionError(failure instanceof Error ? failure.message : 'Permintaan gagal diproses.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleRequests = (data?.requests ?? []).filter(request =>
+    !normalizedQuery
+    || request.name.toLowerCase().includes(normalizedQuery)
+    || request.email.toLowerCase().includes(normalizedQuery),
+  );
+
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-requests-heading">
+      <div className="admin-section-header">
+        <div>
+          <h2 id="admin-requests-heading">Permintaan aktivasi akun</h2>
+          <p className="admin-check-time">Tinjau pengajuan akun baru. Akun yang diterima langsung aktif dan dapat digunakan untuk masuk.</p>
+        </div>
+        <button type="button" className="button-secondary" onClick={reload} disabled={loading || busyId !== null}>
+          <RefreshCw size={16} aria-hidden="true" /> Muat ulang
+        </button>
+      </div>
+      {notice && <p className="admin-action-notice" role="status">{notice}</p>}
+      {actionError && <p className="admin-inline-error" role="alert">{actionError}</p>}
+      <form className="admin-filters" onSubmit={applySearch}>
+        <label className="admin-field">Cari nama atau email
+          <input
+            type="search"
+            value={query}
+            onChange={event => {
+              const next = event.target.value;
+              setQuery(next);
+              if (!next.trim() && search) setSearch('');
+            }}
+            maxLength={100}
+            placeholder="Cari nama atau email pemohon"
+          />
+        </label>
+        <button type="submit" className="button-primary" disabled={loading}>Cari</button>
+      </form>
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : (
+        visibleRequests.length === 0
+          ? <p role="status">{normalizedQuery || search ? 'Tidak ada permintaan aktivasi yang cocok dengan pencarian.' : 'Belum ada permintaan aktivasi yang menunggu persetujuan.'}</p>
+          : <div className="admin-request-cards" role="list" aria-label="Daftar permintaan aktivasi">
+              {visibleRequests.map(request => (
+                <article key={request.id} className="admin-request-card" role="listitem">
+                  <div className="admin-request-card-body">
+                    <h3>{request.name}</h3>
+                    <p className="admin-request-email">{request.email}</p>
+                    <small className="admin-request-meta">Diajukan {adminDate.format(new Date(request.createdAt))}</small>
+                  </div>
+                  <div className="admin-request-card-actions">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      disabled={busyId !== null}
+                      onClick={() => void reviewRequest(request, true)}
+                    >
+                      {busyId === request.id ? 'Memproses…' : 'Terima'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={busyId !== null}
+                      onClick={() => void reviewRequest(request, false)}
+                    >
+                      Tolak
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+      )}
+    </section>
+  );
+}
+
 export default function AdminDashboard({ section }: { section: AdminSection }) {
   const { data, loading, error, reload } = useAdminData<{ employeeId: string; permissions: string[] }>('/admin/access');
   return (
@@ -586,6 +706,7 @@ export default function AdminDashboard({ section }: { section: AdminSection }) {
       {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
         {section === 'overview' && <AdminOverview />}
         {section === 'employees' && <AdminEmployees currentEmployeeId={data.employeeId} />}
+        {section === 'requests' && <AdminActivationRequests />}
         {section === 'meetings' && <AdminMeetings />}
         {section === 'system' && <AdminSystem />}
         {section === 'audit' && <AdminAudit permissions={data.permissions} />}
