@@ -169,18 +169,67 @@ export class PgAdminStore {
 
   async overview(days) {
     const { rows: [totals] } = await this.requirePool().query(`
+      WITH calendar AS (
+        SELECT (NOW() AT TIME ZONE 'Asia/Jakarta')::date AS today
+      ), period AS (
+        SELECT today, today - ($1::int - 1) AS first_day,
+          (today - ($1::int - 1))::timestamp AT TIME ZONE 'Asia/Jakarta' AS starts_at,
+          NOW() AS ends_at
+        FROM calendar
+      ), meetings AS (
+        SELECT m.id, m.room_name AS title, m.created_at,
+          COALESCE(attendance.first_join, m.created_at) AS activity_at
+        FROM balicall_meetings m
+        LEFT JOIN LATERAL (
+          SELECT MIN(a.joined_at) AS first_join FROM balicall_attendees a WHERE a.meeting_id=m.id
+        ) attendance ON TRUE
+        WHERE m.status IN ('active', 'ended')
+      ), daily_meetings AS (
+        SELECT (activity_at AT TIME ZONE 'Asia/Jakarta')::date AS day, COUNT(*)::int AS total
+        FROM meetings, period
+        WHERE activity_at BETWEEN starts_at AND ends_at
+        GROUP BY 1
+      ), daily_attendees AS (
+        SELECT (a.joined_at AT TIME ZONE 'Asia/Jakarta')::date AS day, COUNT(*)::int AS total
+        FROM balicall_attendees a
+        JOIN balicall_meetings m ON m.id=a.meeting_id
+        CROSS JOIN period
+        WHERE m.status IN ('active', 'ended') AND a.joined_at BETWEEN starts_at AND ends_at
+        GROUP BY 1
+      ), daily_activity AS (
+        SELECT TO_CHAR(d.day, 'YYYY-MM-DD') AS date, COALESCE(m.total, 0) AS meetings,
+          COALESCE(a.total, 0) AS attendances
+        FROM period
+        CROSS JOIN generate_series(0, $1::int - 1) AS offsets(n)
+        CROSS JOIN LATERAL (SELECT first_day + offsets.n AS day) d
+        LEFT JOIN daily_meetings m ON m.day=d.day
+        LEFT JOIN daily_attendees a ON a.day=d.day
+      ), uploads AS (
+        SELECT COUNT(*)::int AS total, COALESCE(SUM(file_size), 0)::text AS bytes
+        FROM balicall_recording_uploads, period
+        WHERE created_at BETWEEN starts_at AND ends_at
+      ), recent_activity AS (
+        SELECT 'meeting_created' AS kind, id, title, created_at AS "occurredAt"
+        FROM meetings, period
+        WHERE created_at BETWEEN starts_at AND ends_at
+        UNION ALL
+        SELECT 'recording_completed', id, title, completed_at
+        FROM balicall_recording_uploads, period
+        WHERE status='done' AND completed_at BETWEEN starts_at AND ends_at
+        ORDER BY "occurredAt" DESC, kind, id
+        LIMIT 8
+      )
       SELECT
         (SELECT COUNT(*)::int FROM balicall_employees) AS "totalEmployees",
         (SELECT COUNT(*)::int FROM balicall_auth_accounts WHERE password_hash IS NOT NULL) AS "activatedAccounts",
-        (SELECT COUNT(*)::int FROM balicall_meetings m
-          LEFT JOIN LATERAL (
-            SELECT MIN(a.joined_at) AS first_join FROM balicall_attendees a WHERE a.meeting_id=m.id
-          ) attendance ON TRUE
-          WHERE m.status IN ('active', 'ended')
-            AND COALESCE(attendance.first_join, m.created_at)
-              BETWEEN NOW() - $1::int * INTERVAL '24 hours' AND NOW()
-        ) AS "totalMeetings",
-        (SELECT COALESCE(SUM(file_size), 0)::text FROM balicall_recording_uploads) AS "uploadedBytes"
+        (SELECT COALESCE(SUM(total), 0)::int FROM daily_meetings) AS "totalMeetings",
+        uploads.total AS "totalRecordings", uploads.bytes AS "uploadedBytes",
+        TO_CHAR(period.first_day, 'YYYY-MM-DD') AS "periodStart",
+        TO_CHAR(period.today, 'YYYY-MM-DD') AS "periodEnd",
+        (SELECT JSON_AGG(d ORDER BY d.date) FROM daily_activity d) AS "dailyActivity",
+        (SELECT COALESCE(JSON_AGG(a ORDER BY a."occurredAt" DESC, a.kind, a.id), '[]'::json)
+          FROM recent_activity a) AS "recentActivity"
+      FROM period CROSS JOIN uploads
     `, [days]);
     return { days, ...totals };
   }

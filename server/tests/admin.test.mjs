@@ -137,8 +137,13 @@ test('admin permissions are enforced and account changes are audited', async t =
     await query(`INSERT INTO balicall_attendees(meeting_id,employee_id,employee_name,joined_at)
       VALUES ('scheduled-then-joined','QC-1','Rina 01',NOW()-interval '1 day'),
         ('scheduled-then-joined','QC-2','Rina 02',NOW()-interval '12 hours')`);
-    await query(`INSERT INTO balicall_recording_uploads (id,title,file_size)
-      VALUES ('recording-a','Fixture A',1024), ('recording-b','Fixture B',2048), ('recording-c','Fixture C',NULL)`);
+    await query(`WITH boundary AS (
+        SELECT ((NOW() AT TIME ZONE 'Asia/Jakarta')::date - 6)::timestamp AT TIME ZONE 'Asia/Jakarta' AS starts_at
+      )
+      INSERT INTO balicall_recording_uploads (id,title,file_size,status,created_at,completed_at)
+      SELECT 'recording-a','Fixture A',1024,'done',starts_at,starts_at FROM boundary
+      UNION ALL SELECT 'recording-b','Fixture B',2048,'done',starts_at-interval '1 second',starts_at FROM boundary
+      UNION ALL SELECT 'recording-c','Fixture C',NULL,'failed',starts_at,starts_at FROM boundary`);
 
     for (const path of ['/admin/overview','/admin/employees']) {
       assert.equal((await request(path)).status, 401);
@@ -147,12 +152,26 @@ test('admin permissions are enforced and account changes are audited', async t =
     }
     const first = await request('/admin/overview?days=7', 'admin');
     assert.equal(first.status, 200);
-    assert.deepEqual(await first.json(), {
+    const { dailyActivity, recentActivity, periodStart, periodEnd, ...totals } = await first.json();
+    assert.deepEqual(totals, {
       days: 7, totalEmployees: directory.total + 22, activatedAccounts: 3,
-      totalMeetings: 2, uploadedBytes: '3072',
+      totalMeetings: 2, totalRecordings: 2, uploadedBytes: '1024',
     });
-    const { totalMeetings } = await (await request('/admin/overview?days=30', 'admin')).json();
-    assert.equal(totalMeetings, 3);
+    assert.equal(dailyActivity.length, 7);
+    assert.deepEqual(dailyActivity[0], { date: periodStart, meetings: 0, attendances: 0 });
+    assert.equal(dailyActivity.at(-1).date, periodEnd);
+    assert.equal(dailyActivity.reduce((sum, day) => sum + day.meetings, 0), totals.totalMeetings);
+    assert.equal(dailyActivity.reduce((sum, day) => sum + day.attendances, 0), 2);
+    assert.deepEqual(recentActivity.map(({ kind, id }) => [kind, id]), [
+      ['meeting_created', 'fixture-room'], ['recording_completed', 'recording-a'], ['recording_completed', 'recording-b'],
+    ]);
+    assert.match(recentActivity[1].occurredAt, /T(00:00:00\+07:00|17:00:00(?:\+00:00|Z))$/);
+    assert.ok(recentActivity.every(event => Object.keys(event).sort().join(',') === 'id,kind,occurredAt,title'));
+    const month = await (await request('/admin/overview?days=30', 'admin')).json();
+    assert.equal(month.totalMeetings, 3);
+    assert.equal(month.totalRecordings, 3);
+    assert.equal(month.uploadedBytes, '3072');
+    assert.equal(month.dailyActivity.length, 30);
     assert.equal((await request('/admin/overview?days=0', 'admin')).status, 400);
 
     const filters = '/admin/employees?q=RINA&department=QA%20Overview&status=active';
@@ -228,6 +247,15 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(planned.hostName, 'Planned host');
     assert.equal(planned.durationSeconds, 3600);
     assert.ok(!JSON.stringify(listing).includes('private monitoring fixture transcript'));
+    for (const emptyRooms of [[{ name: started.livekitRoom, numParticipants: 0 }], []]) {
+      rooms = emptyRooms;
+      const empty = await (await request('/admin/meetings', 'admin')).json();
+      const meeting = empty.meetings.find(item => item.id === started.id);
+      assert.equal(meeting.status, 'empty');
+      assert.equal(meeting.participantCount, 0);
+      assert.equal(meeting.durationSeconds, null);
+      assert.equal(empty.meetings.find(item => item.id === 'fixture-room').status, 'waiting');
+    }
     const ready = await (await request('/admin/system', 'admin')).json();
     assert.equal(ready.services.find(service => service.id === 'whisper-live').status, 'ready');
 
@@ -235,7 +263,11 @@ test('admin permissions are enforced and account changes are audited', async t =
     whisperAvailable = false;
     const degraded = await (await request('/admin/meetings', 'admin')).json();
     assert.equal(degraded.livekitStatus, 'unavailable');
-    assert.equal(degraded.meetings.find(meeting => meeting.id === started.id).participantCount, null);
+    const unverified = degraded.meetings.find(meeting => meeting.id === started.id);
+    assert.equal(unverified.status, 'unverified');
+    assert.equal(unverified.participantCount, null);
+    assert.equal(unverified.durationSeconds, null);
+    assert.equal(degraded.meetings.find(meeting => meeting.id === 'monitor-upcoming').status, 'scheduled');
     const system = await (await request('/admin/system', 'admin')).json();
     assert.ok(Number.isFinite(Date.parse(system.checkedAt)));
     const statuses = Object.fromEntries(system.services.map(service => [service.id, service.status]));
@@ -250,6 +282,18 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(statuses['post-meeting-qwen'], 'ready');
     assert.ok(!JSON.stringify(system).includes('fixture.test'));
     livekitAvailable = true;
+    rooms = [{ name: started.livekitRoom, numParticipants: 1 }];
+    const recovered = await (await request('/admin/meetings', 'admin')).json();
+    assert.equal(recovered.meetings.find(meeting => meeting.id === started.id).status, 'active');
+
+    rooms = [];
+    const endedAt = new Date(Date.parse(joinedAt) + 60000).toISOString();
+    await query('UPDATE balicall_meetings SET status=$2, ended_at=$3 WHERE id=$1', [started.id, 'ended', endedAt]);
+    const finished = await (await request('/admin/meetings', 'admin')).json();
+    const ended = finished.meetings.find(meeting => meeting.id === started.id);
+    assert.equal(ended.status, 'ended');
+    assert.equal(ended.participantCount, 1);
+    assert.equal(ended.durationSeconds, 60);
   });
 
   await t.test('meeting history pages all finished records and filters by title and WIB date', async () => {
