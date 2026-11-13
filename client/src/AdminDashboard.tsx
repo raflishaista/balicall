@@ -134,12 +134,12 @@ interface OverviewData {
   totalEmployees: number;
   activatedAccounts: number;
   totalMeetings: number;
-  totalRecordings: number;
+  totalRecordings?: number;
   uploadedBytes: string;
-  periodStart: string;
-  periodEnd: string;
-  dailyActivity: DailyActivity[];
-  recentActivity: Array<{ id: string; kind: 'meeting_created' | 'recording_completed'; title: string | null; occurredAt: string }>;
+  periodStart?: string;
+  periodEnd?: string;
+  dailyActivity?: DailyActivity[];
+  recentActivity?: Array<{ id: string; kind: 'meeting_created' | 'recording_completed'; title: string | null; occurredAt: string }>;
 }
 
 interface DailyActivity {
@@ -150,6 +150,11 @@ interface DailyActivity {
 
 const overviewDay = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'UTC' });
 const overviewTick = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function overviewDateLabel(value: string | undefined, formatter: Intl.DateTimeFormat) {
+  const timestamp = typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(timestamp) ? formatter.format(timestamp) : null;
+}
 
 function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
   const series = [
@@ -173,12 +178,12 @@ function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
               </div>
               <div className={`admin-overview-bars admin-overview-bars--${key}`}>
                 {activity.map(day => <span key={day.date}
-                  title={`${overviewDay.format(new Date(day.date))} · ${numberFormat.format(day[key])}`}>
+                  title={`${overviewDateLabel(day.date, overviewDay) ?? 'Tanggal belum tersedia'} · ${numberFormat.format(day[key])}`}>
                   <i style={{ height: `${day[key] / peak * 100}%` }} />
                 </span>)}
               </div>
               <div className="admin-overview-ticks">
-                {tickIndices.map(index => <span key={activity[index].date}>{overviewTick.format(new Date(activity[index].date))}</span>)}
+                {tickIndices.map(index => <span key={activity[index].date}>{overviewDateLabel(activity[index].date, overviewTick) ?? '—'}</span>)}
               </div>
             </div>
           </div>;
@@ -189,7 +194,7 @@ function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
             <table className="admin-table admin-overview-table">
               <thead><tr><th scope="col">Tanggal (WIB)</th><th scope="col">Rapat</th><th scope="col">Kehadiran peserta</th></tr></thead>
               <tbody>{activity.map(day => <tr key={day.date}>
-                <th scope="row"><time dateTime={day.date}>{overviewDay.format(new Date(day.date))}</time></th>
+                <th scope="row">{overviewDateLabel(day.date, overviewDay) ?? '—'}</th>
                 <td>{numberFormat.format(day.meetings)}</td><td>{numberFormat.format(day.attendances)}</td>
               </tr>)}</tbody>
             </table>
@@ -203,10 +208,12 @@ function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
 function AdminOverview() {
   const [days, setDays] = useState('30');
   const { data, loading, error, reload } = useAdminData<OverviewData>(`/admin/overview?days=${days}`);
+  const periodStart = overviewDateLabel(data?.periodStart, overviewDay);
+  const periodEnd = overviewDateLabel(data?.periodEnd, overviewDay);
   const periodCards = data ? [
     { label: 'Rapat', value: numberFormat.format(data.totalMeetings), icon: CalendarDays },
-    { label: 'Rekaman diunggah', value: numberFormat.format(data.totalRecordings), icon: FileText },
-    { label: 'Ukuran file unggahan', value: formatUploadedBytes(data.uploadedBytes), icon: HardDrive },
+    { label: 'Rekaman diunggah', value: data.totalRecordings == null ? '—' : numberFormat.format(data.totalRecordings), icon: FileText },
+    { label: data.totalRecordings == null ? 'Ukuran unggahan seluruh waktu' : 'Ukuran file unggahan', value: formatUploadedBytes(data.uploadedBytes), icon: HardDrive },
   ] : [];
   return (
     <section className="admin-section" aria-labelledby="admin-overview-heading">
@@ -219,11 +226,11 @@ function AdminOverview() {
         </label>
       </div>
       {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
-        <p className="admin-check-time">
-          <time dateTime={data.periodStart}>{overviewDay.format(new Date(data.periodStart))}</time>
+        {periodStart && periodEnd ? <p className="admin-check-time">
+          <time dateTime={data.periodStart}>{periodStart}</time>
           {' sampai '}
-          <time dateTime={data.periodEnd}>{overviewDay.format(new Date(data.periodEnd))}</time> WIB
-        </p>
+          <time dateTime={data.periodEnd}>{periodEnd}</time> WIB
+        </p> : <p className="admin-monitor-notice" role="status">Rentang tanggal belum tersedia.</p>}
         <dl className="admin-kpis" aria-label="Ringkasan periode aktivitas">
           {periodCards.map(({ label, value, icon: Icon }) => (
             <div className="surface-card admin-kpi" key={label}>
@@ -233,17 +240,19 @@ function AdminOverview() {
           ))}
         </dl>
         <div className="admin-overview-panels">
-          <OverviewActivityChart activity={data.dailyActivity} />
+          {Array.isArray(data.dailyActivity) && <OverviewActivityChart activity={data.dailyActivity} />}
           <section className="surface-card admin-section" aria-labelledby="admin-recent-activity-heading">
             <h2 id="admin-recent-activity-heading">Aktivitas terbaru</h2>
-            {data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
-              <ul className="admin-overview-events">{data.recentActivity.map(event => (
-                <li key={`${event.kind}:${event.id}`}>
+            {!Array.isArray(data.recentActivity) ? <p>Data aktivitas terbaru belum tersedia.</p> :
+              data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
+              <ul className="admin-overview-events">{data.recentActivity.map(event => {
+                const occurredAt = overviewDateLabel(event.occurredAt, adminWibDate);
+                return <li key={`${event.kind}:${event.id}`}>
                   <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
                   <span>{event.title || 'Tanpa judul'}</span>
-                  <time dateTime={event.occurredAt}>{adminWibDate.format(new Date(event.occurredAt))} WIB</time>
-                </li>
-              ))}</ul>}
+                  {occurredAt ? <time dateTime={event.occurredAt}>{occurredAt} WIB</time> : <span>Waktu belum tercatat</span>}
+                </li>;
+              })}</ul>}
           </section>
         </div>
         <section className="surface-card admin-section" aria-labelledby="admin-accounts-overview-heading">

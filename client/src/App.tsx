@@ -25,7 +25,7 @@ import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, n
 import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
-import { ADMIN_SECTIONS, routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, syncBrowserHistory, type AdminSection } from './navigation';
+import { ADMIN_SECTIONS, routeToHash, hashToRoute, isSameRoute, sanitizeRouteForUser, syncBrowserHistory, type AdminSection } from './navigation';
 import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
@@ -88,7 +88,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [initialRoute] = useState<RouteState>(() => {
     if (typeof window !== 'undefined' && window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/' && !window.location.hash.startsWith('#main-content')) {
       const parsed = hashToRoute(window.location.hash);
-      return sanitizeRouteForGuest(parsed, isGuest);
+      return sanitizeRouteForUser(parsed, authUser);
     }
     if (isGuest) return { view: 'lobby', intent: 'join' };
     if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
@@ -296,7 +296,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const handleEndMeetingRef = useRef<((generate?: boolean) => Promise<void>) | undefined>(undefined);
 
   const navigateTo = useCallback((next: RouteState, replace = false) => {
-    const sanitized = sanitizeRouteForGuest(next, isGuest);
+    const sanitized = sanitizeRouteForUser(next, authUser);
     const current = currentRouteRef.current;
     if (isSameRoute(current, sanitized)) {
       return;
@@ -377,7 +377,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         ? event.state
         : hashToRoute(window.location.hash, currentRouteRef.current);
 
-      const nextRoute = sanitizeRouteForGuest(rawRoute, isGuest);
+      const nextRoute = sanitizeRouteForUser(rawRoute, authUser);
 
       if (currentRouteRef.current.view === 'lobby' && nextRoute.view !== 'lobby') {
         joinGeneration.current++;

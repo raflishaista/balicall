@@ -517,6 +517,16 @@ test('admin permissions are enforced and account changes are audited', async t =
     const audit = await (await request('/admin/audit', 'admin')).json();
     assert.ok(audit.entries.some(e => e.action === 'account.request.approve' && e.result === 'succeeded'));
     assert.ok(audit.entries.some(e => e.action === 'account.request.decline' && e.result === 'succeeded'));
+
+    // An already active account can submit an activation request separately without login conflict
+    const updatedPass = 'updated-password-12345';
+    assert.equal((await request('/auth/request-activation', undefined, { name: 'Rina Updated', email: 'rina@balitower.co.id', password: updatedPass }, true, 'POST')).status, 201);
+    const renewed = (await (await request('/admin/activation-requests?q=rina', 'admin')).json()).requests[0];
+    assert.ok(renewed);
+    assert.equal((await request('/admin/activation-requests/' + renewed.id + '/approve', 'admin', {}, true, 'POST')).status, 200);
+    const updatedLogin = await request('/auth/login', undefined, { email: 'rina@balitower.co.id', password: updatedPass }, true, 'POST');
+    assert.equal(updatedLogin.status, 200);
+    assert.equal((await updatedLogin.json()).user.email, 'rina@balitower.co.id');
   });
   const disabled = await start({ ...config, authEnabled: false });
   assert.equal((await disabled('/admin/access', 'admin')).status, 503);

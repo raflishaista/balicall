@@ -5,6 +5,7 @@ import {
   hashToRoute,
   isSameRoute,
   sanitizeRouteForGuest,
+  sanitizeRouteForUser,
   syncBrowserHistory,
   SETTINGS_SECTIONS,
 } from '../src/navigation.ts';
@@ -145,6 +146,41 @@ test('sanitizeRouteForGuest restricts guest navigation safely', () => {
   assert.deepEqual(
     sanitizeRouteForGuest({ view: 'in-call', meetingId: 'abc' }, true),
     { view: 'in-call', meetingId: 'abc' }
+  );
+});
+
+test('sanitizeRouteForUser restricts admin navigation for normal users and guests safely', () => {
+  const adminRoute = { view: 'admin', adminSection: 'requests' };
+  // Normal employee cannot access admin route -> redirected to home
+  assert.deepEqual(
+    sanitizeRouteForUser(adminRoute, { isSuperAdmin: false }),
+    { view: 'home' }
+  );
+  assert.deepEqual(
+    sanitizeRouteForUser(adminRoute, null),
+    { view: 'home' }
+  );
+
+  // Super admin can access admin route
+  assert.deepEqual(
+    sanitizeRouteForUser(adminRoute, { isSuperAdmin: true }),
+    adminRoute
+  );
+
+  // Guest is restricted to guest flow
+  assert.deepEqual(
+    sanitizeRouteForUser(adminRoute, { isGuest: true }),
+    { view: 'lobby', intent: 'join' }
+  );
+
+  // Normal employee can access other views normally
+  assert.deepEqual(
+    sanitizeRouteForUser({ view: 'schedule' }, { isSuperAdmin: false }),
+    { view: 'schedule' }
+  );
+  assert.deepEqual(
+    sanitizeRouteForUser({ view: 'summary', meetingId: 'm1' }, { isSuperAdmin: false }),
+    { view: 'summary', meetingId: 'm1' }
   );
 });
 

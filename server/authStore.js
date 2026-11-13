@@ -173,20 +173,6 @@ export class PgAuthStore {
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   async createActivationRequest({ name, email, passwordHash }) {
-    const { rows: existingAccount } = await this.query(
-      'SELECT password_hash IS NOT NULL AS activated FROM balicall_auth_accounts WHERE login_email=$1',
-      [email]
-    );
-    if (existingAccount[0]?.activated) {
-      throw Object.assign(new Error('Akun dengan email ini sudah aktif. Silakan masuk.'), { status: 409 });
-    }
-    const { rows: existingReq } = await this.query(
-      'SELECT status FROM balicall_activation_requests WHERE email=$1',
-      [email]
-    );
-    if (existingReq[0]?.status === 'pending') {
-      throw Object.assign(new Error('Permintaan aktivasi untuk email ini sudah dikirim dan sedang menunggu persetujuan admin.'), { status: 409 });
-    }
     const { rows } = await this.query(`
       INSERT INTO balicall_activation_requests(name, email, password_hash, status, reviewed_by, reviewed_at, created_at)
       VALUES ($1, $2, $3, 'pending', NULL, NULL, NOW())

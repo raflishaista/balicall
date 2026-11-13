@@ -455,7 +455,10 @@ export class PgAdminStore {
       const { rows: existingEmp } = await client.query(`
         SELECT employee_id FROM balicall_employees WHERE LOWER(TRIM(email))=$1 LIMIT 1
       `, [request.email]);
-      let employeeId = existingEmp[0]?.employee_id;
+      const { rows: existingAcc } = await client.query(`
+        SELECT employee_id FROM balicall_auth_accounts WHERE login_email=$1 LIMIT 1
+      `, [request.email]);
+      let employeeId = existingEmp[0]?.employee_id || existingAcc[0]?.employee_id;
       if (employeeId) {
         await client.query(`
           UPDATE balicall_employees SET status='active', name=COALESCE(NULLIF(BTRIM(name), ''), $2)
@@ -489,6 +492,8 @@ export class PgAdminStore {
           password_hash = EXCLUDED.password_hash,
           password_changed_at = NOW()
       `, [employeeId, request.email, request.password_hash]);
+
+      await client.query('DELETE FROM balicall_auth_sessions WHERE employee_id=$1', [employeeId]);
 
       await client.query(`
         UPDATE balicall_activation_requests

@@ -213,6 +213,16 @@ export function sanitizeRouteForGuest(route: RouteState, isGuest: boolean): Rout
   return { view: 'lobby', intent: 'join' };
 }
 
+export function sanitizeRouteForUser(route: RouteState, user?: { isGuest?: boolean; isSuperAdmin?: boolean } | null): RouteState {
+  if (user?.isGuest) {
+    return sanitizeRouteForGuest(route, true);
+  }
+  if (!user?.isSuperAdmin && route.view === 'admin') {
+    return { view: 'home' };
+  }
+  return route;
+}
+
 export function syncBrowserHistory(route: RouteState, replace = false): void {
   if (typeof window === 'undefined' || !window.history) return;
   const targetHash = routeToHash(route);

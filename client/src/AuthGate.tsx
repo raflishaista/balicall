@@ -46,7 +46,17 @@ export function AuthGate() {
   useEffect(() => {
     const lifecycle = generation.current;
     void check();
-    const expired = () => { lifecycle.value++; setAuthCsrfToken(null); setAccountScope(null); setSession({ enabled: true, user: null }); setChecking(false); setError('Sesi sudah berakhir. Silakan masuk kembali.'); };
+    const expired = () => {
+      lifecycle.value++;
+      setAuthCsrfToken(null);
+      setAccountScope(null);
+      if (typeof window !== 'undefined' && window.location) {
+        window.location.hash = '#/home';
+      }
+      setSession({ enabled: true, user: null });
+      setChecking(false);
+      setError('Sesi sudah berakhir. Silakan masuk kembali.');
+    };
     const onStorage = (e: StorageEvent) => {
       if (e.key === 'balicall_active_session') void check();
     };
@@ -70,6 +80,9 @@ export function AuthGate() {
       }
       await apiRequest('/auth/logout', {method:'POST'});
       clearSummarySession();
+      if (typeof window !== 'undefined' && window.location) {
+        window.location.hash = '#/home';
+      }
       accept({enabled:true,user:null});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal keluar. Coba lagi.');
@@ -106,6 +119,9 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
     try {
       if(mode==='guest') {
         const next=await apiRequest<Session>('/auth/guest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:guestName.trim(),inviteCode:inviteCode.trim()})});
+        if (typeof window !== 'undefined' && window.location) {
+          window.location.hash = '#/home';
+        }
         onAuthenticated(next);
       } else if(mode==='activate') {
         await apiRequest('/auth/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,activationCode:code.trim()})});
@@ -115,10 +131,14 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
         switchMode('login');setNotice('Permintaan aktivasi terkirim. Silakan tunggu persetujuan admin sebelum masuk.');
       } else {
         const next=await apiRequest<Session>('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,...(force?{force:true}:{})})});
-        setPassword('');setConflictModal(null);onAuthenticated(next);
+        setPassword('');setConflictModal(null);
+        if (typeof window !== 'undefined' && window.location) {
+          window.location.hash = '#/home';
+        }
+        onAuthenticated(next);
       }
     } catch(err:any) {
-      if(err?.status===409 || err?.code==='ACCOUNT_ALREADY_LOGGED_IN' || err?.data?.alreadyLoggedIn) {
+      if(mode==='login' && (err?.status===409 || err?.code==='ACCOUNT_ALREADY_LOGGED_IN' || err?.data?.alreadyLoggedIn)) {
         setConflictModal({email,name:err?.data?.employeeName,message:err instanceof Error?err.message:'Akun ini sedang aktif di sesi atau perangkat lain.'});
       } else {
         setError(err instanceof Error?err.message:'Permintaan gagal. Coba lagi.');

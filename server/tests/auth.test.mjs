@@ -12,7 +12,7 @@ test('password hashing uses a random salt and verifies without storing plaintext
   assert.equal(await verifyPassword(password,first),true);
   assert.equal(await verifyPassword('wrong',first),false);
   assert.equal(await verifyPassword(password,'scrypt$16$8$1$bad$bad'),false);
-  await assert.rejects(hashPassword('short'),/15/);
+  await assert.rejects(hashPassword('short'),/8/);
 });
 test('login requires explicit opt-in and production cookies require HTTPS',()=>{
   assert.equal(loadConfig({DATABASE_URL:'postgresql://example'}).authEnabled,false);
