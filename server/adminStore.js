@@ -329,7 +329,7 @@ export class PgAdminStore {
           NOW() AS ends_at
         FROM calendar
       ), meetings AS (
-        SELECT m.id, m.room_name AS title, m.created_at,
+        SELECT m.id, m.room_name AS title, m.created_at, attendance.first_join,
           COALESCE(attendance.first_join, m.created_at) AS activity_at
         FROM balicall_meetings m
         LEFT JOIN LATERAL (
@@ -337,7 +337,8 @@ export class PgAdminStore {
         ) attendance ON TRUE
         WHERE m.status IN ('active', 'ended')
       ), daily_meetings AS (
-        SELECT (activity_at AT TIME ZONE 'Asia/Jakarta')::date AS day, COUNT(*)::int AS total
+        SELECT (activity_at AT TIME ZONE 'Asia/Jakarta')::date AS day, COUNT(*)::int AS total,
+          COUNT(first_join)::int AS attended
         FROM meetings, period
         WHERE activity_at BETWEEN starts_at AND ends_at
         GROUP BY 1
@@ -350,7 +351,7 @@ export class PgAdminStore {
         GROUP BY 1
       ), daily_activity AS (
         SELECT TO_CHAR(d.day, 'YYYY-MM-DD') AS date, COALESCE(m.total, 0) AS meetings,
-          COALESCE(a.total, 0) AS attendances
+          COALESCE(a.total, 0) AS attendances, COALESCE(m.attended, 0) AS "meetingsWithParticipants"
         FROM period
         CROSS JOIN generate_series(0, $1::int - 1) AS offsets(n)
         CROSS JOIN LATERAL (SELECT first_day + offsets.n AS day) d
