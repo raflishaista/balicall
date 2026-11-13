@@ -228,6 +228,15 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(planned.hostName, 'Planned host');
     assert.equal(planned.durationSeconds, 3600);
     assert.ok(!JSON.stringify(listing).includes('private monitoring fixture transcript'));
+    for (const emptyRooms of [[{ name: started.livekitRoom, numParticipants: 0 }], []]) {
+      rooms = emptyRooms;
+      const empty = await (await request('/admin/meetings', 'admin')).json();
+      const meeting = empty.meetings.find(item => item.id === started.id);
+      assert.equal(meeting.status, 'empty');
+      assert.equal(meeting.participantCount, 0);
+      assert.equal(meeting.durationSeconds, null);
+      assert.equal(empty.meetings.find(item => item.id === 'fixture-room').status, 'waiting');
+    }
     const ready = await (await request('/admin/system', 'admin')).json();
     assert.equal(ready.services.find(service => service.id === 'whisper-live').status, 'ready');
 
@@ -235,7 +244,11 @@ test('admin permissions are enforced and account changes are audited', async t =
     whisperAvailable = false;
     const degraded = await (await request('/admin/meetings', 'admin')).json();
     assert.equal(degraded.livekitStatus, 'unavailable');
-    assert.equal(degraded.meetings.find(meeting => meeting.id === started.id).participantCount, null);
+    const unverified = degraded.meetings.find(meeting => meeting.id === started.id);
+    assert.equal(unverified.status, 'unverified');
+    assert.equal(unverified.participantCount, null);
+    assert.equal(unverified.durationSeconds, null);
+    assert.equal(degraded.meetings.find(meeting => meeting.id === 'monitor-upcoming').status, 'scheduled');
     const system = await (await request('/admin/system', 'admin')).json();
     assert.ok(Number.isFinite(Date.parse(system.checkedAt)));
     const statuses = Object.fromEntries(system.services.map(service => [service.id, service.status]));
@@ -250,6 +263,18 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(statuses['post-meeting-qwen'], 'ready');
     assert.ok(!JSON.stringify(system).includes('fixture.test'));
     livekitAvailable = true;
+    rooms = [{ name: started.livekitRoom, numParticipants: 1 }];
+    const recovered = await (await request('/admin/meetings', 'admin')).json();
+    assert.equal(recovered.meetings.find(meeting => meeting.id === started.id).status, 'active');
+
+    rooms = [];
+    const endedAt = new Date(Date.parse(joinedAt) + 60000).toISOString();
+    await query('UPDATE balicall_meetings SET status=$2, ended_at=$3 WHERE id=$1', [started.id, 'ended', endedAt]);
+    const finished = await (await request('/admin/meetings', 'admin')).json();
+    const ended = finished.meetings.find(meeting => meeting.id === started.id);
+    assert.equal(ended.status, 'ended');
+    assert.equal(ended.participantCount, 1);
+    assert.equal(ended.durationSeconds, 60);
   });
 
   await t.test('meeting history pages all finished records and filters by title and WIB date', async () => {

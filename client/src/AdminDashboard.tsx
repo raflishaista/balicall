@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { CalendarDays, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { ApiError, apiRequest } from './api';
 import { AdminEmployeeActions, type AdminEmployee } from './AdminEmployeeActions';
@@ -60,11 +60,13 @@ const reasonLabels: Record<string, string> = {
   admin_access_revoked: 'Akses pelaku sudah dicabut',
 };
 const adminDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+const adminCheckDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'medium' });
 const adminWibDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' });
 const numberFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
-function useAdminData<T>(path: string) {
+function useAdminData<T>(path: string, refreshIntervalMs?: number) {
   const [result, setResult] = useState<{ key: string; data: T | null; error: string | null } | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const reload = useCallback(() => setRefresh(value => value + 1), []);
   const key = `${path}:${refresh}`;
 
   useEffect(() => {
@@ -76,17 +78,31 @@ function useAdminData<T>(path: string) {
       const error = failure instanceof ApiError && failure.status === 403
         ? 'Halaman ini memerlukan akses Super Admin.'
         : failure instanceof Error ? failure.message : 'Data admin gagal dimuat.';
-      setResult(previous => ({ key, data: previous?.data ?? null, error }));
+      const accessDenied = failure instanceof ApiError && (failure.status === 401 || failure.status === 403);
+      setResult(previous => ({ key, data: accessDenied ? null : previous?.data ?? null, error }));
     });
     return () => controller.abort();
   }, [key, path]);
 
   const loading = result?.key !== key;
+  useEffect(() => {
+    if (!refreshIntervalMs || loading) return;
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    const timer = window.setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [loading, refreshIntervalMs, reload]);
+
   return {
     data: result?.data ?? null,
     error: loading ? null : result.error,
     loading,
-    reload: () => setRefresh(value => value + 1),
+    reload,
   };
 }
 
@@ -243,6 +259,8 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
 
 const meetingStatuses = {
   active: 'Berlangsung',
+  empty: 'Kosong',
+  unverified: 'Tidak dapat diverifikasi',
   waiting: 'Menunggu peserta',
   scheduled: 'Terjadwal',
   ended: 'Selesai',
@@ -271,15 +289,18 @@ function durationLabel(seconds: number | null) {
   return hours ? `${hours} jam ${minutes % 60} mnt` : `${minutes} mnt`;
 }
 
-function CheckTime({ value }: { value: string }) {
-  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{adminDate.format(new Date(value))}</time></p>;
+function CheckTime({ value, showSeconds = false }: { value: string; showSeconds?: boolean }) {
+  const formatter = showSeconds ? adminCheckDate : adminDate;
+  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{formatter.format(new Date(value))}</time></p>;
 }
+
+const MEETING_REFRESH_SECONDS = 15;
 
 function AdminMeetingMonitoring() {
   const [status, setStatus] = useState('');
   const { data, loading, error, reload } = useAdminData<{
     meetings: MonitoredMeeting[]; livekitStatus: string; checkedAt: string;
-  }>('/admin/meetings');
+  }>('/admin/meetings', MEETING_REFRESH_SECONDS * 1000);
   const rows = data?.meetings.filter(meeting => !status || meeting.status === status) ?? [];
   return (
     <section className="surface-card admin-section" aria-labelledby="admin-meetings-heading">
@@ -289,8 +310,10 @@ function AdminMeetingMonitoring() {
           <RefreshCw size={16} aria-hidden="true" /> Perbarui
         </button>
       </div>
-      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
-        <CheckTime value={data.checkedAt} />
+      {!data ? <AdminLoadState error={error} reload={reload} /> : <>
+        <CheckTime value={data.checkedAt} showSeconds />
+        <p className="admin-check-time">Diperbarui otomatis setiap {MEETING_REFRESH_SECONDS} detik saat tab terlihat.</p>
+        {error && <p className="admin-monitor-notice" role="status">Pembaruan gagal. Tabel menampilkan data dari pengecekan terakhir.</p>}
         {data.livekitStatus !== 'reachable' &&
           <p className="admin-monitor-notice" role="status">LiveKit belum merespons. Jumlah peserta yang sedang terhubung belum tersedia.</p>}
         <label className="admin-field admin-meeting-filter">Status rapat
