@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, ClipboardList, FileText, Home, LayoutDashboard, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, ShieldCheck, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, ClipboardList, FileText, Home, LayoutDashboard, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
@@ -25,6 +25,7 @@ export function BrandLogo({ inverse = false }: { inverse?: boolean }) {
 const adminIcons = {
   overview: LayoutDashboard,
   employees: Users,
+  requests: UserPlus,
   meetings: Calendar,
   recordings: FileText,
   system: Activity,

@@ -54,6 +54,100 @@
   font-weight: 700;
 }
 
+.admin-overview-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.admin-overview-series strong {
+  font-size: 0.875rem;
+}
+
+.admin-overview-plot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
+.admin-overview-scale,
+.admin-overview-ticks {
+  display: flex;
+  justify-content: space-between;
+  color: #496482;
+  font-size: 0.75rem;
+}
+
+.admin-overview-scale {
+  flex-direction: column;
+  text-align: end;
+}
+
+.admin-overview-ticks {
+  grid-column: 2;
+}
+
+.admin-overview-bars {
+  display: flex;
+  height: 96px;
+  border-block: 1px solid #d8e5f2;
+  background: linear-gradient(#e0e8f2, #e0e8f2) center / 100% 1px no-repeat;
+  color: #1764cb;
+}
+
+.admin-overview-bars--attendances {
+  color: #087967;
+}
+
+.admin-overview-bars > span {
+  display: flex;
+  align-items: end;
+  flex: 1;
+  min-width: 0;
+  padding-inline: min(1px, 0.12%);
+}
+
+.admin-overview-bars i {
+  width: 100%;
+  background: currentColor;
+  border-radius: 3px 3px 0 0;
+}
+
+.admin-overview-table {
+  min-width: 280px;
+  margin-top: 8px;
+}
+
+.admin-overview-events {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-overview-events li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 0;
+  border-top: 1px solid #e0e8f2;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+}
+
+.admin-overview-events time {
+  color: #496482;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 920px) {
+  .admin-overview-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .admin-filters {
   display: flex;
   flex-wrap: wrap;
@@ -248,4 +342,48 @@
 
 .admin-service-state--unavailable {
   color: #a12424;
+}
+
+.admin-request-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+
+.admin-request-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d5e1ef;
+  border-radius: 10px;
+  background: #f9fbfe;
+}
+
+.admin-request-card-body {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-request-card-body h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #162a42;
+}
+
+.admin-request-email {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #2f4b6e;
+  word-break: break-word;
+}
+
+.admin-request-meta {
+  color: #496482;
+  font-size: 0.82rem;
+}
+
+.admin-request-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

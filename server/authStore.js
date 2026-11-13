@@ -23,6 +23,16 @@ export async function initAdminDb(client) {
       reason TEXT,
       occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
     );
+    CREATE TABLE IF NOT EXISTS balicall_activation_requests (
+      id BIGSERIAL PRIMARY KEY,
+      name VARCHAR(128) NOT NULL,
+      email TEXT NOT NULL UNIQUE CHECK(email = lower(email)),
+      password_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+      reviewed_by VARCHAR(32),
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 }
 
@@ -161,5 +171,34 @@ export class PgAuthStore {
       await client.query('COMMIT');
       return invite;
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  }
+  async createActivationRequest({ name, email, passwordHash }) {
+    const { rows: existingAccount } = await this.query(
+      'SELECT password_hash IS NOT NULL AS activated FROM balicall_auth_accounts WHERE login_email=$1',
+      [email]
+    );
+    if (existingAccount[0]?.activated) {
+      throw Object.assign(new Error('Akun dengan email ini sudah aktif. Silakan masuk.'), { status: 409 });
+    }
+    const { rows: existingReq } = await this.query(
+      'SELECT status FROM balicall_activation_requests WHERE email=$1',
+      [email]
+    );
+    if (existingReq[0]?.status === 'pending') {
+      throw Object.assign(new Error('Permintaan aktivasi untuk email ini sudah dikirim dan sedang menunggu persetujuan admin.'), { status: 409 });
+    }
+    const { rows } = await this.query(`
+      INSERT INTO balicall_activation_requests(name, email, password_hash, status, reviewed_by, reviewed_at, created_at)
+      VALUES ($1, $2, $3, 'pending', NULL, NULL, NOW())
+      ON CONFLICT (email) DO UPDATE SET
+        name = EXCLUDED.name,
+        password_hash = EXCLUDED.password_hash,
+        status = 'pending',
+        reviewed_by = NULL,
+        reviewed_at = NULL,
+        created_at = NOW()
+      RETURNING id::text AS id, name, email, status, created_at AS "createdAt"
+    `, [name, email, passwordHash]);
+    return rows[0];
   }
 }

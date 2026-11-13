@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { CalendarDays, FileText, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { ApiError, apiRequest } from './api';
 import { AdminEmployeeActions, type AdminEmployee } from './AdminEmployeeActions';
@@ -40,6 +40,8 @@ const actionLabels: Record<string, string> = {
   'admin.revoke': 'Cabut akses Super Admin',
   'account.status.change': 'Ubah status akun',
   'account.invite': 'Buat undangan aktivasi',
+  'account.request.approve': 'Setujui permintaan aktivasi',
+  'account.request.decline': 'Tolak permintaan aktivasi',
 };
 const resultLabels: Record<string, string> = {
   succeeded: 'Berhasil',
@@ -59,13 +61,17 @@ const reasonLabels: Record<string, string> = {
   employee_email_missing: 'Email karyawan belum tersedia atau tidak valid',
   login_email_conflict: 'Email login sudah dipakai akun lain',
   admin_access_revoked: 'Akses pelaku sudah dicabut',
+  request_not_found: 'Permintaan aktivasi tidak ditemukan',
+  request_already_reviewed: 'Permintaan aktivasi sudah diproses',
 };
 const adminDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+const adminCheckDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'medium' });
 const adminWibDate = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' });
 const numberFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
-function useAdminData<T>(path: string) {
+function useAdminData<T>(path: string, refreshIntervalMs?: number) {
   const [result, setResult] = useState<{ key: string; data: T | null; error: string | null } | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const reload = useCallback(() => setRefresh(value => value + 1), []);
   const key = `${path}:${refresh}`;
 
   useEffect(() => {
@@ -77,17 +83,31 @@ function useAdminData<T>(path: string) {
       const error = failure instanceof ApiError && failure.status === 403
         ? 'Halaman ini memerlukan akses Super Admin.'
         : failure instanceof Error ? failure.message : 'Data admin gagal dimuat.';
-      setResult(previous => ({ key, data: previous?.data ?? null, error }));
+      const accessDenied = failure instanceof ApiError && (failure.status === 401 || failure.status === 403);
+      setResult(previous => ({ key, data: accessDenied ? null : previous?.data ?? null, error }));
     });
     return () => controller.abort();
   }, [key, path]);
 
   const loading = result?.key !== key;
+  useEffect(() => {
+    if (!refreshIntervalMs || loading) return;
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    const timer = window.setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [loading, refreshIntervalMs, reload]);
+
   return {
     data: result?.data ?? null,
     error: loading ? null : result.error,
     loading,
-    reload: () => setRefresh(value => value + 1),
+    reload,
   };
 }
 
@@ -114,37 +134,130 @@ interface OverviewData {
   totalEmployees: number;
   activatedAccounts: number;
   totalMeetings: number;
+  totalRecordings: number;
   uploadedBytes: string;
+  periodStart: string;
+  periodEnd: string;
+  dailyActivity: DailyActivity[];
+  recentActivity: Array<{ id: string; kind: 'meeting_created' | 'recording_completed'; title: string | null; occurredAt: string }>;
+}
+
+interface DailyActivity {
+  date: string;
+  meetings: number;
+  attendances: number;
+}
+
+const overviewDay = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'UTC' });
+const overviewTick = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
+  const series = [
+    { key: 'meetings', label: 'Rapat per hari' },
+    { key: 'attendances', label: 'Kehadiran peserta per hari' },
+  ] as const;
+  const tickIndices = [...new Set([0, Math.floor((activity.length - 1) / 2), activity.length - 1])];
+  const empty = activity.every(day => day.meetings === 0 && day.attendances === 0);
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-activity-heading">
+      <h2 id="admin-activity-heading">Aktivitas rapat</h2>
+      <p className="admin-check-time">Rapat dihitung pada hari pertama peserta bergabung, atau hari ruang dibuat jika belum ada kehadiran. Kehadiran dihitung per peserta dan rapat pada hari bergabung.</p>
+      {empty ? <p>Belum ada rapat atau kehadiran pada periode ini.</p> : <>
+        {series.map(({ key, label }) => {
+          const peak = Math.max(1, ...activity.map(day => day[key]));
+          return <div className="admin-overview-series" key={key} aria-hidden="true">
+            <strong>{label}</strong>
+            <div className="admin-overview-plot">
+              <div className="admin-overview-scale">
+                <span>{numberFormat.format(peak)}</span><span>0</span>
+              </div>
+              <div className={`admin-overview-bars admin-overview-bars--${key}`}>
+                {activity.map(day => <span key={day.date}
+                  title={`${overviewDay.format(new Date(day.date))} · ${numberFormat.format(day[key])}`}>
+                  <i style={{ height: `${day[key] / peak * 100}%` }} />
+                </span>)}
+              </div>
+              <div className="admin-overview-ticks">
+                {tickIndices.map(index => <span key={activity[index].date}>{overviewTick.format(new Date(activity[index].date))}</span>)}
+              </div>
+            </div>
+          </div>;
+        })}
+        <details>
+          <summary>Lihat data harian</summary>
+          <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel aktivitas harian">
+            <table className="admin-table admin-overview-table">
+              <thead><tr><th scope="col">Tanggal (WIB)</th><th scope="col">Rapat</th><th scope="col">Kehadiran peserta</th></tr></thead>
+              <tbody>{activity.map(day => <tr key={day.date}>
+                <th scope="row"><time dateTime={day.date}>{overviewDay.format(new Date(day.date))}</time></th>
+                <td>{numberFormat.format(day.meetings)}</td><td>{numberFormat.format(day.attendances)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </details>
+      </>}
+    </section>
+  );
 }
 
 function AdminOverview() {
   const [days, setDays] = useState('30');
   const { data, loading, error, reload } = useAdminData<OverviewData>(`/admin/overview?days=${days}`);
-  const cards = data ? [
-    { label: 'Total karyawan', value: numberFormat.format(data.totalEmployees), icon: Users },
-    { label: 'Akun sudah diaktivasi', value: numberFormat.format(data.activatedAccounts), icon: ShieldCheck },
-    { label: 'Rapat dalam periode', value: numberFormat.format(data.totalMeetings), icon: CalendarDays },
+  const periodCards = data ? [
+    { label: 'Rapat', value: numberFormat.format(data.totalMeetings), icon: CalendarDays },
+    { label: 'Rekaman diunggah', value: numberFormat.format(data.totalRecordings), icon: FileText },
     { label: 'Ukuran file unggahan', value: formatUploadedBytes(data.uploadedBytes), icon: HardDrive },
   ] : [];
   return (
     <section className="admin-section" aria-labelledby="admin-overview-heading">
       <div className="admin-section-heading">
         <h2 id="admin-overview-heading">Overview</h2>
-        <label className="admin-field">Periode rapat
+        <label className="admin-field">Periode aktivitas
           <select value={days} onChange={event => setDays(event.target.value)}>
             {[7, 30, 90].map(value => <option key={value} value={value}>{value} hari terakhir</option>)}
           </select>
         </label>
       </div>
-      {loading || error ? <AdminLoadState error={error} reload={reload} /> :
-        <dl className="admin-kpis">
-          {cards.map(({ label, value, icon: Icon }) => (
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
+        <p className="admin-check-time">
+          <time dateTime={data.periodStart}>{overviewDay.format(new Date(data.periodStart))}</time>
+          {' sampai '}
+          <time dateTime={data.periodEnd}>{overviewDay.format(new Date(data.periodEnd))}</time> WIB
+        </p>
+        <dl className="admin-kpis" aria-label="Ringkasan periode aktivitas">
+          {periodCards.map(({ label, value, icon: Icon }) => (
             <div className="surface-card admin-kpi" key={label}>
               <Icon size={20} aria-hidden="true" />
               <div><dt>{label}</dt><dd>{value}</dd></div>
             </div>
           ))}
-        </dl>}
+        </dl>
+        <div className="admin-overview-panels">
+          <OverviewActivityChart activity={data.dailyActivity} />
+          <section className="surface-card admin-section" aria-labelledby="admin-recent-activity-heading">
+            <h2 id="admin-recent-activity-heading">Aktivitas terbaru</h2>
+            {data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
+              <ul className="admin-overview-events">{data.recentActivity.map(event => (
+                <li key={`${event.kind}:${event.id}`}>
+                  <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
+                  <span>{event.title || 'Tanpa judul'}</span>
+                  <time dateTime={event.occurredAt}>{adminWibDate.format(new Date(event.occurredAt))} WIB</time>
+                </li>
+              ))}</ul>}
+          </section>
+        </div>
+        <section className="surface-card admin-section" aria-labelledby="admin-accounts-overview-heading">
+          <h2 id="admin-accounts-overview-heading">Akun saat ini</h2>
+          <dl className="admin-kpis">
+            <div className="admin-kpi"><Users size={20} aria-hidden="true" />
+              <div><dt>Total karyawan</dt><dd>{numberFormat.format(data.totalEmployees)}</dd></div>
+            </div>
+            <div className="admin-kpi"><ShieldCheck size={20} aria-hidden="true" />
+              <div><dt>Akun sudah diaktivasi</dt><dd>{numberFormat.format(data.activatedAccounts)}</dd></div>
+            </div>
+          </dl>
+        </section>
+      </>}
     </section>
   );
 }
@@ -244,6 +357,8 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
 
 const meetingStatuses = {
   active: 'Berlangsung',
+  empty: 'Kosong',
+  unverified: 'Tidak dapat diverifikasi',
   waiting: 'Menunggu peserta',
   scheduled: 'Terjadwal',
   ended: 'Selesai',
@@ -272,15 +387,18 @@ function durationLabel(seconds: number | null) {
   return hours ? `${hours} jam ${minutes % 60} mnt` : `${minutes} mnt`;
 }
 
-function CheckTime({ value }: { value: string }) {
-  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{adminDate.format(new Date(value))}</time></p>;
+function CheckTime({ value, showSeconds = false }: { value: string; showSeconds?: boolean }) {
+  const formatter = showSeconds ? adminCheckDate : adminDate;
+  return <p className="admin-check-time">Pengecekan terakhir <time dateTime={value}>{formatter.format(new Date(value))}</time></p>;
 }
+
+const MEETING_REFRESH_SECONDS = 15;
 
 function AdminMeetingMonitoring() {
   const [status, setStatus] = useState('');
   const { data, loading, error, reload } = useAdminData<{
     meetings: MonitoredMeeting[]; livekitStatus: string; checkedAt: string;
-  }>('/admin/meetings');
+  }>('/admin/meetings', MEETING_REFRESH_SECONDS * 1000);
   const rows = data?.meetings.filter(meeting => !status || meeting.status === status) ?? [];
   return (
     <section className="surface-card admin-section" aria-labelledby="admin-meetings-heading">
@@ -290,8 +408,10 @@ function AdminMeetingMonitoring() {
           <RefreshCw size={16} aria-hidden="true" /> Perbarui
         </button>
       </div>
-      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
-        <CheckTime value={data.checkedAt} />
+      {!data ? <AdminLoadState error={error} reload={reload} /> : <>
+        <CheckTime value={data.checkedAt} showSeconds />
+        <p className="admin-check-time">Diperbarui otomatis setiap {MEETING_REFRESH_SECONDS} detik saat tab terlihat.</p>
+        {error && <p className="admin-monitor-notice" role="status">Pembaruan gagal. Tabel menampilkan data dari pengecekan terakhir.</p>}
         {data.livekitStatus !== 'reachable' &&
           <p className="admin-monitor-notice" role="status">LiveKit belum merespons. Jumlah peserta yang sedang terhubung belum tersedia.</p>}
         <label className="admin-field admin-meeting-filter">Status rapat
@@ -726,6 +846,122 @@ function AdminAudit({ permissions }: { permissions: string[] }) {
   );
 }
 
+interface AdminActivationRequest {
+  id: number;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+function AdminActivationRequests() {
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const path = search ? `/admin/activation-requests?${new URLSearchParams({ q: search })}` : '/admin/activation-requests';
+  const { data, loading, error, reload } = useAdminData<{ requests: AdminActivationRequest[] }>(path);
+
+  const applySearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSearch(query.trim());
+  };
+
+  const reviewRequest = async (request: AdminActivationRequest, approve: boolean) => {
+    if (busyId !== null) return;
+    setBusyId(request.id);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await apiRequest(`/admin/activation-requests/${request.id}/${approve ? 'approve' : 'decline'}`, {
+        method: 'POST',
+      });
+      setNotice(
+        approve
+          ? `Permintaan ${request.name} (${request.email}) diterima. Akun telah diaktifkan dan dapat digunakan untuk masuk.`
+          : `Permintaan ${request.name} (${request.email}) ditolak dan dihapus dari daftar.`,
+      );
+      reload();
+    } catch (failure: unknown) {
+      setActionError(failure instanceof Error ? failure.message : 'Permintaan gagal diproses.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleRequests = (data?.requests ?? []).filter(request =>
+    !normalizedQuery
+    || request.name.toLowerCase().includes(normalizedQuery)
+    || request.email.toLowerCase().includes(normalizedQuery),
+  );
+
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-requests-heading">
+      <div className="admin-section-header">
+        <div>
+          <h2 id="admin-requests-heading">Permintaan aktivasi akun</h2>
+          <p className="admin-check-time">Tinjau pengajuan akun baru. Akun yang diterima langsung aktif dan dapat digunakan untuk masuk.</p>
+        </div>
+        <button type="button" className="button-secondary" onClick={reload} disabled={loading || busyId !== null}>
+          <RefreshCw size={16} aria-hidden="true" /> Muat ulang
+        </button>
+      </div>
+      {notice && <p className="admin-action-notice" role="status">{notice}</p>}
+      {actionError && <p className="admin-inline-error" role="alert">{actionError}</p>}
+      <form className="admin-filters" onSubmit={applySearch}>
+        <label className="admin-field">Cari nama atau email
+          <input
+            type="search"
+            value={query}
+            onChange={event => {
+              const next = event.target.value;
+              setQuery(next);
+              if (!next.trim() && search) setSearch('');
+            }}
+            maxLength={100}
+            placeholder="Cari nama atau email pemohon"
+          />
+        </label>
+        <button type="submit" className="button-primary" disabled={loading}>Cari</button>
+      </form>
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : (
+        visibleRequests.length === 0
+          ? <p role="status">{normalizedQuery || search ? 'Tidak ada permintaan aktivasi yang cocok dengan pencarian.' : 'Belum ada permintaan aktivasi yang menunggu persetujuan.'}</p>
+          : <div className="admin-request-cards" role="list" aria-label="Daftar permintaan aktivasi">
+              {visibleRequests.map(request => (
+                <article key={request.id} className="admin-request-card" role="listitem">
+                  <div className="admin-request-card-body">
+                    <h3>{request.name}</h3>
+                    <p className="admin-request-email">{request.email}</p>
+                    <small className="admin-request-meta">Diajukan {adminDate.format(new Date(request.createdAt))}</small>
+                  </div>
+                  <div className="admin-request-card-actions">
+                    <button
+                      type="button"
+                      className="button-primary"
+                      disabled={busyId !== null}
+                      onClick={() => void reviewRequest(request, true)}
+                    >
+                      {busyId === request.id ? 'Memproses…' : 'Terima'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={busyId !== null}
+                      onClick={() => void reviewRequest(request, false)}
+                    >
+                      Tolak
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+      )}
+    </section>
+  );
+}
+
 export default function AdminDashboard({ section }: { section: AdminSection }) {
   const { data, loading, error, reload } = useAdminData<{ employeeId: string; permissions: string[] }>('/admin/access');
   return (
@@ -734,6 +970,7 @@ export default function AdminDashboard({ section }: { section: AdminSection }) {
       {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
         {section === 'overview' && <AdminOverview />}
         {section === 'employees' && <AdminEmployees currentEmployeeId={data.employeeId} />}
+        {section === 'requests' && <AdminActivationRequests />}
         {section === 'meetings' && <AdminMeetings />}
         {section === 'recordings' && <AdminRecordings />}
         {section === 'system' && <AdminSystem />}

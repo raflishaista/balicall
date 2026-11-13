@@ -38,6 +38,11 @@ export function compileAdminMeetings({ history, schedules, snapshots, rooms, now
       .filter(Boolean).reduce((first, value) => first && new Date(first) < new Date(value) ? first : value, null);
     const endedAt = snapshot?.endedAt ?? record?.endedAt ?? null;
     const ended = Boolean(endedAt || (snapshot?.status ?? record?.status) === 'ended');
+    let status = 'waiting';
+    if (ended) status = 'ended';
+    else if (liveCount === null) status = 'unverified';
+    else if (liveCount > 0) status = 'active';
+    else if (startedAt) status = 'empty';
     const knownAttendees = Math.max(record?.attendeeCount ?? 0, attendees.length);
     const hostName = snapshot?.participants.get(snapshot.hostId)?.employeeName
       ?? (snapshot?.hostId === schedule?.hostId ? schedule?.hostName : null) ?? null;
@@ -45,13 +50,13 @@ export function compileAdminMeetings({ history, schedules, snapshots, rooms, now
       id,
       title: schedule?.title ?? snapshot?.roomName ?? record?.title ?? null,
       hostName,
-      status: ended ? 'ended' : startedAt || liveCount ? 'active' : 'waiting',
+      status,
       scheduledStart: schedule?.scheduledStart ?? snapshot?.scheduledStart ?? null,
       scheduledEnd: schedule?.scheduledEnd ?? snapshot?.scheduledEnd ?? null,
       createdAt: record?.createdAt ?? snapshot?.createdAt ?? null,
       startedAt, endedAt,
       participantCount: ended ? knownAttendees || null : liveCount,
-      durationSeconds: durationBetween(startedAt, ended ? endedAt : now),
+      durationSeconds: durationBetween(startedAt, status === 'active' ? now : endedAt),
     });
   }
 
@@ -72,7 +77,7 @@ export function compileAdminMeetings({ history, schedules, snapshots, rooms, now
     });
   }
 
-  const priority = { active: 0, waiting: 1, scheduled: 2, ended: 3, cancelled: 3, expired: 3 };
+  const priority = { active: 0, unverified: 1, waiting: 2, scheduled: 3, empty: 4, ended: 5, cancelled: 5, expired: 5 };
   const time = meeting => new Date(meeting.endedAt ?? meeting.startedAt ?? meeting.scheduledStart ?? meeting.createdAt ?? 0).getTime();
   meetings.sort((a, b) => priority[a.status] - priority[b.status]
     || (a.status === 'scheduled' ? time(a) - time(b) : time(b) - time(a)));

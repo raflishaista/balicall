@@ -15,7 +15,7 @@ async function passwordWork(fn) {
   try{return await fn();}finally{passwordJobs--;}
 }
 export function validatePassword(password) {
-  if(typeof password!=='string' || [...password].length<15 || [...password].length>128) throw Object.assign(new Error('Kata sandi harus terdiri dari 15–128 karakter.'),{status:400});
+  if(typeof password!=='string' || [...password].length<8 || [...password].length>128) throw Object.assign(new Error('Kata sandi harus terdiri dari 8–128 karakter.'),{status:400});
 }
 export async function hashPassword(password) {
   validatePassword(password);
@@ -152,6 +152,18 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
     const encoded=await hashPassword(password);
     if(!await store.activate(email,hashToken(code),encoded))return res.status(400).json({error:invalidActivation});
     res.clearCookie(COOKIE,clearOptions).json({success:true,message:'Kata sandi tersimpan. Silakan masuk.'});
+  }));
+  router.post('/request-activation',wrap(async(req,res)=>{
+    const email=emailOf(req.body);
+    const name=typeof req.body?.name==='string'?req.body.name.trim():'';
+    const password=req.body?.password;
+    if(!await limit(req,res,'request-activation',email))return;
+    if(!name||name.length>128)return res.status(400).json({error:'Nama lengkap diperlukan (maksimal 128 karakter).'});
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).json({error:'Masukkan alamat email yang valid.'});
+    validatePassword(password);
+    const encoded=await hashPassword(password);
+    const request=await store.createActivationRequest({name,email,passwordHash:encoded});
+    res.status(201).json({success:true,request,message:'Permintaan aktivasi berhasil dikirim. Tunggu persetujuan admin sebelum masuk.'});
   }));
   router.post('/logout',wrap(async(req,res)=>{
     const token=cookieToken(req);

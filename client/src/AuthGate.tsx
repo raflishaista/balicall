@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Loader2, LockKeyhole, Mail, User } from 'lucide-react';
 import { apiRequest, setAuthCsrfToken, AUTH_EXPIRED_EVENT } from './api';
 import { setAccountScope } from './accountScope';
 import devices from './assets/login/balicall-connected-devices.webp';
@@ -91,14 +91,14 @@ export function AuthGate() {
 export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
   checking:boolean;serviceError:string|null;unavailable:boolean;onRetry:()=>Promise<void>;onAuthenticated:(session:Session)=>void;
 }) {
-  const [mode,setMode]=useState<'login'|'activate'|'guest'>('login');
-  const [guestName,setGuestName]=useState(''),[inviteCode,setInviteCode]=useState('');
+  const [mode,setMode]=useState<'login'|'activate'|'request'|'guest'>('login');
+  const [guestName,setGuestName]=useState(''),[inviteCode,setInviteCode]=useState(''),[requestName,setRequestName]=useState('');
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [code,setCode]=useState('');
   const [show,setShow]=useState(false), [pending,setPending]=useState(false);
   const [error,setError]=useState<string|null>(null), [notice,setNotice]=useState<string|null>(null);
   const [conflictModal,setConflictModal]=useState<{email:string;name?:string;message:string}|null>(null);
   const lock=useRef(false);
-  const switchMode=(next:'login'|'activate'|'guest')=>{setMode(next);setError(null);setNotice(null);setConflictModal(null);setPassword('');setCode('');setShow(false);};
+  const switchMode=(next:'login'|'activate'|'request'|'guest')=>{setMode(next);setError(null);setNotice(null);setConflictModal(null);setRequestName('');setPassword('');setCode('');setShow(false);};
   const submit=async(event:React.SyntheticEvent|{preventDefault?:()=>void},force=false)=>{
     if('preventDefault' in event && typeof event.preventDefault==='function')event.preventDefault();
     if(lock.current||checking||unavailable)return;
@@ -110,6 +110,9 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
       } else if(mode==='activate') {
         await apiRequest('/auth/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,activationCode:code.trim()})});
         switchMode('login');setNotice('Kata sandi tersimpan. Silakan masuk.');
+      } else if(mode==='request') {
+        await apiRequest('/auth/request-activation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:requestName.trim(),email,password})});
+        switchMode('login');setNotice('Permintaan aktivasi terkirim. Silakan tunggu persetujuan admin sebelum masuk.');
       } else {
         const next=await apiRequest<Session>('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,...(force?{force:true}:{})})});
         setPassword('');setConflictModal(null);onAuthenticated(next);
@@ -131,8 +134,8 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
       <span className="login-story-footer">Bali Tower Sentra</span>
     </section>
     <section className="login-form-panel">
-      <div className="login-form-content"><span className="login-kicker">BaliCall</span><h2>{mode==='guest'?'Gabung sebagai tamu':mode==='login'?'Masuk ke BaliCall':'Aktivasi akun BaliCall'}</h2>
-      <p className="login-description">{mode==='guest'?'Gunakan kode undangan tamu dari peserta rapat. Tidak perlu akun perusahaan.':mode==='login'?'Gunakan akun perusahaan untuk melanjutkan.':'Masukkan kode dari admin dan tentukan kata sandi Anda.'}</p>
+      <div className="login-form-content"><span className="login-kicker">BaliCall</span><h2>{mode==='guest'?'Gabung sebagai tamu':mode==='login'?'Masuk ke BaliCall':mode==='request'?'Request aktivasi akun':'Aktivasi akun BaliCall'}</h2>
+      <p className="login-description">{mode==='guest'?'Gunakan kode undangan tamu dari peserta rapat. Tidak perlu akun perusahaan.':mode==='login'?'Gunakan akun perusahaan untuk melanjutkan.':mode==='request'?'Isi nama, email, dan kata sandi yang diinginkan. Permintaan akan ditinjau oleh admin sebelum akun diaktifkan untuk masuk.':'Masukkan kode dari admin dan tentukan kata sandi Anda.'}</p>
       {checking && <p role="status" className="login-notice"><Loader2 className="ui-spinner" size={17} />Memeriksa sesi…</p>}
       {(error||serviceError) && <p role="alert" className="login-error">{error||serviceError}</p>}
       {notice && <p role="status" className="login-notice">{notice}</p>}
@@ -143,16 +146,18 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
           <label className="login-field">Kode undangan tamu<span><input autoComplete="off" value={inviteCode} onChange={event=>{const val=event.target.value; setInviteCode(val.trim().length <= 5 ? val.toUpperCase() : val);}} maxLength={22} required disabled={disabled} placeholder="5 digit kode ruang atau kode undangan" /></span></label>
           <p className="login-help">Akses hanya ke rapat yang diundang. Masukkan 5 digit kode ruang atau kode undangan dari peserta rapat.</p>
         </> : <>
+        {mode==='request' && <label className="login-field">Nama lengkap<span><User size={21} aria-hidden="true" /><input type="text" autoComplete="name" value={requestName} onChange={event=>setRequestName(event.target.value)} placeholder="Nama lengkap Anda" maxLength={120} required disabled={disabled} /></span></label>}
         <label className="login-field">Email perusahaan<span><Mail size={21} aria-hidden="true" /><input type="email" autoComplete="username" inputMode="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="nama@balitower.co.id" maxLength={254} required disabled={disabled} /></span></label>
         {mode==='activate' && <label className="login-field">Kode aktivasi<span><LockKeyhole size={21} aria-hidden="true" /><input autoComplete="off" value={code} onChange={event=>setCode(event.target.value)} placeholder="Kode dari admin" maxLength={43} required disabled={disabled} /></span></label>}
-        <label className="login-field">Kata sandi<span><LockKeyhole size={21} aria-hidden="true" /><input type={show?'text':'password'} autoComplete={mode==='activate'?'new-password':'current-password'} value={password} onChange={event=>setPassword(event.target.value)} minLength={mode==='activate'?15:undefined} maxLength={128} required disabled={disabled} aria-describedby={mode==='activate'?'password-hint':undefined} /><button type="button" className="login-password-toggle" aria-label={show?'Sembunyikan kata sandi':'Tampilkan kata sandi'} aria-pressed={show} onClick={()=>setShow(!show)} disabled={disabled}>{show?<EyeOff size={21}/>:<Eye size={21}/>}</button></span></label>
-        {mode==='activate' && <p id="password-hint" className="login-help">Gunakan 15–128 karakter. Kode aktivasi berlaku sekali selama 24 jam.</p>}
+        <label className="login-field">Kata sandi<span><LockKeyhole size={21} aria-hidden="true" /><input type={show?'text':'password'} autoComplete={mode==='activate'||mode==='request'?'new-password':'current-password'} value={password} onChange={event=>setPassword(event.target.value)} minLength={mode==='activate'||mode==='request'?8:undefined} maxLength={128} required disabled={disabled} aria-describedby={mode==='activate'||mode==='request'?'password-hint':undefined} /><button type="button" className="login-password-toggle" aria-label={show?'Sembunyikan kata sandi':'Tampilkan kata sandi'} aria-pressed={show} onClick={()=>setShow(!show)} disabled={disabled}>{show?<EyeOff size={21}/>:<Eye size={21}/>}</button></span></label>
+        {mode==='activate' && <p id="password-hint" className="login-help">Gunakan 8–128 karakter. Kode aktivasi berlaku sekali selama 24 jam.</p>}
+        {mode==='request' && <p id="password-hint" className="login-help">Gunakan 8–128 karakter. Admin akan meninjau permintaan Anda dan mengaktifkan akun agar dapat digunakan untuk masuk.</p>}
         {mode==='login' && <button type="button" className="login-text-button login-forgot" disabled={disabled} onClick={()=>{switchMode('activate');setNotice('Hubungi admin untuk kode aktivasi ulang. Kode ini digunakan untuk membuat kata sandi baru.');}}>Lupa kata sandi?</button>}
         </>}
-        <button type="submit" className="login-submit" disabled={disabled}>{pending?<><Loader2 size={20} className="ui-spinner"/>Memproses…</>:mode==='guest'?'Lanjut ke pemeriksaan perangkat':mode==='login'?'Masuk':'Simpan kata sandi'}</button>
+        <button type="submit" className="login-submit" disabled={disabled}>{pending?<><Loader2 size={20} className="ui-spinner"/>Memproses…</>:mode==='guest'?'Lanjut ke pemeriksaan perangkat':mode==='login'?'Masuk':mode==='request'?'Kirim Permintaan':'Simpan kata sandi'}</button>
       </form>
-      {mode!=='activate' && <button className="login-guest-button" type="button" disabled={disabled} onClick={()=>switchMode(mode==='guest'?'login':'guest')}>{mode==='guest'?'Masuk dengan akun perusahaan':'Gabung sebagai tamu'}</button>}
-      <div className="login-assistance"><span>{mode==='login'?'Pertama kali masuk?':'Sudah punya kata sandi?'}</span> <button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode(mode==='login'?'activate':'login')}>{mode==='login'?'Aktivasi akun':'Kembali masuk'}</button></div>
+      {mode!=='activate' && mode!=='request' && <button className="login-guest-button" type="button" disabled={disabled} onClick={()=>switchMode(mode==='guest'?'login':'guest')}>{mode==='guest'?'Masuk dengan akun perusahaan':'Gabung sebagai tamu'}</button>}
+      <div className="login-assistance"><span>{mode==='login'?'Pertama kali masuk?':'Sudah punya kata sandi?'}</span> {mode==='login'?<><button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('activate')}>Aktivasi akun</button><span>·</span><button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('request')}>Request Aktivasi</button></>:<button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('login')}>Kembali masuk</button>}</div>
       <p className="login-admin-help">Butuh bantuan? Hubungi admin IT perusahaan untuk aktivasi akun.</p></div>
       <footer className="login-form-footer">BaliCall · Bali Tower Sentra</footer>
     </section>
