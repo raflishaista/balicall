@@ -6,11 +6,13 @@ export const AdminPermission = Object.freeze({
   READ_MEETINGS: 'meetings:read',
   READ_SYSTEM: 'system:read',
   READ_AUDIT: 'audit:read',
+  READ_RECORDINGS: 'recordings:read',
 });
 const superAdminPermissions = Object.freeze(Object.values(AdminPermission));
 const EMPLOYEE_PAGE_SIZE = 20;
 const AUDIT_PAGE_SIZE = 50;
 const MEETING_HISTORY_PAGE_SIZE = 20;
+const RECORDING_PAGE_SIZE = 20;
 export const validAdminEmployeeId = value =>
   typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/i.test(value);
 
@@ -156,6 +158,52 @@ export class PgAdminStore {
         scheduled_start DESC, id LIMIT 50
     `);
     return rows;
+  }
+
+  async listRecordingMetadata({ search, status, page }) {
+    const { rows: [result] } = await this.requirePool().query(`
+      WITH matching AS (
+        SELECT id, title, file_size::text AS "fileSize", status, stage, created_at AS "createdAt"
+        FROM balicall_recording_uploads
+        WHERE ($1 = '' OR STRPOS(LOWER(title), LOWER($1)) > 0)
+          AND ($2 = '' OR status = $2)
+      ), page_info AS (
+        SELECT COUNT(*)::int AS total,
+          LEAST($3::bigint, GREATEST(1, (COUNT(*) + $4::int - 1) / $4::int))::int AS page
+        FROM matching
+      ), page_rows AS (
+        SELECT * FROM matching ORDER BY "createdAt" DESC NULLS LAST, id DESC
+        LIMIT $4 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $4)
+      ), inventory AS (
+        SELECT COUNT(*)::int AS "totalUploads", COALESCE(SUM(file_size), 0)::text AS "uploadedBytes"
+        FROM balicall_recording_uploads
+      )
+      SELECT page_info.*, inventory.*,
+        COALESCE((SELECT JSON_AGG(r ORDER BY r."createdAt" DESC NULLS LAST, r.id DESC) FROM page_rows r), '[]'::json) AS recordings
+      FROM page_info CROSS JOIN inventory
+    `, [search, status, page, RECORDING_PAGE_SIZE]);
+    return { ...result, pageSize: RECORDING_PAGE_SIZE };
+  }
+
+  async recordingQueue() {
+    const { rows: [metrics] } = await this.requirePool().query(`
+      WITH uploads AS (
+        SELECT status, CASE
+          WHEN status = 'done' AND isfinite(created_at) AND isfinite(completed_at)
+            AND completed_at BETWEEN NOW() - INTERVAL '168 hours' AND NOW()
+            AND completed_at >= created_at
+          THEN EXTRACT(EPOCH FROM (completed_at - created_at))::double precision
+        END AS completion_seconds
+        FROM balicall_recording_uploads
+      )
+      SELECT COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+        COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
+        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY completion_seconds) AS "medianCompletionSeconds",
+        COUNT(completion_seconds)::int AS "completionSampleSize"
+      FROM uploads
+    `);
+    return metrics;
   }
 
   async databaseReady() {

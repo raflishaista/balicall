@@ -89,6 +89,8 @@ export const DiarizerLabels: Record<string, string> = {
 export const SttLabels: Record<string, string> = {
   small: 'Whisper Small',
   'small-id': 'Whisper Small (Indonesia)',
+  base: 'Whisper Base',
+  sea: 'SEA-ASR-ID (Indonesia)',
   'qwen3-asr-0.6b': 'Qwen3-ASR 0.6B',
   'qwen3-asr-0.6b-gguf-q8': 'Qwen3-ASR 0.6B GGUF Q8_0',
 };

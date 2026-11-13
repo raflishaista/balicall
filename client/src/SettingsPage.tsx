@@ -464,7 +464,7 @@ function SecuritySettings({
         <legend>Kontrol ruang rapat yang Anda buat</legend>
         <PreferenceToggle
           label="Izinkan peserta tamu (Guest Access)"
-          description="Buka akses bagi peserta luar dengan kode undangan 22 karakter saat Anda membuat rapat."
+          description="Buka akses bagi peserta luar dengan kode undangan 5 karakter saat Anda membuat rapat."
           checked={draft.allowGuestJoin ?? true}
           onChange={allowGuestJoin => update({ allowGuestJoin })}
         />

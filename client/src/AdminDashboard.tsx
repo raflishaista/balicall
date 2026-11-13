@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { CalendarDays, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import { CalendarDays, FileText, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { ApiError, apiRequest } from './api';
 import { AdminEmployeeActions, type AdminEmployee } from './AdminEmployeeActions';
 import type { AdminSection } from './navigation';
@@ -32,6 +32,7 @@ const permissionLabels: Record<string, string> = {
   'meetings:read': 'Lihat metadata rapat',
   'system:read': 'Lihat status sistem',
   'audit:read': 'Baca audit admin',
+  'recordings:read': 'Lihat metadata rekaman unggahan',
 };
 const actionLabels: Record<string, string> = {
   'admin.bootstrap': 'Tetapkan Super Admin pertama',
@@ -440,6 +441,109 @@ function AdminMeetings() {
   );
 }
 
+interface RecordingInventoryPage {
+  recordings: Array<{
+    id: string;
+    title: string;
+    fileSize: string | null;
+    status: string;
+    stage: string | null;
+    createdAt: string | null;
+  }>;
+  total: number;
+  totalUploads: number;
+  uploadedBytes: string;
+  page: number;
+  pageSize: number;
+}
+
+const recordingStatuses = new Map([
+  ['queued', 'Dalam antrean'],
+  ['processing', 'Diproses'],
+  ['done', 'Selesai'],
+  ['failed', 'Gagal'],
+]);
+const recordingStages = new Map([
+  ['transcribing', 'Transkripsi'],
+  ['summarizing', 'Pembuatan ringkasan'],
+]);
+const initialRecordingFilters = { q: '', status: '', page: '1' };
+
+function AdminRecordings() {
+  const [filters, setFilters] = useState(initialRecordingFilters);
+  const { data, loading, error, reload } = useAdminData<RecordingInventoryPage>(`/admin/recordings?${new URLSearchParams(filters)}`);
+  const applyFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setFilters({ q: String(form.get('q') ?? '').trim(), status: String(form.get('status') ?? ''), page: '1' });
+  };
+  const goToPage = (page: number) => setFilters(previous => ({ ...previous, page: String(page) }));
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-recordings-heading">
+      <div className="admin-section-heading">
+        <h2 id="admin-recordings-heading">Rekaman unggahan</h2>
+        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+          <RefreshCw size={16} aria-hidden="true" /> Perbarui
+        </button>
+      </div>
+      {data && !error && <dl className="admin-kpis">
+        <div className="admin-kpi"><FileText size={20} aria-hidden="true" />
+          <div><dt>Total unggahan</dt><dd>{numberFormat.format(data.totalUploads)}</dd></div>
+        </div>
+        <div className="admin-kpi"><HardDrive size={20} aria-hidden="true" />
+          <div><dt>Ukuran file tercatat</dt><dd>{formatUploadedBytes(data.uploadedBytes)}</dd></div>
+        </div>
+      </dl>}
+      <form className="admin-filters" aria-label="Filter rekaman unggahan" onSubmit={applyFilters}
+        onReset={() => setFilters(initialRecordingFilters)}>
+        <label className="admin-field">Judul rekaman
+          <input type="search" name="q" maxLength={100} placeholder="Cari judul rekaman" />
+        </label>
+        <label className="admin-field">Status proses
+          <select name="status">
+            <option value="">Semua status</option>
+            {Array.from(recordingStatuses, ([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <button type="submit" className="button-primary">Terapkan</button>
+        <button type="reset" className="button-secondary">Reset filter</button>
+      </form>
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && (
+        data.total === 0 ? <p role="status">{filters.q || filters.status ? 'Tidak ada rekaman yang cocok dengan filter.' : 'Belum ada rekaman unggahan.'}</p> : <>
+          <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel rekaman unggahan">
+            <table className="admin-table" aria-label="Daftar rekaman unggahan">
+              <thead><tr>
+                <th scope="col">Judul</th><th scope="col">Diunggah (WIB)</th>
+                <th scope="col">Ukuran</th><th scope="col">Status proses</th>
+              </tr></thead>
+              <tbody>{data.recordings.map(recording => {
+                const stage = recording.status === 'processing' && recording.stage ? recordingStages.get(recording.stage) : null;
+                return <tr key={recording.id}>
+                  <td><strong>{recording.title}</strong></td>
+                  <td>{recording.createdAt ? <time dateTime={recording.createdAt}>{adminWibDate.format(new Date(recording.createdAt))}</time> : '—'}</td>
+                  <td>{recording.fileSize === null ? '—' : formatUploadedBytes(recording.fileSize)}</td>
+                  <td>{recordingStatuses.get(recording.status) ?? 'Tidak diketahui'}{stage && <small>{stage}</small>}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          <div className="admin-pagination">
+            <p role="status">{numberFormat.format(data.total)} rekaman · Halaman {data.page} dari {pages}</p>
+            <div>
+              <button type="button" className="button-secondary" disabled={data.page <= 1}
+                onClick={() => goToPage(data.page - 1)}>Sebelumnya</button>
+              <button type="button" className="button-secondary" disabled={data.page >= pages}
+                onClick={() => goToPage(data.page + 1)}>Berikutnya</button>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 const serviceGroups = {
   core: 'Layanan inti',
   transcription: 'Transkripsi',
@@ -458,8 +562,51 @@ interface MonitoredService {
   status: keyof typeof serviceStatuses;
 }
 
+interface RecordingQueueMetrics {
+  queued: number;
+  processing: number;
+  failed: number;
+  medianCompletionSeconds: number | null;
+  completionSampleSize: number;
+}
+
+function RecordingQueue({ metrics }: { metrics: RecordingQueueMetrics | null }) {
+  const median = metrics?.medianCompletionSeconds;
+  const counts = metrics ? [
+    { label: 'Menunggu', count: metrics.queued },
+    { label: 'Sedang diproses', count: metrics.processing },
+    { label: 'Gagal', count: metrics.failed },
+  ] : [];
+  return (
+    <section className="surface-card admin-section" aria-labelledby="admin-recording-queue-heading">
+      <h3 id="admin-recording-queue-heading">Antrean unggahan</h3>
+      {metrics ? <>
+        <p>Durasi dihitung sejak unggah hingga pemrosesan terakhir selesai, termasuk waktu antre dan percobaan ulang.</p>
+        <dl className="admin-kpis">
+          {counts.map(({ label, count }) => (
+            <div className="admin-kpi" key={label}>
+              <div><dt>{label}</dt><dd>{numberFormat.format(count)}</dd></div>
+            </div>
+          ))}
+          <div className="admin-kpi">
+            <div>
+              <dt>Median waktu sampai selesai (7 hari)</dt>
+              <dd>{median == null ? 'Belum ada data' : median < 60 ? `${numberFormat.format(median)} detik` : durationLabel(median)}</dd>
+              <small>{numberFormat.format(metrics.completionSampleSize)} sampel</small>
+            </div>
+          </div>
+        </dl>
+      </> : <p role="status">Metrik antrean tidak tersedia. Coba perbarui.</p>}
+    </section>
+  );
+}
+
 function AdminSystem() {
-  const { data, loading, error, reload } = useAdminData<{ services: MonitoredService[]; checkedAt: string }>('/admin/system');
+  const { data, loading, error, reload } = useAdminData<{
+    services: MonitoredService[];
+    checkedAt: string;
+    recordingQueue: RecordingQueueMetrics | null;
+  }>('/admin/system');
   return (
     <section className="admin-section" aria-labelledby="admin-system-heading">
       <div className="admin-section-heading">
@@ -470,6 +617,7 @@ function AdminSystem() {
       </div>
       {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
         <CheckTime value={data.checkedAt} />
+        <RecordingQueue metrics={data.recordingQueue} />
         <div className="admin-service-groups">
           {Object.entries(serviceGroups).map(([key, label]) => (
             <section className="surface-card" key={key} aria-label={label}>
@@ -587,6 +735,7 @@ export default function AdminDashboard({ section }: { section: AdminSection }) {
         {section === 'overview' && <AdminOverview />}
         {section === 'employees' && <AdminEmployees currentEmployeeId={data.employeeId} />}
         {section === 'meetings' && <AdminMeetings />}
+        {section === 'recordings' && <AdminRecordings />}
         {section === 'system' && <AdminSystem />}
         {section === 'audit' && <AdminAudit permissions={data.permissions} />}
       </>}

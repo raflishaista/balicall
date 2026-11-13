@@ -36,6 +36,7 @@ export const ADMIN_SECTIONS = {
   overview: 'Overview',
   employees: 'Karyawan',
   meetings: 'Rapat',
+  recordings: 'Rekaman',
   system: 'Layanan',
   audit: 'Audit',
 } as const;

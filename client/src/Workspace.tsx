@@ -26,6 +26,7 @@ const adminIcons = {
   overview: LayoutDashboard,
   employees: Users,
   meetings: Calendar,
+  recordings: FileText,
   system: Activity,
   audit: ClipboardList,
 } satisfies Record<AdminSection, typeof Calendar>;

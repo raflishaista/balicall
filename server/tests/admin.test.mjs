@@ -8,8 +8,12 @@ import pg from 'pg';
 
 process.env.DATABASE_URL = '';
 const database = new PGlite();
-const query = (sql, params) => params?.length ? database.query(sql, params)
-  : database.exec(sql).then(results => results.at(-1));
+let failRecordingQueueQuery = false;
+const query = async (sql, params) => {
+  if (failRecordingQueueQuery && sql.includes('PERCENTILE_CONT')) throw Error('Simulated queue query outage');
+  return params?.length ? database.query(sql, params)
+    : database.exec(sql).then(results => results.at(-1));
+};
 const originalPool = Object.getOwnPropertyDescriptor(pg, 'Pool');
 Object.defineProperty(pg, 'Pool', { configurable: true, value: class {
   on() {}
@@ -101,6 +105,8 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.equal((await request('/admin/access')).status, 401);
   assert.equal((await request('/admin/access', 'employee')).status, 403);
   assert.equal((await request('/admin/system', 'employee')).status, 403);
+  assert.equal((await request('/admin/system', 'guest')).status, 403);
+  assert.equal((await request('/admin/system')).status, 401);
   assert.equal((await request('/admin/meetings', 'employee')).status, 403);
   assert.equal((await request('/admin/audit', 'guest')).status, 403);
   assert.equal((await request('/admin/audit?from=2025-01-02&page=2', 'employee')).status, 403);
@@ -111,16 +117,55 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.equal((await admin.bootstrap(adminId)).ok, true);
   assert.equal((await admin.bootstrap(employeeId)).status, 409);
   const access = await (await request('/admin/access', 'admin')).json();
-  assert.deepEqual(access.permissions, ['accounts:manage', 'meetings:read', 'system:read', 'audit:read']);
+  assert.deepEqual(access.permissions, ['accounts:manage', 'meetings:read', 'system:read', 'audit:read', 'recordings:read']);
   assert.equal((await (await request('/auth/session', 'admin')).json()).user.isSuperAdmin, true);
-  const { livekit, databaseConnected } = await (await request('/admin/system', 'admin')).json();
+  const { livekit, databaseConnected, recordingQueue } = await (await request('/admin/system', 'admin')).json();
   assert.equal(livekit, 'reachable');
   assert.equal(databaseConnected, true);
+  assert.deepEqual(recordingQueue, {
+    queued: 0, processing: 0, failed: 0, medianCompletionSeconds: null, completionSampleSize: 0,
+  });
   await query('INSERT INTO balicall_meetings(id,room_name) VALUES ($1,$2)', ['fixture-room', 'Private fixture title']);
   const { meetings } = await (await request('/admin/meetings', 'admin')).json();
   assert.equal(meetings[0].hostName, null);
   assert.equal(meetings[0].durationSeconds, null);
   assert.equal(meetings[0].participantCount, 0);
+
+  await t.test('queue counts current statuses and calculates the median of valid recent completions', async () => {
+    await query(`INSERT INTO balicall_recording_uploads(id,title,status,created_at,completed_at)
+      VALUES ('queue-1','Queue fixture','queued',NOW(),NULL),
+        ('queue-2','Queue fixture','processing',NOW(),NULL),
+        ('queue-3','Queue fixture','failed',NOW()-interval '1 hour',NOW()),
+        ('queue-4','Queue fixture','failed',NOW()-interval '8 days',NULL),
+        ('queue-5','Queue fixture','done',NOW(),NOW()),
+        ('queue-6','Queue fixture','done',NOW()-interval '20 seconds',NOW()),
+        ('queue-7','Queue fixture','done',NOW()-interval '60 seconds',NOW()),
+        ('queue-8','Queue fixture','done',NOW()-interval '100 seconds',NOW()),
+        ('queue-9','Queue fixture','done',NOW()-interval '9 days',NOW()-interval '8 days'),
+        ('queue-10','Queue fixture','done',NOW(),NOW()+interval '1 hour'),
+        ('queue-11','Queue fixture','done',NOW(),NOW()-interval '1 hour'),
+        ('queue-12','Queue fixture','done',NULL,NOW()),
+        ('queue-13','Queue fixture','done',NOW(),NULL),
+        ('queue-14','Queue fixture','done','-infinity',NOW()),
+        ('queue-15','Queue fixture','done',NOW(),'infinity')`);
+    try {
+      const response = await request('/admin/system', 'admin');
+      assert.equal(response.status, 200);
+      assert.deepEqual((await response.json()).recordingQueue, {
+        queued: 1, processing: 1, failed: 2, medianCompletionSeconds: 40, completionSampleSize: 4,
+      });
+      failRecordingQueueQuery = true;
+      const degraded = await request('/admin/system', 'admin');
+      assert.equal(degraded.status, 200);
+      const system = await degraded.json();
+      assert.equal(system.recordingQueue, null);
+      assert.equal(system.services.find(service => service.id === 'database').status, 'ready');
+      assert.equal(system.services.find(service => service.id === 'livekit').status, 'ready');
+    } finally {
+      failRecordingQueueQuery = false;
+      await query("DELETE FROM balicall_recording_uploads WHERE id LIKE 'queue-%'");
+    }
+  });
 
   await t.test('overview counts persisted meetings by period and directory filters paginate', async () => {
     const { rows: [directory] } = await query('SELECT COUNT(*)::int AS total FROM balicall_employees');
@@ -173,6 +218,42 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(literalSearch.total, 0);
     assert.deepEqual(literalSearch.employees, []);
     assert.equal((await request('/admin/employees?page=0', 'admin')).status, 400);
+  });
+
+  await t.test('recording inventory pages metadata without granting access to uploaded content', async () => {
+    await query(`INSERT INTO balicall_recording_uploads(id,title,file_size,status,stage,owner_id,original_filename,file_path,error,transcript,summary,created_at)
+      SELECT 'inventory-'||n, 'Inventaris 100% '||LPAD(n::text,2,'0'),
+        CASE WHEN n=1 THEN NULL ELSE 1024 END, CASE WHEN n=22 THEN 'processing' ELSE 'done' END,
+        CASE WHEN n=22 THEN 'transcribing' END, $1, 'private-name.mp4', '/private/upload/path',
+        'private worker error', '["private transcript"]'::jsonb, '{"private":"summary content"}'::jsonb,
+        TIMESTAMPTZ '2026-01-01 00:00:00+00' + n * INTERVAL '1 minute'
+      FROM generate_series(1,22) n`, [employeeId]);
+
+    const route = '/admin/recordings';
+    assert.equal((await request(route)).status, 401);
+    assert.equal((await request(route, 'employee')).status, 403);
+    assert.equal((await request(route, 'guest')).status, 403);
+    const response = await request(route + '?q=inventaris%20100%25', 'admin');
+    assert.equal(response.status, 200);
+    const page = await response.json();
+    assert.equal(page.total, 22);
+    assert.equal(page.totalUploads, 25);
+    assert.equal(page.uploadedBytes, String(24 * 1024));
+    assert.equal(page.recordings.length, 20);
+    assert.equal(page.recordings[0].id, 'inventory-22');
+    assert.deepEqual(Object.keys(page.recordings[0]).sort(), ['createdAt','fileSize','id','stage','status','title']);
+    assert.ok(!JSON.stringify(page).includes('private'));
+
+    const tail = await (await request(route + '?q=100%25&page=2', 'admin')).json();
+    assert.deepEqual(tail.recordings.map(recording => recording.id), ['inventory-2', 'inventory-1']);
+    assert.equal(tail.recordings[1].fileSize, null);
+    const filtered = await (await request(route + '?status=processing', 'admin')).json();
+    assert.equal(filtered.total, 1);
+    assert.equal(filtered.recordings[0].stage, 'transcribing');
+    assert.equal(filtered.totalUploads, page.totalUploads);
+    assert.equal((await request(route + '?status=unknown', 'admin')).status, 400);
+    assert.equal((await request(route + '?page=0', 'admin')).status, 400);
+    assert.equal((await request('/recording-uploads/inventory-22', 'admin')).status, 404);
   });
 
   await t.test('account invitations use the existing one-time activation flow and keep codes out of audit', async () => {

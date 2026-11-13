@@ -75,9 +75,22 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json(await store.listMeetingHistory({ search: q.trim(), from: from || null, to: to || null, page: Number(page) }));
   }));
   router.get('/system', requirePermission(AdminPermission.READ_SYSTEM), asyncRoute(async (_req, res) => {
-    res.json(await readAdminSystem({
-      config, probe, fetchImpl, recordingCapabilities, postMeetingBatch, databaseReady: () => store.databaseReady(),
-    }));
+    const [system, recordingQueue] = await Promise.all([
+      readAdminSystem({
+        config, probe, fetchImpl, recordingCapabilities, postMeetingBatch, databaseReady: () => store.databaseReady(),
+      }),
+      store.recordingQueue().catch(() => null),
+    ]);
+    res.json({ ...system, recordingQueue });
+  }));
+  router.get('/recordings', requirePermission(AdminPermission.READ_RECORDINGS), asyncRoute(async (req, res) => {
+    const { q = '', status = '', page = '1' } = req.query;
+    if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
+      || !['', 'queued', 'processing', 'done', 'failed'].includes(status)
+      || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) {
+      return res.status(400).json({ error: 'Filter rekaman atau nomor halaman tidak valid.' });
+    }
+    res.json(await store.listRecordingMetadata({ search: q.trim(), status, page: Number(page) }));
   }));
 
   const manage = requirePermission(AdminPermission.MANAGE_ACCOUNTS);

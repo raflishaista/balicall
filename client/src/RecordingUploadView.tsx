@@ -228,6 +228,8 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
   const [diarizer, setDiarizer] = useState('');
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(true);
+  const isSea = sttModel === 'sea';
+  const uploadLanguage = isSea ? 'id' : language;
   const compatibleDiarizers = diarizersByModel[sttModel] || [];
   const uploadDiarizer = compatibleDiarizers.includes(diarizer) ? diarizer : compatibleDiarizers[0] || '';
 
@@ -284,7 +286,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
     setUploading(true); setFormError(null);
     try {
       const { upload } = await uploadRecording(
-        file, title.trim(), language, llmModel, sttModel,
+        file, title.trim(), uploadLanguage, llmModel, sttModel,
         uploadDiarizer,
       );
       setItems(prev => [upload, ...prev]);
@@ -372,7 +374,7 @@ export function RecordingUploadView({ onBack, recordingId: propRecordingId, onRe
           </label>
           <label className="rec-field">
             <span>Bahasa</span>
-            <select value={language} disabled={uploading} onChange={e => setLanguage(e.target.value as 'id' | 'en')}>
+            <select value={uploadLanguage} disabled={uploading || isSea} onChange={e => setLanguage(e.target.value as 'id' | 'en')}>
               <option value="id">Indonesia</option>
               <option value="en">English</option>
             </select>

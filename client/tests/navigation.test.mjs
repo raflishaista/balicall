@@ -37,6 +37,10 @@ test('routeToHash formats settings sections correctly', () => {
 test('admin sidebar routes preserve the section and keep the overview URL', () => {
   const employees = { view: 'admin', adminSection: 'employees' };
   assert.deepEqual(hashToRoute(routeToHash(employees)), employees);
+  const recordings = { view: 'admin', adminSection: 'recordings' };
+  assert.equal(routeToHash(recordings), '#/admin/recordings');
+  assert.deepEqual(hashToRoute('#/admin/recordings'), recordings);
+  assert.deepEqual(hashToRoute('#/recordings'), { view: 'recordings', recordingId: null });
   assert.equal(routeToHash({ view: 'admin', adminSection: 'overview' }), '#/admin');
   assert.deepEqual(hashToRoute('#/admin/unknown'), { view: 'admin' });
   assert.equal(isSameRoute(employees, { view: 'admin', adminSection: 'audit' }), false);
