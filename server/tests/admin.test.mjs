@@ -309,6 +309,17 @@ test('admin permissions are enforced and account changes are audited', async t =
     await query(`INSERT INTO balicall_attendees(meeting_id,employee_id,employee_name,joined_at)
       VALUES ('history-1',$1,'Fixture host',TIMESTAMPTZ '2025-01-01 17:05:00+00'),
              ('history-1',$2,'Fixture invitee',NULL)`, [adminId, employeeId]);
+    await query(`INSERT INTO balicall_schedules(id,room_name,title,host_id,host_name,scheduled_start,scheduled_end)
+      VALUES ('history-reused','Rapat Arsip 100%','Jadwal lain',$1,'Host jadwal lain',NOW(),NOW()+interval '1 hour')`, [adminId]);
+    meetingStore.transact(() => {
+      meetingStore.meetings.set('history-1', {
+        id: 'history-1', roomName: 'Rapat Arsip 100%', hostId: employeeId, status: 'ended',
+        transcripts: [], participants: new Map([
+          [adminId, { employeeId: adminId, employeeName: 'Fixture host' }],
+          [employeeId, { employeeId, employeeName: 'Host tercatat' }],
+        ]),
+      });
+    });
     const path = '/admin/meetings/history';
     assert.equal((await request(path)).status, 401);
     assert.equal((await request(path, 'employee')).status, 403);
@@ -319,19 +330,94 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(page1.total, 56);
     assert.equal(page1.meetings.length, page1.pageSize);
     assert.equal(page1.meetings[0].id, 'history-55');
+    assert.equal(page1.summary.totalEndedMeetings, 56);
+    assert.equal(page1.summary.durationSamples, 1);
+    assert.equal(page1.summary.totalDurationSeconds, 3300);
+    assert.equal(page1.summary.participantSamples, 1);
+
     const last = await (await request(path + '?q=Rapat%20Arsip&page=999', 'admin')).json();
     assert.equal(last.page, Math.ceil(56 / page1.pageSize));
     assert.ok(last.meetings.some(meeting => meeting.id === 'history-1'));
+    // Summary remains consistent across pages
+    assert.equal(last.summary.totalEndedMeetings, 56);
+    assert.equal(last.summary.durationSamples, 1);
+    assert.equal(last.summary.totalDurationSeconds, 3300);
+    assert.equal(last.summary.participantSamples, 1);
+
     const matching = await (await request(path + '?q=100%25&from=2025-01-02&to=2025-01-02', 'admin')).json();
     assert.equal(matching.total, 2);
     assert.deepEqual(matching.meetings.map(meeting => meeting.id), ['history-1', 'history-2']);
     assert.equal(matching.meetings[0].participantCount, 1);
     assert.equal(matching.meetings[0].durationSeconds, 3300);
+    assert.equal(matching.meetings[0].hostName, 'Host tercatat');
+    assert.equal(matching.meetings[1].hostName, null);
+    assert.equal(matching.meetings[1].participantCount, null);
     assert.equal(matching.meetings[1].endedAt, null);
     assert.equal(matching.meetings[1].durationSeconds, null);
-    assert.equal((await (await request(path + '?q=missing', 'admin')).json()).total, 0);
+    // Summary changes when filters are applied
+    assert.equal(matching.summary.totalEndedMeetings, 2);
+    assert.equal(matching.summary.durationSamples, 1);
+    assert.equal(matching.summary.totalDurationSeconds, 3300);
+    assert.equal(matching.summary.averageParticipants, 1);
+    assert.equal(matching.summary.participantSamples, 1);
+
+    const missing = await (await request(path + '?q=missing', 'admin')).json();
+    assert.equal(missing.total, 0);
+    assert.equal(missing.summary.totalEndedMeetings, 0);
+    assert.equal(missing.summary.durationSamples, 0);
+    assert.equal(missing.summary.participantSamples, 0);
+    assert.equal(missing.summary.averageParticipants, null);
+
     assert.equal((await request(path + '?from=2025-01-03&to=2025-01-02', 'admin')).status, 400);
     assert.equal((await request(path + '?page=0', 'admin')).status, 400);
+
+    // CSV export authorization and content verification
+    const exportPath = '/admin/meetings/history/export';
+    assert.equal((await request(exportPath)).status, 401);
+    assert.equal((await request(exportPath, 'employee')).status, 403);
+    assert.equal((await request(exportPath, 'guest')).status, 403);
+    assert.equal((await request(exportPath + '?from=2025-01-03&to=2025-01-02', 'admin')).status, 400);
+
+    const exportRes = await request(exportPath + '?q=rapat%20arsip', 'admin');
+    assert.equal(exportRes.status, 200);
+    assert.ok(exportRes.headers.get('content-type')?.includes('text/csv'));
+    assert.ok(exportRes.headers.get('content-disposition')?.includes('riwayat-rapat.csv'));
+    const csvBuffer = Buffer.from(await exportRes.arrayBuffer());
+    assert.equal(csvBuffer[0], 0xEF, 'Byte 0 must be 0xEF for UTF-8 BOM');
+    assert.equal(csvBuffer[1], 0xBB, 'Byte 1 must be 0xBB for UTF-8 BOM');
+    assert.equal(csvBuffer[2], 0xBF, 'Byte 2 must be 0xBF for UTF-8 BOM');
+    const csvContent = csvBuffer.toString('utf8');
+    const lines = csvContent.trim().split('\r\n');
+    // Header + all 56 matching records across all pages
+    assert.equal(lines.length, 57);
+    assert.ok(lines[0].includes('Judul') && lines[0].includes('Waktu (WIB)') && lines[0].includes('Host')
+      && lines[0].includes('Jumlah peserta') && lines[0].includes('Durasi') && lines[0].includes('Status'));
+    // history-1 row contains host, participants, formatted duration and status
+    const history1Line = lines.find(line => line.includes('Host tercatat'));
+    assert.ok(history1Line);
+    assert.ok(history1Line.includes('Rapat Arsip 100%'));
+    assert.ok(history1Line.includes('55 mnt'));
+    assert.ok(history1Line.includes('Selesai'));
+    assert.ok(!csvContent.includes('Fixture host'));
+    assert.ok(!csvContent.includes('Host jadwal lain'));
+    assert.ok(lines.some(line => line.startsWith('Rapat Arsip 100%') && line.includes('Belum tercatat,—,—,Selesai')));
+
+    // Test CSV formula injection defense and escaping
+    await query(`
+      INSERT INTO balicall_meetings(id,room_name,status,created_at,ended_at)
+      VALUES ('history-formula', '=cmd|'' /C calc''!A0', 'ended', TIMESTAMPTZ '2025-01-02 10:00:00+00', TIMESTAMPTZ '2025-01-02 11:00:00+00'),
+             ('history-quotes', 'Rapat "Khusus", Evaluasi\nTahap 2', 'ended', TIMESTAMPTZ '2025-01-02 10:00:00+00', TIMESTAMPTZ '2025-01-02 11:00:00+00')
+    `);
+    const formulaExport = await (await request(exportPath + '?q=cmd', 'admin')).text();
+    assert.ok(formulaExport.includes("'=cmd|"), 'Formula character = must be prepended with single quote');
+
+    const quotesExport = await (await request(exportPath + '?q=khusus', 'admin')).text();
+    assert.ok(quotesExport.includes('"Rapat ""Khusus"", Evaluasi\nTahap 2"'), 'Quotes, commas, and newlines must be RFC 4180 escaped');
+
+    // Also verify /admin/meetings/history?format=csv alias
+    const aliasRes = await request(path + '?q=cmd&format=csv', 'admin');
+    assert.equal(aliasRes.status, 200);
+    assert.ok(aliasRes.headers.get('content-type')?.includes('text/csv'));
   });
 
   await t.test('monitoring uses the configured WhisperLiveKit health address for a proxied worker', async () => {

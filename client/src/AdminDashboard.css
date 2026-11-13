@@ -25,6 +25,17 @@
   gap: 8px;
 }
 
+.admin-directory-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-summary-scope {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #496482;
+}
+
 .admin-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));

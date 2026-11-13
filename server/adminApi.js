@@ -27,6 +27,10 @@ function isAdminDate(value) {
 export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch }) {
   const router = Router();
   const store = new PgAdminStore();
+  const hostNameForMeeting = id => {
+    const meeting = meetingStore.meetings.get(id);
+    return meeting?.participants.get(meeting.hostId)?.employeeName?.trim() || null;
+  };
   router.use(asyncRoute(async (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (!config.authEnabled) return res.status(503).json({ error: 'Admin memerlukan autentikasi akun karyawan.' });
@@ -62,8 +66,22 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     ]);
     res.json(compileAdminMeetings({ history, schedules, rooms, snapshots: meetingStore.meetings.values() }));
   }));
+  router.get('/meetings/history/export', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { q = '', from = '', to = '' } = req.query;
+    if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
+      || (from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))) {
+      return res.status(400).json({ error: 'Filter riwayat rapat tidak valid.' });
+    }
+    if (from && to && from > to) {
+      return res.status(400).json({ error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' });
+    }
+    const csv = await store.exportMeetingHistoryCsv({ search: q.trim(), from: from || null, to: to || null, hostNameForMeeting });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="riwayat-rapat.csv"');
+    res.send(csv);
+  }));
   router.get('/meetings/history', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
-    const { q = '', from = '', to = '', page = '1' } = req.query;
+    const { q = '', from = '', to = '', page = '1', format = '' } = req.query;
     if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
       || (from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))
       || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) {
@@ -72,7 +90,13 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     if (from && to && from > to) {
       return res.status(400).json({ error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' });
     }
-    res.json(await store.listMeetingHistory({ search: q.trim(), from: from || null, to: to || null, page: Number(page) }));
+    if (format === 'csv') {
+      const csv = await store.exportMeetingHistoryCsv({ search: q.trim(), from: from || null, to: to || null, hostNameForMeeting });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="riwayat-rapat.csv"');
+      return res.send(csv);
+    }
+    res.json(await store.listMeetingHistory({ search: q.trim(), from: from || null, to: to || null, page: Number(page), hostNameForMeeting }));
   }));
   router.get('/system', requirePermission(AdminPermission.READ_SYSTEM), asyncRoute(async (_req, res) => {
     res.json(await readAdminSystem({

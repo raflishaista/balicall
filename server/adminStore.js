@@ -56,6 +56,59 @@ const unchanged = () => ({ ok: true, changed: false, result: 'no_change' });
 const denied = (status, reason, error) => ({ ok: false, status, result: 'denied', reason, error });
 const lastAdmin = () => denied(409, 'last_super_admin', 'Super Admin aktif terakhir harus dipertahankan.');
 
+function formatDurationLabel(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '—';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 0) return '< 1 mnt';
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours} jam ${minutes % 60} mnt` : `${minutes} mnt`;
+}
+
+export function escapeCsvCell(value) {
+  if (value === null || value === undefined) return '';
+  let str = String(value);
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  if (/[",\n\r]/.test(str)) {
+    str = `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+export function formatMeetingHistoryCsv(rows) {
+  const headers = ['Judul', 'Waktu (WIB)', 'Host', 'Jumlah peserta', 'Durasi', 'Status'];
+  const lines = [headers.map(escapeCsvCell).join(',')];
+
+  const adminWibDate = new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Jakarta',
+  });
+
+  for (const row of rows) {
+    const title = row.title || 'Tanpa judul';
+    let timeLabel = '—';
+    if (row.endedAt) {
+      timeLabel = `Selesai ${adminWibDate.format(new Date(row.endedAt))} WIB`;
+    } else if (row.createdAt) {
+      timeLabel = `Dibuat ${adminWibDate.format(new Date(row.createdAt))} WIB`;
+    }
+    if (row.startedAt) {
+      const startWib = adminWibDate.format(new Date(row.startedAt));
+      timeLabel = `${timeLabel} (Mulai ${startWib} WIB)`;
+    }
+    const host = row.hostName || 'Belum tercatat';
+    const participants = row.participantCount ?? '—';
+    const duration = formatDurationLabel(row.durationSeconds);
+    const status = row.status === 'ended' || row.endedAt ? 'Selesai' : (row.status || 'Selesai');
+
+    lines.push([title, timeLabel, host, participants, duration, status].map(escapeCsvCell).join(','));
+  }
+
+  return '\uFEFF' + lines.join('\r\n') + '\r\n';
+}
+
 export class PgAdminStore {
   constructor(pool = getPool()) {
     this.pool = pool;
@@ -110,15 +163,35 @@ export class PgAdminStore {
     return rows;
   }
 
-  async listMeetingHistory({ search, from, to, page }) {
+  async listMeetingHistory({ search, from, to, page, hostNameForMeeting = () => null }) {
     const { rows: [result] } = await this.requirePool().query(`
       WITH matching AS (
-        SELECT id, room_name, created_at, ended_at, COALESCE(ended_at, created_at) AS archive_date
+        SELECT id, room_name, status, created_at, ended_at, COALESCE(ended_at, created_at) AS archive_date
         FROM balicall_meetings
         WHERE (status = 'ended' OR ended_at IS NOT NULL)
           AND ($1 = '' OR STRPOS(LOWER(room_name), LOWER($1)) > 0)
           AND ($2::date IS NULL OR COALESCE(ended_at, created_at) >= ($2::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
           AND ($3::date IS NULL OR COALESCE(ended_at, created_at) < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+      ), matching_stats AS (
+        SELECT
+          m.id,
+          CASE WHEN isfinite(m.ended_at) AND isfinite(attendance.first_join) AND m.ended_at >= attendance.first_join
+            THEN FLOOR(EXTRACT(EPOCH FROM (m.ended_at - attendance.first_join)))::double precision
+          END AS duration_seconds,
+          NULLIF(attendance.attendee_count, 0) AS participant_count
+        FROM matching m
+        CROSS JOIN LATERAL (
+          SELECT MIN(joined_at) AS first_join, COUNT(joined_at)::int AS attendee_count
+          FROM balicall_attendees WHERE meeting_id = m.id
+        ) attendance
+      ), summary_info AS (
+        SELECT
+          COUNT(*)::int AS "totalEndedMeetings",
+          COALESCE(SUM(duration_seconds), 0)::double precision AS "totalDurationSeconds",
+          COUNT(duration_seconds)::int AS "durationSamples",
+          ROUND(AVG(participant_count)::numeric, 1)::double precision AS "averageParticipants",
+          COUNT(participant_count)::int AS "participantSamples"
+        FROM matching_stats
       ), page_info AS (
         SELECT COUNT(*)::int AS total,
           LEAST($4::bigint, GREATEST(1, (COUNT(*) + $5::int - 1) / $5::int))::int AS page
@@ -127,9 +200,9 @@ export class PgAdminStore {
         SELECT * FROM matching ORDER BY archive_date DESC NULLS LAST, id DESC
         LIMIT $5 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $5)
       ), metadata AS (
-        SELECT m.id, m.room_name AS title, m.created_at AS "createdAt", m.ended_at AS "endedAt",
-          attendance.first_join AS "startedAt", attendance.attendee_count AS "participantCount",
-          CASE WHEN m.ended_at >= attendance.first_join
+        SELECT m.id, m.room_name AS title, m.status, m.created_at AS "createdAt", m.ended_at AS "endedAt",
+          attendance.first_join AS "startedAt", NULLIF(attendance.attendee_count, 0) AS "participantCount",
+          CASE WHEN isfinite(m.ended_at) AND isfinite(attendance.first_join) AND m.ended_at >= attendance.first_join
             THEN FLOOR(EXTRACT(EPOCH FROM (m.ended_at - attendance.first_join)))::double precision
           END AS "durationSeconds"
         FROM page_rows m
@@ -138,13 +211,44 @@ export class PgAdminStore {
           FROM balicall_attendees WHERE meeting_id = m.id
         ) attendance
       )
-      SELECT page_info.*, COALESCE((
-        SELECT JSON_AGG(m ORDER BY COALESCE(m."endedAt", m."createdAt") DESC NULLS LAST, m.id DESC)
-        FROM metadata m
-      ), '[]'::json) AS meetings
+      SELECT page_info.*,
+        (SELECT ROW_TO_JSON(summary_info.*) FROM summary_info) AS summary,
+        COALESCE((
+          SELECT JSON_AGG(m ORDER BY COALESCE(m."endedAt", m."createdAt") DESC NULLS LAST, m.id DESC)
+          FROM metadata m
+        ), '[]'::json) AS meetings
       FROM page_info
     `, [search, from, to, page, MEETING_HISTORY_PAGE_SIZE]);
-    return { ...result, pageSize: MEETING_HISTORY_PAGE_SIZE };
+    const meetings = result.meetings.map(meeting => ({ ...meeting, hostName: hostNameForMeeting(meeting.id) }));
+    return { ...result, meetings, pageSize: MEETING_HISTORY_PAGE_SIZE };
+  }
+
+  async exportMeetingHistoryCsv({ search, from, to, hostNameForMeeting = () => null }) {
+    const { rows } = await this.requirePool().query(`
+      WITH matching AS (
+        SELECT id, room_name, status, created_at, ended_at, COALESCE(ended_at, created_at) AS archive_date
+        FROM balicall_meetings
+        WHERE (status = 'ended' OR ended_at IS NOT NULL)
+          AND ($1 = '' OR STRPOS(LOWER(room_name), LOWER($1)) > 0)
+          AND ($2::date IS NULL OR COALESCE(ended_at, created_at) >= ($2::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($3::date IS NULL OR COALESCE(ended_at, created_at) < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+      ), metadata AS (
+        SELECT m.id, m.room_name AS title, m.status, m.created_at AS "createdAt", m.ended_at AS "endedAt",
+          attendance.first_join AS "startedAt", NULLIF(attendance.attendee_count, 0) AS "participantCount",
+          CASE WHEN isfinite(m.ended_at) AND isfinite(attendance.first_join) AND m.ended_at >= attendance.first_join
+            THEN FLOOR(EXTRACT(EPOCH FROM (m.ended_at - attendance.first_join)))::double precision
+          END AS "durationSeconds"
+        FROM matching m
+        CROSS JOIN LATERAL (
+          SELECT MIN(joined_at) AS first_join, COUNT(joined_at)::int AS attendee_count
+          FROM balicall_attendees WHERE meeting_id = m.id
+        ) attendance
+      )
+      SELECT * FROM metadata
+      ORDER BY COALESCE("endedAt", "createdAt") DESC NULLS LAST, id DESC
+    `, [search, from, to]);
+
+    return formatMeetingHistoryCsv(rows.map(meeting => ({ ...meeting, hostName: hostNameForMeeting(meeting.id) })));
   }
 
   async listScheduleMetadata() {
