@@ -45,7 +45,7 @@ test('meeting monitoring refreshes only while visible and keeps the table during
     './api': { apiRequest, ApiError: Error },
     './AdminDashboard.css': {},
     './AdminEmployeeActions': {},
-    'lucide-react': { RefreshCw: () => null },
+    'lucide-react': new Proxy({ RefreshCw: () => null }, { get: (target, prop) => target[prop] ?? (() => null) }),
   };
   const source = readFileSync(new URL('../src/AdminDashboard.tsx', import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, {

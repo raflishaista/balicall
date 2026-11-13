@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { CalendarDays, FileText, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
-import { ApiError, apiRequest } from './api';
+import { CalendarDays, Clock, Download, FileText, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import { API_BASE, ApiError, apiRequest } from './api';
 import { AdminEmployeeActions, type AdminEmployee } from './AdminEmployeeActions';
 import type { AdminSection } from './navigation';
 import './AdminDashboard.css';
@@ -458,58 +458,188 @@ function AdminMeetingMonitoring() {
   );
 }
 
+interface MeetingHistorySummary {
+  totalEndedMeetings: number;
+  totalDurationSeconds: number;
+  durationSamples: number;
+  averageParticipants: number | null;
+  participantSamples: number;
+}
+
 interface MeetingHistoryPage {
   meetings: Array<{
     id: string;
     title: string;
+    status: MeetingStatus;
     createdAt: string | null;
     endedAt: string | null;
     startedAt: string | null;
-    participantCount: number;
+    hostName: string | null;
+    participantCount: number | null;
     durationSeconds: number | null;
   }>;
   total: number;
   page: number;
   pageSize: number;
+  summary?: MeetingHistorySummary;
 }
 
 const initialMeetingHistoryFilters = { q: '', from: '', to: '', page: '1' };
 
 function AdminMeetingHistory() {
-  const [filters, setFilters] = useState(initialMeetingHistoryFilters);
-  const { data, loading, error, reload } = useAdminData<MeetingHistoryPage>(`/admin/meetings/history?${new URLSearchParams(filters)}`);
+  const [inputFilters, setInputFilters] = useState(initialMeetingHistoryFilters);
+  const [appliedFilters, setAppliedFilters] = useState(initialMeetingHistoryFilters);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const { data, loading, error, reload } = useAdminData<MeetingHistoryPage>(
+    `/admin/meetings/history?${new URLSearchParams(appliedFilters)}`
+  );
+
   const applyFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setFilters({
-      q: String(form.get('q') ?? '').trim(),
-      from: String(form.get('from') ?? ''),
-      to: String(form.get('to') ?? ''),
-      page: '1',
-    });
+    setAppliedFilters({ ...inputFilters, page: '1' });
   };
-  const goToPage = (page: number) => setFilters(previous => ({ ...previous, page: String(page) }));
-  const filtered = filters.q || filters.from || filters.to;
+
+  const resetFilters = () => {
+    setInputFilters(initialMeetingHistoryFilters);
+    setAppliedFilters(initialMeetingHistoryFilters);
+  };
+
+  const goToPage = (page: number) => {
+    setAppliedFilters(previous => ({ ...previous, page: String(page) }));
+  };
+
+  const exportCsv = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const query = new URLSearchParams({
+        q: appliedFilters.q,
+        from: appliedFilters.from,
+        to: appliedFilters.to,
+      });
+      const response = await fetch(`${API_BASE}/admin/meetings/history/export?${query}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => null);
+        throw new Error(errJson?.error || `Ekspor CSV gagal (HTTP ${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'riwayat-rapat.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : 'Gagal mengekspor riwayat rapat ke CSV.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const filtered = appliedFilters.q || appliedFilters.from || appliedFilters.to;
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
   return (
     <section className="surface-card admin-section" aria-labelledby="admin-history-heading">
       <div className="admin-section-heading">
         <h2 id="admin-history-heading">Riwayat rapat selesai</h2>
-        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
-          <RefreshCw size={16} aria-hidden="true" /> Perbarui
-        </button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={loading || exporting || data?.total === 0}
+            onClick={exportCsv}
+          >
+            <Download size={16} aria-hidden="true" /> {exporting ? 'Mengekspor...' : 'Ekspor CSV'}
+          </button>
+          <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+            <RefreshCw size={16} aria-hidden="true" /> Perbarui
+          </button>
+        </div>
       </div>
-      <form className="admin-filters" aria-label="Filter riwayat rapat" onSubmit={applyFilters}
-        onReset={() => setFilters(initialMeetingHistoryFilters)}>
+
+      <div className="admin-directory-summary">
+        <dl className="admin-kpis">
+          <div className="admin-kpi">
+            <CalendarDays size={20} aria-hidden="true" />
+            <div>
+              <dt>Total rapat selesai</dt>
+              <dd>{numberFormat.format(data?.summary?.totalEndedMeetings ?? data?.total ?? 0)}</dd>
+              <small className="admin-check-time">Seluruh hasil filter</small>
+            </div>
+          </div>
+          <div className="admin-kpi">
+            <Clock size={20} aria-hidden="true" />
+            <div>
+              <dt>Total durasi</dt>
+              <dd>
+                {data?.summary && data.summary.durationSamples > 0
+                  ? durationLabel(data.summary.totalDurationSeconds)
+                  : 'Belum tersedia'}
+              </dd>
+              <small className="admin-check-time">
+                {data?.summary && data.summary.durationSamples > 0
+                  ? `Dari ${numberFormat.format(data.summary.durationSamples)} rapat`
+                  : '0 sampel valid'}
+              </small>
+            </div>
+          </div>
+          <div className="admin-kpi">
+            <Users size={20} aria-hidden="true" />
+            <div>
+              <dt>Rata-rata peserta</dt>
+              <dd>
+                {data?.summary?.averageParticipants != null
+                  ? `${numberFormat.format(data.summary.averageParticipants)} orang`
+                  : 'Belum tersedia'}
+              </dd>
+              <small className="admin-check-time">
+                {data?.summary && data.summary.participantSamples > 0
+                  ? `Dari ${numberFormat.format(data.summary.participantSamples)} rapat`
+                  : '0 sampel valid'}
+              </small>
+            </div>
+          </div>
+        </dl>
+        <p className="admin-summary-scope">Angka ringkasan mengikuti filter yang diterapkan.</p>
+      </div>
+
+      {exportError && <p className="admin-monitor-notice" role="alert">{exportError}</p>}
+
+      <form className="admin-filters" aria-label="Filter riwayat rapat" onSubmit={applyFilters} onReset={resetFilters}>
         <label className="admin-field">Judul rapat
-          <input type="search" name="q" maxLength={100} placeholder="Cari judul rapat" />
+          <input
+            type="search"
+            name="q"
+            maxLength={100}
+            placeholder="Cari judul rapat"
+            value={inputFilters.q}
+            onChange={e => setInputFilters(prev => ({ ...prev, q: e.target.value }))}
+          />
         </label>
         <label className="admin-field">Tanggal awal (WIB)
-          <input type="date" name="from" aria-describedby="admin-history-date-note" />
+          <input
+            type="date"
+            name="from"
+            aria-describedby="admin-history-date-note"
+            value={inputFilters.from}
+            onChange={e => setInputFilters(prev => ({ ...prev, from: e.target.value }))}
+          />
         </label>
         <label className="admin-field">Tanggal akhir (WIB)
-          <input type="date" name="to" aria-describedby="admin-history-date-note" />
+          <input
+            type="date"
+            name="to"
+            aria-describedby="admin-history-date-note"
+            value={inputFilters.to}
+            onChange={e => setInputFilters(prev => ({ ...prev, to: e.target.value }))}
+          />
         </label>
         <button type="submit" className="button-primary">Terapkan</button>
         <button type="reset" className="button-secondary">Reset filter</button>
@@ -522,8 +652,12 @@ function AdminMeetingHistory() {
           <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel riwayat rapat">
             <table className="admin-table" aria-label="Daftar rapat selesai">
               <thead><tr>
-                <th scope="col">Rapat</th><th scope="col">Waktu (WIB)</th>
-                <th scope="col">Peserta tercatat</th><th scope="col">Durasi</th>
+                <th scope="col">Rapat</th>
+                <th scope="col">Waktu (WIB)</th>
+                <th scope="col">Host</th>
+                <th scope="col">Peserta</th>
+                <th scope="col">Durasi</th>
+                <th scope="col">Status</th>
               </tr></thead>
               <tbody>{data.meetings.map(meeting => <tr key={meeting.id}>
                 <td><strong>{meeting.title}</strong></td>
@@ -533,8 +667,10 @@ function AdminMeetingHistory() {
                     : '—'}
                   {meeting.startedAt && <small>Mulai <time dateTime={meeting.startedAt}>{adminWibDate.format(new Date(meeting.startedAt))}</time></small>}
                 </td>
-                <td>{numberFormat.format(meeting.participantCount)}</td>
+                <td>{meeting.hostName ?? 'Belum tercatat'}</td>
+                <td>{meeting.participantCount == null ? '—' : numberFormat.format(meeting.participantCount)}</td>
                 <td>{durationLabel(meeting.durationSeconds)}</td>
+                <td>{meetingStatuses[meeting.status] || 'Selesai'}</td>
               </tr>)}</tbody>
             </table>
           </div>
