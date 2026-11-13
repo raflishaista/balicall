@@ -137,8 +137,13 @@ test('admin permissions are enforced and account changes are audited', async t =
     await query(`INSERT INTO balicall_attendees(meeting_id,employee_id,employee_name,joined_at)
       VALUES ('scheduled-then-joined','QC-1','Rina 01',NOW()-interval '1 day'),
         ('scheduled-then-joined','QC-2','Rina 02',NOW()-interval '12 hours')`);
-    await query(`INSERT INTO balicall_recording_uploads (id,title,file_size)
-      VALUES ('recording-a','Fixture A',1024), ('recording-b','Fixture B',2048), ('recording-c','Fixture C',NULL)`);
+    await query(`WITH boundary AS (
+        SELECT ((NOW() AT TIME ZONE 'Asia/Jakarta')::date - 6)::timestamp AT TIME ZONE 'Asia/Jakarta' AS starts_at
+      )
+      INSERT INTO balicall_recording_uploads (id,title,file_size,status,created_at,completed_at)
+      SELECT 'recording-a','Fixture A',1024,'done',starts_at,starts_at FROM boundary
+      UNION ALL SELECT 'recording-b','Fixture B',2048,'done',starts_at-interval '1 second',starts_at FROM boundary
+      UNION ALL SELECT 'recording-c','Fixture C',NULL,'failed',starts_at,starts_at FROM boundary`);
 
     for (const path of ['/admin/overview','/admin/employees']) {
       assert.equal((await request(path)).status, 401);
@@ -147,12 +152,26 @@ test('admin permissions are enforced and account changes are audited', async t =
     }
     const first = await request('/admin/overview?days=7', 'admin');
     assert.equal(first.status, 200);
-    assert.deepEqual(await first.json(), {
+    const { dailyActivity, recentActivity, periodStart, periodEnd, ...totals } = await first.json();
+    assert.deepEqual(totals, {
       days: 7, totalEmployees: directory.total + 22, activatedAccounts: 3,
-      totalMeetings: 2, uploadedBytes: '3072',
+      totalMeetings: 2, totalRecordings: 2, uploadedBytes: '1024',
     });
-    const { totalMeetings } = await (await request('/admin/overview?days=30', 'admin')).json();
-    assert.equal(totalMeetings, 3);
+    assert.equal(dailyActivity.length, 7);
+    assert.deepEqual(dailyActivity[0], { date: periodStart, meetings: 0, attendances: 0 });
+    assert.equal(dailyActivity.at(-1).date, periodEnd);
+    assert.equal(dailyActivity.reduce((sum, day) => sum + day.meetings, 0), totals.totalMeetings);
+    assert.equal(dailyActivity.reduce((sum, day) => sum + day.attendances, 0), 2);
+    assert.deepEqual(recentActivity.map(({ kind, id }) => [kind, id]), [
+      ['meeting_created', 'fixture-room'], ['recording_completed', 'recording-a'], ['recording_completed', 'recording-b'],
+    ]);
+    assert.match(recentActivity[1].occurredAt, /T(00:00:00\+07:00|17:00:00(?:\+00:00|Z))$/);
+    assert.ok(recentActivity.every(event => Object.keys(event).sort().join(',') === 'id,kind,occurredAt,title'));
+    const month = await (await request('/admin/overview?days=30', 'admin')).json();
+    assert.equal(month.totalMeetings, 3);
+    assert.equal(month.totalRecordings, 3);
+    assert.equal(month.uploadedBytes, '3072');
+    assert.equal(month.dailyActivity.length, 30);
     assert.equal((await request('/admin/overview?days=0', 'admin')).status, 400);
 
     const filters = '/admin/employees?q=RINA&department=QA%20Overview&status=active';
