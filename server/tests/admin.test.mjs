@@ -203,7 +203,7 @@ test('admin permissions are enforced and account changes are audited', async t =
       totalMeetings: 2, totalRecordings: 2, uploadedBytes: '1024',
     });
     assert.equal(dailyActivity.length, 7);
-    assert.deepEqual(dailyActivity[0], { date: periodStart, meetings: 0, attendances: 0 });
+    assert.deepEqual(dailyActivity[0], { date: periodStart, meetings: 0, attendances: 0, meetingsWithParticipants: 0 });
     assert.equal(dailyActivity.at(-1).date, periodEnd);
     assert.equal(dailyActivity.reduce((sum, day) => sum + day.meetings, 0), totals.totalMeetings);
     assert.equal(dailyActivity.reduce((sum, day) => sum + day.attendances, 0), 2);
@@ -217,6 +217,7 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(month.totalRecordings, 3);
     assert.equal(month.uploadedBytes, '3072');
     assert.equal(month.dailyActivity.length, 30);
+    assert.equal(month.dailyActivity.reduce((sum, day) => sum + day.meetingsWithParticipants, 0), 1);
     assert.equal((await request('/admin/overview?days=0', 'admin')).status, 400);
 
     const filters = '/admin/employees?q=RINA&department=QA%20Overview&status=active';

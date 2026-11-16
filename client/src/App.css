@@ -1798,3 +1798,132 @@ input::placeholder { color: #a1b1c6; }
   font-size: 11.5px;
   font-weight: 600;
 }
+
+.call-side-panel .meeting-chat-form button.meeting-chat-file-button,
+.meeting-chat-form button.meeting-chat-file-button {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  background: #f1f5f9;
+  color: #334e68;
+  border: 1px solid #d5e1ef;
+}
+
+.call-side-panel .meeting-chat-form button.meeting-chat-file-button:hover:not(:disabled),
+.meeting-chat-form button.meeting-chat-file-button:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #0865ed;
+}
+
+.meeting-chat-file-error {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: #b91c1c;
+}
+
+.chat-file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #d5e1ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chat-file-icon {
+  flex-shrink: 0;
+  color: #0865ed;
+}
+
+.chat-file-info {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.chat-file-info strong {
+  font-size: 12px;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-file-info small {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.chat-file-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0865ed;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-file-download:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.chat-file-download:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.summary-files-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.summary-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #dfe8f3;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.summary-file-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.summary-file-icon {
+  flex-shrink: 0;
+  color: #0865ed;
+}
+
+.summary-file-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.summary-file-meta strong {
+  color: #162a42;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+
+.summary-file-meta small {
+  color: #496482;
+  font-size: 0.82rem;
+}
