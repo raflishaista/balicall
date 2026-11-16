@@ -112,6 +112,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [adminSection, setAdminSection] = useState<AdminSection>(initialRoute.adminSection ?? 'overview');
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
+  const [createWaitingRoom, setCreateWaitingRoom] = useState(false);
+  const [waitingRoomState, setWaitingRoomState] = useState<{
+    meetingId: string;
+    roomName: string;
+    roomCode?: string;
+    employeeId: string;
+    employeeName: string;
+    department: string;
+    intent: 'create' | 'join';
+    mediaChoices: JoinMediaChoices;
+    status: 'waiting' | 'denied' | 'ended';
+  } | null>(null);
   const [lobbyInviteCode, setLobbyInviteCode] = useState(initialRoute.roomCode);
   const [view, setView] = useState<AppView>(initialRoute.view);
   const contentRef = useRef<HTMLElement>(null);
@@ -804,14 +816,43 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         department: userDept,
         intent: currentIntent,
       };
+      if (currentIntent === 'create') {
+        payload.waitingRoom = createWaitingRoom;
+      }
       if (currentRoomCode) {
         payload.roomCode = currentRoomCode;
       }
-      const data = await apiRequest<{ token: string; url: string; meetingId: string; sttProvider: 'browser' | 'server'; roomName?: string; roomCode?: string }>('/token', {
+      const data = await apiRequest<{
+        waiting?: boolean;
+        token?: string;
+        url?: string;
+        meetingId: string;
+        sttProvider?: 'browser' | 'server';
+        roomName?: string;
+        roomCode?: string;
+      }>('/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (generation !== joinGeneration.current) return;
+      if (data.waiting) {
+        setWaitingRoomState({
+          meetingId: data.meetingId,
+          roomName: data.roomName || roomName.trim(),
+          roomCode: data.roomCode || currentRoomCode,
+          employeeId: cleanId,
+          employeeName: employeeName.trim(),
+          department: userDept,
+          intent: currentIntent,
+          mediaChoices,
+          status: 'waiting',
+        });
+        return;
+      }
+      if (!data.token || !data.url) throw new Error('Token rapat tidak tersedia.');
+      const tokenStr = data.token;
+      const serverUrlStr = data.url;
+      const resolvedSttProvider = data.sttProvider || 'browser';
       endingMeeting.current = false;
       summaryGeneration.current++;
       // Old summary work must not pause ASR or lock controls in the new room.
@@ -826,7 +867,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setJoinMedia(mediaChoices);
       transcriptDelivery.beginMeeting(data.meetingId);
       const recommended = getRecommendedProvider(backendHealth?.sttConfigured || false);
-      const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : data.sttProvider;
+      const defaultProvider = userPreferences.preferences.transcriptionProvider === 'auto' ? recommended : resolvedSttProvider;
       const activeRoomName = data.roomName || roomName.trim();
       const activeRoomCode = data.roomCode || currentRoomCode;
       if (data.roomName) setRoomName(data.roomName);
@@ -835,11 +876,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         meetingId: data.meetingId,
         roomName: activeRoomName,
         roomCode: activeRoomCode,
-        token: data.token,
-        serverUrl: data.url,
+        token: tokenStr,
+        serverUrl: serverUrlStr,
         joinedAt: Date.now(),
       });
-      setToken(data.token); setMeetingId(data.meetingId); setServerUrl(data.url); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
+      setToken(tokenStr); setMeetingId(data.meetingId); setServerUrl(serverUrlStr); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
       setMeetingRole('participant');
@@ -850,6 +891,131 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
     finally { if (generation === joinGeneration.current) { joinPending.current = false; setIsJoining(false); } }
   };
+
+  const waitingContextRef = useRef({ backendHealth, preferences: userPreferences.preferences });
+  waitingContextRef.current = { backendHealth, preferences: userPreferences.preferences };
+
+  useEffect(() => {
+    if (!waitingRoomState || waitingRoomState.status !== 'waiting') return;
+    let active = true;
+    let completing = false;
+
+    const completeAdmission = async () => {
+      if (!active || completing) return;
+      completing = true;
+      try {
+        const data = await apiRequest<{
+          waiting?: boolean;
+          token?: string;
+          url?: string;
+          meetingId: string;
+          sttProvider?: 'browser' | 'server';
+          roomName?: string;
+          roomCode?: string;
+        }>('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomName: waitingRoomState.roomName || waitingRoomState.roomCode,
+            roomCode: waitingRoomState.roomCode,
+            employeeId: waitingRoomState.employeeId,
+            employeeName: waitingRoomState.employeeName,
+            department: waitingRoomState.department,
+            intent: waitingRoomState.intent,
+          }),
+        });
+        if (!active || !data.token || !data.url) {
+          completing = false;
+          return;
+        }
+        const { backendHealth: latestHealth, preferences: latestPrefs } = waitingContextRef.current;
+        setWaitingRoomState(null);
+        endingMeeting.current = false;
+        summaryGeneration.current++;
+        setIsSummarizing(false);
+        setBatchDiarizing(false);
+        setCallPreferences({
+          ...latestPrefs,
+          sharedRoomMic: waitingRoomState.mediaChoices.sharedRoomMic ?? latestPrefs.sharedRoomMic ?? false,
+          liveDiarization: waitingRoomState.mediaChoices.liveDiarization ?? latestPrefs.liveDiarization ?? true,
+          batchDiarization: waitingRoomState.mediaChoices.batchDiarization ?? latestPrefs.batchDiarization ?? true,
+        });
+        setJoinMedia(waitingRoomState.mediaChoices);
+        transcriptDelivery.beginMeeting(data.meetingId);
+        const recommended = getRecommendedProvider(latestHealth?.sttConfigured || false);
+        const defaultProvider = latestPrefs.transcriptionProvider === 'auto' ? recommended : (data.sttProvider || 'browser');
+        if (data.roomName) setRoomName(data.roomName);
+        if (data.roomCode) setRoomCode(data.roomCode);
+        if (typeof saveCallSession === 'function') saveCallSession({
+          meetingId: data.meetingId,
+          roomName: data.roomName || waitingRoomState.roomName,
+          roomCode: data.roomCode || waitingRoomState.roomCode,
+          token: data.token,
+          serverUrl: data.url,
+          joinedAt: Date.now(),
+        });
+        setToken(data.token);
+        setMeetingId(data.meetingId);
+        setServerUrl(data.url);
+        setSttProvider(resolveTranscriptionPreferences(latestPrefs, latestHealth?.sttConfigured || false, latestHealth?.sttModels || [], latestHealth?.sttModel || '', defaultProvider).provider);
+        setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
+        setGuestInviteCode('');
+        setMeetingRole('participant');
+        setMeetingHost(null);
+        setParticipantPanelRequest(0);
+        setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
+        navigateTo({ view: 'in-call', meetingId: data.meetingId });
+      } catch {
+        completing = false;
+      }
+    };
+
+    const handleStatus = (status: 'waiting' | 'admitted' | 'denied' | 'ended' | 'none') => {
+      if (!active) return;
+      if (status === 'denied' || status === 'ended') {
+        setWaitingRoomState(prev => (prev ? { ...prev, status } : null));
+        return;
+      }
+      if (status === 'admitted') {
+        void completeAdmission();
+      }
+    };
+
+    const checkStatus = async () => {
+      try {
+        const res = await apiRequest<{ status: 'waiting' | 'admitted' | 'denied' | 'ended' | 'none' }>(
+          `/meetings/${encodeURIComponent(waitingRoomState.meetingId)}/waiting-status?employeeId=${encodeURIComponent(waitingRoomState.employeeId)}`
+        );
+        handleStatus(res.status);
+      } catch {
+        /* retry on next poll */
+      }
+    };
+
+    let source: EventSource | null = null;
+    if (typeof EventSource !== 'undefined') {
+      source = new EventSource(
+        `${API_BASE}/meetings/${encodeURIComponent(waitingRoomState.meetingId)}/waiting-events?employeeId=${encodeURIComponent(waitingRoomState.employeeId)}`,
+        { withCredentials: true }
+      );
+      source.addEventListener('status', event => {
+        try {
+          const parsed = JSON.parse((event as MessageEvent).data) as { status?: 'waiting' | 'admitted' | 'denied' | 'ended' | 'none' };
+          if (parsed?.status) handleStatus(parsed.status);
+        } catch {
+          /* ignore malformed event */
+        }
+      });
+    }
+
+    const timer = setInterval(() => void checkStatus(), 8000);
+    void checkStatus();
+    return () => {
+      active = false;
+      source?.close();
+      clearInterval(timer);
+    };
+  }, [waitingRoomState]);
 
   const triggerSummarize = async (
     targetMeetingId: string,
@@ -1568,10 +1734,51 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         )}
         {view === 'documentation' && <DocumentationPage />}
 
-        {view === 'lobby' && (
+        {view === 'lobby' && waitingRoomState && (
+          <div className="call-recovery-wrapper">
+            <div className="call-recovery-card waiting-room-card" role="status" aria-live="polite">
+              <div className="call-recovery-icon-badge" aria-hidden="true">
+                {waitingRoomState.status === 'waiting'
+                  ? <Loader2 size={32} className="ui-spinner" />
+                  : <Clock size={32} />}
+              </div>
+              <h2>
+                {waitingRoomState.status === 'waiting'
+                  ? 'Waiting Room'
+                  : waitingRoomState.status === 'denied'
+                    ? 'Permintaan Ditolak'
+                    : 'Rapat Telah Berakhir'}
+              </h2>
+              <p>
+                {waitingRoomState.status === 'waiting'
+                  ? 'Waiting for the host to accept you.'
+                  : waitingRoomState.status === 'denied'
+                    ? 'Host tidak mengizinkan Anda masuk ke ruang rapat ini.'
+                    : 'Ruang rapat ini sudah berakhir sebelum permintaan Anda disetujui.'}
+              </p>
+              <small className="waiting-room-meta">
+                Ruang: <strong>{waitingRoomState.roomName}</strong>
+                {waitingRoomState.roomCode ? ` (${waitingRoomState.roomCode})` : ''}
+              </small>
+              <div className="call-recovery-actions">
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => setWaitingRoomState(null)}
+                >
+                  Kembali
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view === 'lobby' && !waitingRoomState && (
           <LobbyView
             isGuest={isGuest}
             intent={meetingIntent}
+            waitingRoom={createWaitingRoom}
+            setWaitingRoom={setCreateWaitingRoom}
             onIntentChange={nextIntent => {
               setMeetingIntent(nextIntent);
               if (nextIntent === 'create') {

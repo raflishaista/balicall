@@ -1094,9 +1094,40 @@ async function syncActionItemsToItProject(
   }));
 
   // 3. Generate LiveKit token with database employee verification
+  const waitingUserStreams = new Map();
+  const waitingHostStreams = new Map();
+
+  function sendSseEvent(res, event, data) {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      /* ignore closed stream */
+    }
+  }
+
+  function notifyWaitingUser(meetingId, userId, payload) {
+    const key = `${meetingId}:${userId}`;
+    const listeners = waitingUserStreams.get(key);
+    if (!listeners) return;
+    for (const res of listeners) sendSseEvent(res, 'status', payload);
+  }
+
+  function notifyWaitingHosts(meetingId) {
+    const meeting = store.get(meetingId);
+    const listeners = waitingHostStreams.get(meetingId);
+    if (!listeners || !meeting) return;
+    const waitingUsers = (meeting.waitingUsers || []).filter(u => u.status === 'waiting');
+    for (const res of listeners) {
+      sendSseEvent(res, 'waiting-room', {
+        waitingRoom: Boolean(meeting.waitingRoom),
+        waitingUsers,
+      });
+    }
+  }
+
   app.post('/api/token', asyncRoute(async (req, res) => {
     if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
-    let { roomName, employeeId, employeeName, department = 'General', roomCode, intent } = req.body || {};
+    let { roomName, employeeId, employeeName, department = 'General', roomCode, intent, waitingRoom } = req.body || {};
     if (!nonEmpty(department)) department = 'General';
 
     let targetCode = roomCode ? String(roomCode).trim().toUpperCase() : null;
@@ -1213,6 +1244,35 @@ async function syncActionItemsToItProject(
       return res.status(409).json({ error: 'This employee is already joining or connected. Use a different identity for another test window.' });
     }
 
+    const targetWaitingMeeting = guestMeeting || active;
+    if (targetWaitingMeeting?.waitingRoom) {
+      const isPrivileged = cleanId === targetWaitingMeeting.hostId || (targetWaitingMeeting.coHostIds || []).includes(cleanId);
+      const isAdmitted = (targetWaitingMeeting.admittedIds || []).includes(cleanId);
+      if (!isPrivileged && !isAdmitted) {
+        store.transact(() => {
+          if (!Array.isArray(targetWaitingMeeting.waitingUsers)) targetWaitingMeeting.waitingUsers = [];
+          const existingIdx = targetWaitingMeeting.waitingUsers.findIndex(u => u.id === cleanId);
+          const entry = {
+            id: cleanId,
+            name: employeeName.trim(),
+            department: department.trim(),
+            isGuest: Boolean(req.auth?.user?.isGuest),
+            requestedAt: new Date().toISOString(),
+            status: 'waiting',
+          };
+          if (existingIdx >= 0) targetWaitingMeeting.waitingUsers[existingIdx] = entry;
+          else targetWaitingMeeting.waitingUsers.push(entry);
+        });
+        notifyWaitingHosts(targetWaitingMeeting.id);
+        return res.status(202).json({
+          waiting: true,
+          meetingId: targetWaitingMeeting.id,
+          roomName: targetWaitingMeeting.roomName,
+          roomCode: targetWaitingMeeting.roomCode,
+        });
+      }
+    }
+
     const meeting = guestMeeting || store.join(active ? active.roomName : (scheduled ? scheduled.roomName : roomName.trim()), {
       employeeId: cleanId,
       employeeName: employeeName.trim(),
@@ -1220,6 +1280,7 @@ async function syncActionItemsToItProject(
       hostId: scheduledHostId || (active?.hostId || cleanId),
       roomCode: (active && active.roomCode) || (scheduled && scheduled.roomCode) || targetCode || undefined,
       intent,
+      waitingRoom: Boolean(waitingRoom),
     }, { requireExisting: intent === 'join' && !active && !scheduled });
     if (guestMeeting) store.transact(() => { const person = meeting.participants.get(cleanId); person.guestTokenIssued = true; person.leftAt = null; person.lastSeen = new Date().toISOString(); });
 
@@ -1263,6 +1324,7 @@ async function syncActionItemsToItProject(
       roomName: meeting.roomName,
       roomCode: meeting.roomCode,
       meetingId: meeting.id,
+      waitingRoom: Boolean(meeting.waitingRoom),
       sttProvider: config.sttProvider,
     });
   }));
@@ -1512,6 +1574,7 @@ async function syncActionItemsToItProject(
       || req.path === '/recording'
       || req.path === '/recording/download'
       || req.path.startsWith('/export')
+      || (req.method === 'GET' && (req.path === '/waiting-status' || req.path === '/waiting-events'))
       || (req.method === 'GET' && (req.path === '/files' || /^\/files\/[^/]+\/download$/.test(req.path)))
     ) return next();
     const meeting = store.get(req.params.id);
@@ -1954,6 +2017,10 @@ async function syncActionItemsToItProject(
       hostId: meeting.hostId,
       coHostIds: meeting.coHostIds || [],
       currentRole,
+      waitingRoom: Boolean(meeting.waitingRoom),
+      waitingUsers: (currentRole === 'host' || currentRole === 'co-host')
+        ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting')
+        : [],
       recording: meeting.recording || null,
       transcripts: meeting.postMeetingBatch?.status === 'done' ? meeting.postMeetingBatch.transcripts : meeting.transcripts,
       postMeetingBatch: publicBatch(meeting.postMeetingBatch),
@@ -1977,6 +2044,163 @@ async function syncActionItemsToItProject(
           name: person.name,
           speakRequestAt: person.speakRequestAt,
         })),
+    });
+  });
+
+  app.get('/api/meetings/:id/waiting-status', (req, res) => {
+    const meeting = store.get(req.params.id);
+    if (!meeting || meeting.status !== 'active' || meeting.attendanceFinalization) {
+      return res.json({ status: 'ended' });
+    }
+    const requesterId = (req.auth?.user?.employeeId || String(req.query.employeeId || '')).trim();
+    if (!requesterId) {
+      return res.status(400).json({ error: 'ID peserta diperlukan.' });
+    }
+    if (
+      requesterId === meeting.hostId
+      || (meeting.coHostIds || []).includes(requesterId)
+      || (meeting.admittedIds || []).includes(requesterId)
+    ) {
+      return res.json({ status: 'admitted' });
+    }
+    const entry = (meeting.waitingUsers || []).find(u => u.id === requesterId);
+    if (entry?.status === 'denied') return res.json({ status: 'denied' });
+    if (entry?.status === 'waiting') return res.json({ status: 'waiting' });
+    return res.json({ status: 'none' });
+  });
+
+  app.get('/api/meetings/:id/waiting-events', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.params.id);
+    const managerToken = typeof req.query.token === 'string' ? req.query.token : '';
+
+    if (managerToken) {
+      if (!meeting) return res.status(404).end();
+      let claims;
+      try { claims = await verifier.verify(managerToken); } catch { return res.status(401).end(); }
+      const isManager = claims.sub === meeting.hostId || (meeting.coHostIds || []).includes(claims.sub);
+      if (claims.video?.room !== meeting.livekitRoom || !isManager) return res.status(403).end();
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      let listeners = waitingHostStreams.get(meeting.id);
+      if (!listeners) {
+        listeners = new Set();
+        waitingHostStreams.set(meeting.id, listeners);
+      }
+      listeners.add(res);
+      sendSseEvent(res, 'waiting-room', {
+        waitingRoom: Boolean(meeting.waitingRoom),
+        waitingUsers: (meeting.waitingUsers || []).filter(u => u.status === 'waiting'),
+      });
+      const keepAlive = setInterval(() => res.write(': ping\n\n'), 20000);
+      req.on('close', () => {
+        clearInterval(keepAlive);
+        listeners.delete(res);
+        if (listeners.size === 0) waitingHostStreams.delete(meeting.id);
+      });
+      return;
+    }
+
+    const requesterId = (req.auth?.user?.employeeId || String(req.query.employeeId || '')).trim();
+    if (!requesterId) return res.status(400).end();
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    if (!meeting || meeting.status !== 'active' || meeting.attendanceFinalization) {
+      sendSseEvent(res, 'status', { status: 'ended' });
+      return res.end();
+    }
+    if (
+      requesterId === meeting.hostId
+      || (meeting.coHostIds || []).includes(requesterId)
+      || (meeting.admittedIds || []).includes(requesterId)
+    ) {
+      sendSseEvent(res, 'status', { status: 'admitted' });
+      return res.end();
+    }
+    const entry = (meeting.waitingUsers || []).find(u => u.id === requesterId);
+    if (entry?.status === 'denied') {
+      sendSseEvent(res, 'status', { status: 'denied' });
+      return res.end();
+    }
+
+    const key = `${meeting.id}:${requesterId}`;
+    let listeners = waitingUserStreams.get(key);
+    if (!listeners) {
+      listeners = new Set();
+      waitingUserStreams.set(key, listeners);
+    }
+    listeners.add(res);
+    sendSseEvent(res, 'status', { status: entry?.status === 'waiting' ? 'waiting' : 'none' });
+    const keepAlive = setInterval(() => res.write(': ping\n\n'), 20000);
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      listeners.delete(res);
+      if (listeners.size === 0) waitingUserStreams.delete(key);
+    });
+  }));
+
+  app.get('/api/meetings/:id/waiting-room', (req, res) => {
+    const meeting = store.get(req.meetingId);
+    const isManager = req.speakerId === meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
+    res.json({
+      waitingRoom: Boolean(meeting.waitingRoom),
+      waitingUsers: isManager ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting') : [],
+    });
+  });
+
+  app.post('/api/meetings/:id/waiting-room/:userId/admit', (req, res) => {
+    if (!writable(req, res)) return;
+    const meeting = store.get(req.meetingId);
+    const isManager = req.speakerId === meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
+    if (!isManager) return res.status(403).json({ error: 'Hanya host atau co-host yang dapat menyetujui peserta.' });
+    const targetId = String(req.params.userId || '').trim();
+    if (!targetId) return res.status(400).json({ error: 'ID peserta tidak valid.' });
+    store.transact(() => {
+      if (!Array.isArray(meeting.admittedIds)) meeting.admittedIds = [];
+      if (!meeting.admittedIds.includes(targetId)) meeting.admittedIds.push(targetId);
+      if (Array.isArray(meeting.waitingUsers)) {
+        const entry = meeting.waitingUsers.find(u => u.id === targetId);
+        if (entry) entry.status = 'admitted';
+      }
+    });
+    notifyWaitingUser(req.meetingId, targetId, { status: 'admitted' });
+    notifyWaitingHosts(req.meetingId);
+    res.json({
+      ok: true,
+      waitingUsers: (meeting.waitingUsers || []).filter(u => u.status === 'waiting'),
+    });
+  });
+
+  app.post('/api/meetings/:id/waiting-room/:userId/deny', (req, res) => {
+    if (!writable(req, res)) return;
+    const meeting = store.get(req.meetingId);
+    const isManager = req.speakerId === meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
+    if (!isManager) return res.status(403).json({ error: 'Hanya host atau co-host yang dapat menolak peserta.' });
+    const targetId = String(req.params.userId || '').trim();
+    if (!targetId) return res.status(400).json({ error: 'ID peserta tidak valid.' });
+    store.transact(() => {
+      if (Array.isArray(meeting.admittedIds)) {
+        meeting.admittedIds = meeting.admittedIds.filter(id => id !== targetId);
+      }
+      if (Array.isArray(meeting.waitingUsers)) {
+        const entry = meeting.waitingUsers.find(u => u.id === targetId);
+        if (entry) entry.status = 'denied';
+      }
+    });
+    notifyWaitingUser(req.meetingId, targetId, { status: 'denied' });
+    notifyWaitingHosts(req.meetingId);
+    res.json({
+      ok: true,
+      waitingUsers: (meeting.waitingUsers || []).filter(u => u.status === 'waiting'),
     });
   });
 

@@ -179,7 +179,8 @@ export function LobbyView({
   roomCode, setRoomCode, onRegenerateCode,
   isJoining, joinError, onJoin,
   mediaPreview, personas,
-  identityLocked = false, isGuest = false
+  identityLocked = false, isGuest = false,
+  waitingRoom = false, setWaitingRoom,
 }: {
   intent: 'create' | 'join'; onIntentChange: (intent: 'create' | 'join') => void;
   employeeId: string; setEmployeeId: (value: string) => void; employeeName: string; setEmployeeName: (value: string) => void;
@@ -187,6 +188,7 @@ export function LobbyView({
   roomCode?: string; setRoomCode?: (value: string) => void; onRegenerateCode?: () => void;
   isJoining: boolean; joinError: string | null; onJoin: () => void; mediaPreview: ReactNode;
   identityLocked?: boolean; isGuest?: boolean;
+  waitingRoom?: boolean; setWaitingRoom?: (value: boolean) => void;
   personas: {id: string; name: string; dept: string}[];
 }) {
   return <div className="lobby-page"><div className="lobby-page-heading"><span className="page-kicker">LET'S CONNECT</span><h1>{intent === 'create' ? 'Mulai percakapan baru.' : 'Tim kamu sudah menunggu.'}</h1><p>Siapkan identitas, periksa kamera dan mikrofon, lalu masuk ke ruang rapat.</p></div>
@@ -198,6 +200,31 @@ export function LobbyView({
           {intent === 'create' ? (
             <>
               <label className="form-field">Nama ruang rapat<input readOnly={isGuest} value={roomName} onChange={event => setRoomName(event.target.value)} placeholder="Contoh: koordinasi-jaringan" required /></label>
+              <div className="form-field room-access-field">
+                <span>Akses ruang rapat</span>
+                <div className="room-access-radios" role="radiogroup" aria-label="Akses ruang rapat">
+                  <label className={`room-access-radio ${waitingRoom ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="roomAccessMode"
+                      value="waiting"
+                      checked={waitingRoom}
+                      onChange={() => setWaitingRoom?.(true)}
+                    />
+                    <span>Waiting Room</span>
+                  </label>
+                  <label className={`room-access-radio ${!waitingRoom ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="roomAccessMode"
+                      value="free"
+                      checked={!waitingRoom}
+                      onChange={() => setWaitingRoom?.(false)}
+                    />
+                    <span>Free-to-join</span>
+                  </label>
+                </div>
+              </div>
               <div className="form-field room-code-field">
                 <label htmlFor="create-room-code">Kode Ruang Rapat (5 Digit Alfanumerik)</label>
                 <div className="room-code-display-wrap">

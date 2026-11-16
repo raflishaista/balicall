@@ -150,6 +150,9 @@ export class MeetingStore {
           // Host utama tidak berubah ketika peserta reconnect.
           hostId: participant.hostId || participant.employeeId,
           coHostIds: [],
+          waitingRoom: Boolean(participant.waitingRoom),
+          waitingUsers: [],
+          admittedIds: [],
 
           participants: new Map(),
           transcripts: [],
