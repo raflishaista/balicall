@@ -119,6 +119,8 @@ export function InCallView({ callDuration,
         saveBlocked={saveBlocked} onAddAudio={onAddAudio} onPresence={onPresence}
         roomName={roomName}
         roomCode={roomCode}
+        meetingId={meetingId}
+        token={token}
         employeeId={employeeId}
         employeeName={employeeName}
         transcripts={transcripts}
@@ -168,6 +170,8 @@ function RoomContent({
   onPresence,
   roomName,
   roomCode,
+  meetingId,
+  token,
   meetingRole,
   participantPanelRequest,
   meetingHostId,
@@ -341,6 +345,8 @@ function RoomContent({
         participants={participants}
         roomName={roomName}
         roomCode={roomCode}
+        meetingId={meetingId}
+        token={token}
         employeeId={employeeId}
         cameraTracks={cameraTracks}
         isCameraEnabled={isCameraEnabled}

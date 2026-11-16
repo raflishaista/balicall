@@ -234,6 +234,22 @@ export async function initDb(customUrl) {
       await client.query(`ALTER TABLE balicall_recording_uploads ADD COLUMN IF NOT EXISTS llm_model VARCHAR(64);`);
       await client.query(`ALTER TABLE balicall_recording_uploads ADD COLUMN IF NOT EXISTS stt_model VARCHAR(64);`);
       await client.query(`ALTER TABLE balicall_recording_uploads ADD COLUMN IF NOT EXISTS diarizer VARCHAR(16);`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS balicall_meeting_files (
+          id VARCHAR(64) PRIMARY KEY,
+          meeting_id VARCHAR(128) NOT NULL,
+          uploader_id VARCHAR(64),
+          uploader_name VARCHAR(128) NOT NULL,
+          original_filename VARCHAR(255) NOT NULL,
+          mime_type VARCHAR(128),
+          file_size BIGINT NOT NULL,
+          storage_path TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_balicall_meeting_files_meeting ON balicall_meeting_files(meeting_id, created_at ASC);
+      `);
       isConnected = true;
       console.log('[DB] ✅ Balicall database schema (employees, meetings, summaries, transcripts, attendees, schedules) verified successfully.');
       return true;
@@ -833,6 +849,74 @@ export async function updateSchedule(id, updates = {}) {
   return null;
 }
 
+export async function saveMeetingFile(file) {
+  const activePool = getPool();
+  if (!activePool || !isConnected) return null;
+  const { rows: [row] } = await activePool.query(
+    `INSERT INTO balicall_meeting_files (id, meeting_id, uploader_id, uploader_name, original_filename, mime_type, file_size, storage_path, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()))
+     RETURNING id, meeting_id, uploader_id, uploader_name, original_filename, mime_type, file_size, storage_path, created_at`,
+    [
+      file.id,
+      file.meetingId,
+      file.uploaderId || null,
+      file.uploaderName,
+      file.originalFilename,
+      file.mimeType || 'application/octet-stream',
+      Number(file.fileSize || 0),
+      file.storagePath,
+      file.createdAt || null,
+    ]
+  );
+  return row;
+}
+
+export async function listMeetingFiles(meetingId) {
+  const activePool = getPool();
+  if (!activePool || !isConnected) return [];
+  const { rows } = await activePool.query(
+    `SELECT id, meeting_id, uploader_id, uploader_name, original_filename, mime_type, file_size, created_at
+     FROM balicall_meeting_files
+     WHERE meeting_id = $1
+     ORDER BY created_at ASC`,
+    [meetingId]
+  );
+  return rows.map(row => ({
+    id: row.id,
+    meetingId: row.meeting_id,
+    uploaderId: row.uploader_id,
+    uploaderName: row.uploader_name,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type || 'application/octet-stream',
+    fileSize: Number(row.file_size || 0),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  }));
+}
+
+export async function getMeetingFile(meetingId, fileId) {
+  const activePool = getPool();
+  if (!activePool || !isConnected) return null;
+  const { rows: [row] } = await activePool.query(
+    `SELECT id, meeting_id, uploader_id, uploader_name, original_filename, mime_type, file_size, storage_path, created_at
+     FROM balicall_meeting_files
+     WHERE meeting_id = $1 AND id = $2
+     LIMIT 1`,
+    [meetingId, fileId]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    meetingId: row.meeting_id,
+    uploaderId: row.uploader_id,
+    uploaderName: row.uploader_name,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type || 'application/octet-stream',
+    fileSize: Number(row.file_size || 0),
+    storagePath: row.storage_path,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  };
+}
+
 export { pool };
 
 export default {
@@ -855,4 +939,7 @@ export default {
   getUpcomingSchedules,
   cancelSchedule,
   updateSchedule,
+  saveMeetingFile,
+  listMeetingFiles,
+  getMeetingFile,
 };

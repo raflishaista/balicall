@@ -16,10 +16,13 @@ import {
   AudioLines,
   Check,
   ChevronDown,
+  Download,
+  FileText,
   MessageSquare,
   MessageSquareText,
   Loader2,
   Mic,
+  Paperclip,
   Send,
   Users,
   VideoOff,
@@ -49,6 +52,14 @@ import type { ScreenShareResolution } from './preferences';
 import { usePresentationView } from './usePresentationView';
 import { usePresentationFullscreen } from './usePresentationFullscreen';
 import { usePresentationEscape } from './usePresentationEscape';
+import {
+  downloadMeetingFile,
+  fetchMeetingFiles,
+  formatFileSize,
+  MEETING_FILE_TOPIC,
+  uploadMeetingFile,
+  type MeetingFile,
+} from './meetingFiles';
 
 interface Transcript {
   id: string;
@@ -81,6 +92,8 @@ interface MeetingRoomProps {
   backgroundControl?: BackgroundBlurControl;
 
   participants: Participant[];
+  meetingId?: string;
+  token?: string;
   roomName: string;
   roomCode?: string;
   employeeId: string;
@@ -262,8 +275,80 @@ export function MeetingRoom({
   pendingSpeakRequests,
   microphoneRestricted,
   onManageParticipant,
+  meetingId,
+  token,
 }: MeetingRoomProps) {
   const room = useRoomContext();
+  const [meetingFiles, setMeetingFiles] = useState<MeetingFile[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!meetingId || !token) return;
+    let active = true;
+    fetchMeetingFiles(meetingId, token)
+      .then(files => {
+        if (active) setMeetingFiles(files);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [meetingId, token]);
+
+  useEffect(() => {
+    if (!room) return;
+    const handleData = (payload: Uint8Array, _participant?: Participant, _kind?: unknown, topic?: string) => {
+      if (topic !== MEETING_FILE_TOPIC) return;
+      try {
+        const parsed = JSON.parse(new TextDecoder().decode(payload)) as { file?: MeetingFile };
+        const incoming = parsed?.file;
+        if (!incoming?.id) return;
+        setMeetingFiles(prev => (prev.some(item => item.id === incoming.id) ? prev : [...prev, incoming]));
+      } catch {
+        /* ignore malformed file broadcast */
+      }
+    };
+    room.on(RoomEvent.DataReceived, handleData);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleData);
+    };
+  }, [room]);
+
+  const handleChatFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = '';
+    if (!selectedFile || !meetingId || !token || uploadingFile) return;
+    setUploadingFile(true);
+    setFileError(null);
+    try {
+      const uploaded = await uploadMeetingFile(meetingId, token, selectedFile);
+      setMeetingFiles(prev => (prev.some(item => item.id === uploaded.id) ? prev : [...prev, uploaded]));
+      if (room?.localParticipant?.publishData) {
+        const encoded = new TextEncoder().encode(JSON.stringify({ file: uploaded }));
+        room.localParticipant.publishData(encoded, { reliable: true, topic: MEETING_FILE_TOPIC }).catch(() => {});
+      }
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : 'Gagal mengirim file.');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleDownloadChatFile = async (file: MeetingFile) => {
+    if (!meetingId || downloadingFileId) return;
+    setDownloadingFileId(file.id);
+    setFileError(null);
+    try {
+      await downloadMeetingFile(meetingId, file.id, file.originalFilename, token);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : 'Gagal mengunduh file.');
+    } finally {
+      setDownloadingFileId(null);
+    }
+  };
 
   const subscribeRecording = useCallback(
     (notify: () => void) => {
@@ -971,8 +1056,59 @@ export function MeetingRoom({
             aria-relevant="additions"
             tabIndex={0}
           >
-            {transcripts.length ? (
-              transcripts.flatMap(entry => {
+            {transcripts.length || meetingFiles.length ? (
+              [
+                ...transcripts.map(entry => ({ kind: 'transcript' as const, sortAt: Date.parse(entry.timestamp) || 0, entry })),
+                ...meetingFiles.map(file => ({ kind: 'file' as const, sortAt: Date.parse(file.createdAt) || 0, file })),
+              ]
+                .sort((a, b) => a.sortAt - b.sortAt)
+                .flatMap(timelineItem => {
+                  if (timelineItem.kind === 'file') {
+                    const file = timelineItem.file;
+                    const isLocal = file.uploaderId === employeeId;
+                    const timeLabel = new Date(file.createdAt).toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    return [
+                      <article className={`live-transcript-entry chat-message-item chat-file-item ${isLocal ? 'is-local' : ''}`} key={`file-${file.id}`}>
+                        <span className={isLocal ? 'transcript-avatar local' : 'transcript-avatar'}>
+                          {initials(file.uploaderName)}
+                        </span>
+                        <div className="chat-message-bubble">
+                          <div className="chat-message-meta">
+                            <strong className="transcript-username">
+                              {file.uploaderName}
+                              {isLocal && <em className="chat-self-tag">Anda</em>}
+                            </strong>
+                            <div className="chat-meta-right">
+                              <span className="transcript-phase final">File</span>
+                              <time>{timeLabel}</time>
+                            </div>
+                          </div>
+                          <div className="chat-file-card">
+                            <FileText size={18} className="chat-file-icon" aria-hidden="true" />
+                            <div className="chat-file-info">
+                              <strong title={file.originalFilename}>{file.originalFilename}</strong>
+                              <small>{formatFileSize(file.fileSize)}</small>
+                            </div>
+                            <button
+                              type="button"
+                              className="chat-file-download"
+                              onClick={() => void handleDownloadChatFile(file)}
+                              disabled={downloadingFileId === file.id}
+                              aria-label={`Unduh ${file.originalFilename}`}
+                              title={`Unduh ${file.originalFilename}`}
+                            >
+                              {downloadingFileId === file.id ? <Loader2 size={14} className="ui-spinner" /> : <Download size={14} />}
+                              <span>Unduh</span>
+                            </button>
+                          </div>
+                        </div>
+                      </article>,
+                    ];
+                  }
+                  const entry = timelineItem.entry;
                 const isLocal = entry.speakerId === employeeId;
                 const timeLabel = new Date(entry.timestamp).toLocaleTimeString('id-ID', {
                   hour: '2-digit',
@@ -1046,7 +1182,7 @@ export function MeetingRoom({
                     </div>
                   </article>,
                 ];
-              })
+                })
             ) : (
               <div className="transcript-empty">
                 <span><MessageSquareText size={31} /></span>
@@ -1091,6 +1227,9 @@ export function MeetingRoom({
           </div>
 
           <div className="meeting-chat-bar">
+            {fileError && (
+              <p className="meeting-chat-file-error" role="alert">{fileError}</p>
+            )}
             <form
               className="meeting-chat-form"
               onSubmit={event => {
@@ -1110,6 +1249,12 @@ export function MeetingRoom({
                 }
               }}
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                hidden
+                onChange={event => void handleChatFileSelected(event)}
+              />
               <div className="meeting-chat-input-wrap">
                 <MessageSquare size={15} className="meeting-chat-input-icon" aria-hidden="true" />
                 <input
@@ -1120,6 +1265,16 @@ export function MeetingRoom({
                   placeholder="Ketik pesan chat ke ruang rapat…"
                 />
               </div>
+              <button
+                type="button"
+                className="meeting-chat-file-button"
+                aria-label="Kirim file"
+                title="Kirim file (maks. 10 MB)"
+                disabled={busy || saveBlocked || uploadingFile || !meetingId || !token}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploadingFile ? <Loader2 size={15} className="ui-spinner" /> : <Paperclip size={15} />}
+              </button>
               <button
                 type="submit"
                 aria-label="Kirim pesan"

@@ -43,7 +43,8 @@ import { usePreJoinMedia } from './usePreJoinMedia';
 import { usePageFocus } from './usePageFocus';
 import type { JoinMediaChoices } from './usePreJoinMedia';
 import { PreJoinPreview } from './PreJoinPreview';
-import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, ChevronLeft, Home, Sparkles, Video, CalendarX, Info } from 'lucide-react';
+import { LogOut, Copy, Check, ArrowRight, Clock, AlertCircle, Loader2, Search, ChevronLeft, Home, Sparkles, Video, CalendarX, Info, Download, FileText } from 'lucide-react';
+import { downloadMeetingFile, fetchMeetingFiles, formatFileSize, type MeetingFile } from './meetingFiles';
 
 type MeetingRole = 'host' | 'co-host' | 'participant';
 
@@ -1828,7 +1829,7 @@ function SummaryView({
   onBatchDiarize?: () => void;
   hasRecording?: boolean;
 }) {
-  const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript'>('summary');
+  const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript' | 'files'>('summary');
   const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
@@ -1836,6 +1837,25 @@ function SummaryView({
   const [hasRec, setHasRec] = useState<boolean>(Boolean(hasRecording));
   const [downloadingRecording, setDownloadingRecording] = useState(false);
   const [recordingDownloadError, setRecordingDownloadError] = useState<string | null>(null);
+  const [meetingFiles, setMeetingFiles] = useState<MeetingFile[]>([]);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [fileDownloadError, setFileDownloadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!meetingId) {
+      setMeetingFiles([]);
+      return;
+    }
+    let active = true;
+    fetchMeetingFiles(meetingId, token)
+      .then(files => {
+        if (active) setMeetingFiles(files);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [meetingId, token]);
 
   useEffect(() => {
     if (hasRecording) {
@@ -2160,6 +2180,7 @@ function SummaryView({
     { id: 'decisions', label: `Keputusan (${summary.decisions?.length || 0})` },
     { id: 'actions', label: `Tindak lanjut (${summary.actionItems?.length || 0})` },
     { id: 'transcript', label: `Transkrip (${transcripts.length})` },
+    { id: 'files', label: `Files (${meetingFiles.length})` },
   ] as const;
 
   return (
@@ -2302,6 +2323,54 @@ function SummaryView({
               </article>
             ]
           ))}</div> : <p className="empty-transcript">{transcripts.length ? 'Tidak ada ucapan yang cocok dengan pencarian.' : 'Belum ada transkrip untuk rapat ini.'}</p>}
+        </section></div>}
+
+        {tab === 'files' && <div className="summary-panel"><section className="summary-section">
+          <div className="transcript-heading"><div><h2>File rapat</h2><p>{meetingFiles.length} berkas dibagikan di chat rapat</p></div></div>
+          {fileDownloadError && (
+            <div className="summary-note" role="alert">
+              <AlertCircle size={16} />
+              {fileDownloadError}
+            </div>
+          )}
+          {meetingFiles.length ? (
+            <div className="summary-files-list">
+              {meetingFiles.map(file => (
+                <article className="summary-file-row" key={file.id}>
+                  <div className="summary-file-main">
+                    <FileText size={20} className="summary-file-icon" aria-hidden="true" />
+                    <div className="summary-file-meta">
+                      <strong>{file.originalFilename}</strong>
+                      <small>
+                        Dikirim oleh {file.uploaderName} · {formatFileSize(file.fileSize)} · {new Date(file.createdAt).toLocaleString('id-ID')}
+                      </small>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={downloadingFileId === file.id}
+                    onClick={async () => {
+                      setDownloadingFileId(file.id);
+                      setFileDownloadError(null);
+                      try {
+                        await downloadMeetingFile(meetingId, file.id, file.originalFilename, token);
+                      } catch (err) {
+                        setFileDownloadError(err instanceof Error ? err.message : 'Gagal mengunduh file.');
+                      } finally {
+                        setDownloadingFileId(null);
+                      }
+                    }}
+                  >
+                    {downloadingFileId === file.id ? <Loader2 size={15} className="ui-spinner" /> : <Download size={15} />}
+                    <span>{downloadingFileId === file.id ? 'Mengunduh…' : 'Unduh'}</span>
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-transcript">Belum ada file yang dibagikan pada rapat ini.</p>
+          )}
         </section></div>}
         </div>
       </section>

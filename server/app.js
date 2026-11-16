@@ -4,9 +4,11 @@ import express from 'express';
 import { attachAuth, isOriginAllowed } from './auth.js';
 import { attachAdminApi } from './adminApi.js';
 import cors from 'cors';
+import multer from 'multer';
 import PDFDocument from 'pdfkit';
 import { existsSync, statSync, realpathSync } from 'node:fs';
-import { join, basename, relative, isAbsolute } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { join, basename, dirname, extname, relative, isAbsolute } from 'node:path';
 import { randomUUID, randomBytes, createHmac, createHash } from 'node:crypto';
 import { AccessToken, TokenVerifier, RoomServiceClient, WebhookReceiver, EgressClient } from 'livekit-server-sdk';
 import { MeetingStore } from './meetingStore.js';
@@ -40,6 +42,9 @@ import {
   getUpcomingSchedules,
   cancelSchedule,
   updateSchedule,
+  saveMeetingFile,
+  listMeetingFiles,
+  getMeetingFile,
 } from './db.js';
 import {
   createProjectFromSummary,
@@ -1502,7 +1507,13 @@ async function syncActionItemsToItProject(
 
   // Meeting authorization middleware
   app.use('/api/meetings/:id', asyncRoute(async (req, res, next) => {
-    if (['db-summaries', 'db-details'].includes(req.params.id) || req.path === '/recording' || req.path === '/recording/download' || req.path.startsWith('/export')) return next();
+    if (
+      ['db-summaries', 'db-details'].includes(req.params.id)
+      || req.path === '/recording'
+      || req.path === '/recording/download'
+      || req.path.startsWith('/export')
+      || (req.method === 'GET' && (req.path === '/files' || /^\/files\/[^/]+\/download$/.test(req.path)))
+    ) return next();
     const meeting = store.get(req.params.id);
     if (!meeting) return res.status(404).json({ error: 'Meeting session not found' });
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -2212,6 +2223,104 @@ async function syncActionItemsToItProject(
       if (err && !res.headersSent) {
         console.warn('[RECORDING] Download error:', err.message);
         res.status(500).json({ error: 'Gagal mengunduh berkas rekaman.' });
+      }
+    });
+  }));
+
+  const meetingFilesDir = config.meetingFilesDir || join(dirname(config.recordingUploadDir), 'meeting-files');
+  const meetingFileUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => mkdir(meetingFilesDir, { recursive: true })
+        .then(() => cb(null, meetingFilesDir), cb),
+      filename: (_req, file, cb) => {
+        const safeExt = extname(basename(file.originalname || '')).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 16);
+        cb(null, `${randomUUID()}${safeExt}`);
+      },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 5 },
+  });
+
+  const receiveMeetingFile = (req, res, next) => meetingFileUpload.single('file')(req, res, error => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError) {
+      const tooLarge = error.code === 'LIMIT_FILE_SIZE';
+      error.status = tooLarge ? 413 : 400;
+      error.message = tooLarge ? 'Ukuran file melebihi batas 10 MB.' : 'Upload file tidak valid.';
+    }
+    next(error);
+  });
+
+  async function authorizeMeetingFileRead(req, res) {
+    if (!config.authEnabled) return true;
+    if (req.auth?.user && !req.auth.user.isGuest) return true;
+    const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const meeting = store.get(req.params.id);
+    if (!token || !meeting) {
+      res.status(401).json({ error: 'Autentikasi diperlukan untuk mengakses file rapat.' });
+      return false;
+    }
+    try {
+      const claims = await verifier.verify(token);
+      if (claims.video?.room !== meeting.livekitRoom || !claims.video?.roomJoin || !meeting.participants.has(claims.sub)) {
+        res.status(403).json({ error: 'Tidak memiliki akses ke file rapat ini.' });
+        return false;
+      }
+      return true;
+    } catch {
+      res.status(401).json({ error: 'Token rapat tidak valid atau kedaluwarsa.' });
+      return false;
+    }
+  }
+
+  app.get('/api/meetings/:id/files', asyncRoute(async (req, res) => {
+    if (!(await authorizeMeetingFileRead(req, res))) return;
+    const meeting = store.get(req.params.id);
+    const dbFiles = await listMeetingFiles(req.params.id);
+    const memoryFiles = (meeting?.files || []).map(({ storagePath: _s, ...pub }) => pub);
+    const byId = new Map();
+    for (const file of [...dbFiles, ...memoryFiles]) byId.set(file.id, file);
+    const files = [...byId.values()].sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''));
+    res.json({ files });
+  }));
+
+  app.post('/api/meetings/:id/files', receiveMeetingFile, asyncRoute(async (req, res) => {
+    if (!writable(req, res)) return;
+    if (!req.file) return res.status(400).json({ error: 'Pilih file untuk dikirim.' });
+    const meeting = store.get(req.meetingId);
+    const participant = meeting.participants.get(req.speakerId);
+    const uploaderName = participant?.employeeName || req.auth?.user?.name || req.speakerId;
+    const rawName = basename(req.file.originalname || 'file').trim() || 'file';
+    const fileRecord = {
+      id: randomUUID(),
+      meetingId: req.meetingId,
+      uploaderId: req.speakerId,
+      uploaderName,
+      originalFilename: rawName.slice(0, 255),
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      fileSize: req.file.size,
+      storagePath: req.file.path,
+      createdAt: new Date().toISOString(),
+    };
+    if (!Array.isArray(meeting.files)) meeting.files = [];
+    meeting.files.push(fileRecord);
+    await saveMeetingFile(fileRecord);
+    const { storagePath: _s, ...publicFile } = fileRecord;
+    res.status(201).json({ file: publicFile });
+  }));
+
+  app.get('/api/meetings/:id/files/:fileId/download', asyncRoute(async (req, res) => {
+    if (!(await authorizeMeetingFileRead(req, res))) return;
+    const meeting = store.get(req.params.id);
+    const fromDb = await getMeetingFile(req.params.id, req.params.fileId);
+    const fromMemory = (meeting?.files || []).find(f => f.id === req.params.fileId) || null;
+    const file = fromDb || fromMemory;
+    if (!file || !file.storagePath || !existsSync(file.storagePath)) {
+      return res.status(404).json({ error: 'Berkas tidak ditemukan.' });
+    }
+    res.download(file.storagePath, file.originalFilename, (err) => {
+      if (err && !res.headersSent) {
+        console.warn('[MEETING_FILE] Download error:', err.message);
+        res.status(500).json({ error: 'Gagal mengunduh berkas.' });
       }
     });
   }));
