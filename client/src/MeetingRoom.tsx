@@ -34,7 +34,9 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   Info,
+  X,
 } from 'lucide-react';
+import { API_BASE, apiRequest } from './api';
 import { StartAudio, useRoomContext } from '@livekit/components-react';
 import { BackgroundSettingsDialog } from './BackgroundSettingsDialog';
 import { LeaveConfirmDialog } from './LeaveConfirmDialog';
@@ -284,6 +286,96 @@ export function MeetingRoom({
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [waitingRoomEnabled, setWaitingRoomEnabled] = useState(false);
+  const [waitingUsers, setWaitingUsers] = useState<{ id: string; name: string; department?: string; isGuest?: boolean; requestedAt: string }[]>([]);
+  const [waitingPopups, setWaitingPopups] = useState<{ id: string; name: string }[]>([]);
+  const [waitingBusyId, setWaitingBusyId] = useState<string | null>(null);
+  const seenWaitingIdsRef = useRef<Set<string>>(new Set());
+
+  const isManager = meetingRole === 'host' || meetingRole === 'co-host';
+
+  useEffect(() => {
+    if (!isManager || !meetingId || !token) return;
+    let active = true;
+    const applyWaitingPayload = (res: {
+      waitingRoom?: boolean;
+      waitingUsers?: { id: string; name: string; department?: string; isGuest?: boolean; requestedAt: string }[];
+    }) => {
+      if (!active) return;
+      setWaitingRoomEnabled(Boolean(res.waitingRoom));
+      const list = Array.isArray(res.waitingUsers) ? res.waitingUsers : [];
+      setWaitingUsers(list);
+      const newEntries = list.filter(u => !seenWaitingIdsRef.current.has(u.id));
+      if (newEntries.length) {
+        for (const entry of newEntries) seenWaitingIdsRef.current.add(entry.id);
+        setWaitingPopups(prev => [
+          ...prev,
+          ...newEntries.filter(entry => !prev.some(p => p.id === entry.id)).map(entry => ({ id: entry.id, name: entry.name })),
+        ]);
+      }
+      const activeIds = new Set(list.map(u => u.id));
+      for (const id of [...seenWaitingIdsRef.current]) {
+        if (!activeIds.has(id)) seenWaitingIdsRef.current.delete(id);
+      }
+      setWaitingPopups(prev => prev.filter(p => activeIds.has(p.id)));
+    };
+    const pollWaiting = async () => {
+      try {
+        const res = await apiRequest<{
+          waitingRoom: boolean;
+          waitingUsers: { id: string; name: string; department?: string; isGuest?: boolean; requestedAt: string }[];
+        }>(`/meetings/${encodeURIComponent(meetingId)}/waiting-room`, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        applyWaitingPayload(res);
+      } catch {
+        /* ignore transient waiting-room poll errors */
+      }
+    };
+    let source: EventSource | null = null;
+    if (typeof EventSource !== 'undefined') {
+      source = new EventSource(
+        `${API_BASE}/meetings/${encodeURIComponent(meetingId)}/waiting-events?token=${encodeURIComponent(token)}`,
+        { withCredentials: true }
+      );
+      source.addEventListener('waiting-room', event => {
+        try {
+          applyWaitingPayload(JSON.parse((event as MessageEvent).data));
+        } catch {
+          /* ignore malformed event */
+        }
+      });
+    }
+    void pollWaiting();
+    const timer = setInterval(() => void pollWaiting(), 8000);
+    return () => {
+      active = false;
+      source?.close();
+      clearInterval(timer);
+    };
+  }, [isManager, meetingId, token]);
+
+  const handleWaitingAction = async (userId: string, action: 'admit' | 'deny') => {
+    if (!meetingId || !token || waitingBusyId) return;
+    setWaitingBusyId(userId);
+    try {
+      const res = await apiRequest<{
+        ok: boolean;
+        waitingUsers: { id: string; name: string; department?: string; isGuest?: boolean; requestedAt: string }[];
+      }>(`/meetings/${encodeURIComponent(meetingId)}/waiting-room/${encodeURIComponent(userId)}/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setWaitingUsers(Array.isArray(res.waitingUsers) ? res.waitingUsers : []);
+      setWaitingPopups(prev => prev.filter(p => p.id !== userId));
+      seenWaitingIdsRef.current.delete(userId);
+    } catch {
+      /* ignore */
+    } finally {
+      setWaitingBusyId(null);
+    }
+  };
 
   useEffect(() => {
     if (!meetingId || !token) return;
@@ -602,6 +694,37 @@ export function MeetingRoom({
       }}
     >
       <section className={`call-stage ${screenTracks.length ? 'has-screen-share' : ''}`}>
+        {isManager && waitingPopups.length > 0 && (
+          <div className="waiting-room-popups" role="region" aria-label="Notifikasi waiting room">
+            {waitingPopups.map(popup => (
+              <div className="waiting-room-popup" key={popup.id} role="alert">
+                <span><strong>{popup.name}</strong> is in the waiting room.</span>
+                <div className="waiting-room-popup-actions">
+                  <button
+                    type="button"
+                    className="waiting-btn admit"
+                    disabled={waitingBusyId === popup.id}
+                    aria-label={`Terima ${popup.name}`}
+                    title="Terima"
+                    onClick={() => void handleWaitingAction(popup.id, 'admit')}
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="waiting-btn deny"
+                    disabled={waitingBusyId === popup.id}
+                    aria-label={`Tolak ${popup.name}`}
+                    title="Tolak"
+                    onClick={() => void handleWaitingAction(popup.id, 'deny')}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="call-info-bar">
           <div>
             <span className="room-label">#{roomName}</span>
@@ -898,7 +1021,7 @@ export function MeetingRoom({
             onClick={() => setActiveTab('attendance')}
           >
             <Users size={17} />
-            Peserta <span>{participants.length}</span>
+            Peserta <span>{participants.length}{waitingUsers.length > 0 ? ` +${waitingUsers.length}` : ''}</span>
           </button>
         </div>
 
@@ -1289,13 +1412,14 @@ export function MeetingRoom({
         </div>
 
         <div
-          className="call-tab-panel attendance-list"
+          className={`call-tab-panel attendance-list ${isManager && (waitingRoomEnabled || waitingUsers.length > 0) ? 'has-waiting-room' : ''}`}
           role="tabpanel"
           id={`${tabId}-attendance-panel`}
           aria-labelledby={`${tabId}-attendance-tab`}
           hidden={activeTab !== 'attendance'}
           tabIndex={0}
         >
+          <div className="attendance-in-room">
           <h3>
             Di ruang rapat <span>{participants.length}</span>
           </h3>
@@ -1390,6 +1514,51 @@ export function MeetingRoom({
               </div>
             );
           })}
+          </div>
+          {isManager && (waitingRoomEnabled || waitingUsers.length > 0) && (
+            <div className="attendance-waiting-room" aria-label="Daftar Waiting Room">
+              <h3>
+                Waiting Room <span>{waitingUsers.length}</span>
+              </h3>
+              {waitingUsers.length === 0 ? (
+                <p className="waiting-room-empty">Tidak ada peserta yang menunggu.</p>
+              ) : (
+                waitingUsers.map(user => (
+                  <div className="waiting-room-entry" key={user.id}>
+                    <span className="transcript-avatar">
+                      {initials(user.name)}
+                    </span>
+                    <div className="waiting-room-entry-info">
+                      <strong>{user.name}</strong>
+                      <small>{user.isGuest ? 'Tamu' : (user.department || user.id)}</small>
+                    </div>
+                    <div className="waiting-room-entry-actions">
+                      <button
+                        type="button"
+                        className="waiting-btn admit"
+                        disabled={waitingBusyId === user.id}
+                        aria-label={`Terima ${user.name}`}
+                        title="Terima"
+                        onClick={() => void handleWaitingAction(user.id, 'admit')}
+                      >
+                        <Check size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="waiting-btn deny"
+                        disabled={waitingBusyId === user.id}
+                        aria-label={`Tolak ${user.name}`}
+                        title="Tolak"
+                        onClick={() => void handleWaitingAction(user.id, 'deny')}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </MeetingPanel>
 

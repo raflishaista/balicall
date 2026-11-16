@@ -185,9 +185,15 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
     const token=employee?employeeToken:guestToken,user=employee||guest;
     if(!user)return res.status(401).json({error:'Silakan masuk untuk melanjutkan.',code:'AUTH_REQUIRED'});
     if(guest) {
-      const endpoint=req.path.match(/^\/meetings\/([^/]+)\/(transcript|presence|leave|audio|live-session)$/);
-      const allowed=(req.method==='POST'&&req.path==='/token')||(endpoint&&endpoint[1]===guest.guestMeetingId&&
-        (req.method==='POST'||(req.method==='GET'&&endpoint[2]==='transcript')));
+      const endpoint=req.path.match(/^\/meetings\/([^/]+)\/(transcript|presence|leave|audio|live-session|waiting-status|waiting-events|files)$/);
+      const fileDownload=req.path.match(/^\/meetings\/([^/]+)\/files\/[^/]+\/download$/);
+      const targetMeetingId=endpoint?.[1]||fileDownload?.[1];
+      const allowed=(req.method==='POST'&&req.path==='/token')||(targetMeetingId===guest.guestMeetingId&&(
+        fileDownload?req.method==='GET':(
+          req.method==='POST'&&(endpoint[2]!=='waiting-status'&&endpoint[2]!=='waiting-events')
+          ||(req.method==='GET'&&['transcript','waiting-status','waiting-events','files'].includes(endpoint[2]))
+        )
+      ));
       if(!allowed)return res.status(403).json({error:'Akses tamu hanya untuk rapat yang diundang.'});
     }
     if(!['GET','HEAD','OPTIONS'].includes(req.method)&&(!originAllowed(req)||!csrfValid(req,token)))return res.status(403).json({error:'Permintaan tidak valid. Muat ulang halaman.',code:'CSRF_INVALID'});
