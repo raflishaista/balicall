@@ -1891,11 +1891,20 @@ async function syncActionItemsToItProject(
   app.delete(
     '/api/meetings/:id/participants/:participantId',
     asyncRoute(async (req, res) => {
-      const access = requireMeetingManager(req, res);
-      if (!access) return;
+      const meeting = store.get(req.meetingId);
+      if (!meeting || meeting.status !== 'active') {
+        return res.status(404).json({ error: 'Rapat tidak ditemukan atau sudah berakhir.' });
+      }
+      const isSuperAdmin = Boolean(req.auth?.user?.isSuperAdmin);
+      const isHost = meeting.hostId === req.speakerId;
+      if (!isSuperAdmin && !isHost) {
+        return res.status(403).json({
+          error: 'Hanya host atau Super Admin yang dapat mengeluarkan peserta.',
+        });
+      }
 
       const targetId = req.params.participantId;
-      const target = access.meeting.participants.get(targetId);
+      const target = meeting.participants.get(targetId);
 
       if (!target || target.leftAt) {
         return res.status(404).json({
@@ -1910,19 +1919,38 @@ async function syncActionItemsToItProject(
       }
 
       if (
-        access.role === 'co-host' &&
-        (targetId === access.meeting.hostId ||
-          (access.meeting.coHostIds || []).includes(targetId))
+        !isSuperAdmin &&
+        (targetId === meeting.hostId ||
+          (meeting.coHostIds || []).includes(targetId))
       ) {
         return res.status(403).json({
-          error: 'Co-host hanya dapat mengeluarkan peserta biasa.',
+          error: 'Host hanya dapat mengeluarkan peserta biasa.',
         });
       }
 
-      await roomService.removeParticipant(
-        access.meeting.livekitRoom,
-        targetId
-      );
+      try {
+        await roomService.removeParticipant(
+          meeting.livekitRoom,
+          targetId
+        );
+      } catch (err) {
+        const msg = String(err?.message || '');
+        const code = String(err?.code || '');
+        if (!/participant does not exist|room does not exist|not_found|404/i.test(msg + ' ' + code)) {
+          throw err;
+        }
+      }
+
+      store.transact(() => {
+        const current = meeting.participants.get(targetId);
+        if (current) {
+          const nowIso = new Date().toISOString();
+          current.leftAt = nowIso;
+          current.kickedAt = nowIso;
+          current.connected = false;
+          if (current.isGuest) delete current.guestSessionHash;
+        }
+      });
 
       res.json({ success: true, removed: targetId });
     })
@@ -2013,6 +2041,7 @@ async function syncActionItemsToItProject(
       roomName: meeting.roomName,
       roomCode: meeting.roomCode,
       status: meeting.status,
+      kicked: Boolean(currentParticipant?.kickedAt),
       isSummarizing: inFlightSummarize.has(meeting.id),
       hostId: meeting.hostId,
       coHostIds: meeting.coHostIds || [],

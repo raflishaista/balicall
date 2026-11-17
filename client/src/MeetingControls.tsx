@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Circle, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
+import { AudioLines, Circle, Hand, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, handRaised = false, onToggleRaiseHand }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
+  handRaised?: boolean; onToggleRaiseHand?: () => void;
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   microphoneRestricted: boolean; speakRequestPending: boolean; onRequestToSpeak: () => Promise<void>;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
@@ -96,6 +97,19 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
       <button type="button" className={`call-control ${isScreenShareEnabled ? 'control-active' : ''}`} aria-label={isScreenShareEnabled ? 'Hentikan berbagi layar' : 'Bagikan layar'} aria-pressed={isScreenShareEnabled} aria-busy={screenSharePending} disabled={busy || screenSharePending || !connected || (!screenShareSupported && !isScreenShareEnabled)} onClick={() => void onToggleScreenShare()}>
         {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
       </button>
+      {onToggleRaiseHand && (
+        <button
+          type="button"
+          className={`call-control ${handRaised ? 'control-active control-hand-raised' : ''}`}
+          aria-label={handRaised ? 'Turunkan tangan' : 'Angkat tangan'}
+          aria-pressed={handRaised}
+          disabled={busy || !connected}
+          onClick={onToggleRaiseHand}
+        >
+          <Hand size={22} />
+          <span>{handRaised ? 'Turunkan' : 'Angkat tangan'}</span>
+        </button>
+      )}
       <button type="button" className="call-control" aria-label="Peserta" onClick={onParticipants}><Users size={22} /><span>Peserta</span></button>
       <button id="toggle-meeting-transcript" type="button" className={`call-control ${transcriptOpen ? 'control-active' : ''}`} aria-label="Chat/Transkrip" aria-pressed={transcriptOpen} onClick={onTranscript}><MessageSquareText size={22} /><span>Chat/Transkrip</span></button>
       <div className="meeting-more" ref={more}

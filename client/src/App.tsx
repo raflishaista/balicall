@@ -250,6 +250,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
         if (cancelled) return;
 
+        if ((data as { kicked?: boolean }).kicked) {
+          handleKickedFromMeeting();
+          return;
+        }
+
         if (data.status === 'ended' && !endingMeeting.current) {
           void handleEndMeetingRef.current?.(true);
           return;
@@ -1374,6 +1379,14 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }).then(result => ({ ...result, meetingId })));
   };
 
+  const handleKickedFromMeeting = useCallback(() => {
+    setToken(null);
+    setMeetingId(null);
+    if (typeof saveCallSession === 'function') saveCallSession(null);
+    navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
+    window.dispatchEvent(new CustomEvent('balicall:kicked'));
+  }, [isGuest]);
+
   const manageParticipant = async (
     participantId: string,
     action: 'promote' | 'demote' | 'transfer-host' | 'mute' | 'remove' | 'approve-speak'
@@ -1841,6 +1854,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             meetingHostId={meetingHostId}
             meetingCoHostIds={meetingCoHostIds}
             onManageParticipant={manageParticipant}
+            onKicked={handleKickedFromMeeting}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
@@ -1871,6 +1885,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             roomCode={roomCode}
             employeeId={employeeId}
             employeeName={employeeName}
+            isSuperAdmin={Boolean(authUser?.isSuperAdmin)}
             transcripts={transcripts}
             activeTab={activeTab}
             setActiveTab={setActiveTab}

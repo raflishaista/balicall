@@ -27,6 +27,8 @@ import {
   Users,
   VideoOff,
   Grid2X2,
+  Hand,
+  MoreVertical,
   UserRound,
   ChevronLeft,
   ChevronRight,
@@ -96,6 +98,8 @@ interface MeetingRoomProps {
   participants: Participant[];
   meetingId?: string;
   token?: string;
+  isSuperAdmin?: boolean;
+  onKicked?: () => void;
   roomName: string;
   roomCode?: string;
   employeeId: string;
@@ -279,6 +283,8 @@ export function MeetingRoom({
   onManageParticipant,
   meetingId,
   token,
+  isSuperAdmin = false,
+  onKicked,
 }: MeetingRoomProps) {
   const room = useRoomContext();
   const [meetingFiles, setMeetingFiles] = useState<MeetingFile[]>([]);
@@ -291,6 +297,141 @@ export function MeetingRoom({
   const [waitingPopups, setWaitingPopups] = useState<{ id: string; name: string }[]>([]);
   const [waitingBusyId, setWaitingBusyId] = useState<string | null>(null);
   const seenWaitingIdsRef = useRef<Set<string>>(new Set());
+  const [raisedHands, setRaisedHands] = useState<Record<string, number>>({});
+  const [raiseHandNotices, setRaiseHandNotices] = useState<{ id: string; text: string; timestamp: string }[]>([]);
+  const [openParticipantMenuId, setOpenParticipantMenuId] = useState<string | null>(null);
+  const RAISE_HAND_TOPIC = 'balicall.raise_hand.v1';
+  const RAISE_HAND_DURATION_MS = 180_000;
+  const raisedHandsRef = useRef<Record<string, number>>({});
+  raisedHandsRef.current = raisedHands;
+
+  useEffect(() => {
+    if (!openParticipantMenuId) return;
+    const handleOutside = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.attendance-more-wrap')) setOpenParticipantMenuId(null);
+    };
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenParticipantMenuId(null);
+    };
+    document.addEventListener('pointerdown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('pointerdown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [openParticipantMenuId]);
+
+  useEffect(() => {
+    if (!room) return;
+    const handleRaiseData = (payload: Uint8Array, _participant?: Participant, _kind?: unknown, topic?: string) => {
+      if (topic !== RAISE_HAND_TOPIC) return;
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { identity?: string; name?: string; raisedAt?: number | null };
+        if (!msg?.identity) return;
+        const id = msg.identity;
+        const raisedAt = typeof msg.raisedAt === 'number' && msg.raisedAt > 0 ? msg.raisedAt : null;
+        if (raisedAt && Date.now() - raisedAt < RAISE_HAND_DURATION_MS) {
+          setRaisedHands(prev => {
+            if (prev[id] === raisedAt) return prev;
+            return { ...prev, [id]: raisedAt };
+          });
+          setRaiseHandNotices(prev => {
+            const noticeId = `hand-${id}-${raisedAt}`;
+            if (prev.some(n => n.id === noticeId)) return prev;
+            return [...prev, { id: noticeId, text: `${msg.name || id} raised a hand`, timestamp: new Date(raisedAt).toISOString() }];
+          });
+        } else {
+          setRaisedHands(prev => {
+            if (!prev[id]) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        }
+      } catch {
+        /* ignore malformed raise-hand payload */
+      }
+    };
+    const handlePeerConnected = () => {
+      const localRaisedAt = raisedHandsRef.current[employeeId];
+      if (localRaisedAt && Date.now() - localRaisedAt < RAISE_HAND_DURATION_MS && room.localParticipant?.publishData) {
+        const localName = room.localParticipant.name || employeeId;
+        const encoded = new TextEncoder().encode(JSON.stringify({ identity: employeeId, name: localName, raisedAt: localRaisedAt }));
+        room.localParticipant.publishData(encoded, { reliable: true, topic: RAISE_HAND_TOPIC }).catch(() => {});
+      }
+    };
+    const handleKickData = (payload: Uint8Array, _participant?: Participant, _kind?: unknown, topic?: string) => {
+      if (topic !== 'balicall.kicked.v1') return;
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { targetId?: string };
+        if (msg?.targetId === employeeId) {
+          onKicked?.();
+        }
+      } catch {
+        /* ignore malformed kick payload */
+      }
+    };
+    room.on(RoomEvent.DataReceived, handleRaiseData);
+    room.on(RoomEvent.DataReceived, handleKickData);
+    room.on(RoomEvent.ParticipantConnected, handlePeerConnected);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleRaiseData);
+      room.off(RoomEvent.DataReceived, handleKickData);
+      room.off(RoomEvent.ParticipantConnected, handlePeerConnected);
+    };
+  }, [room, employeeId, onKicked]);
+
+  useEffect(() => {
+    const entries = Object.entries(raisedHands);
+    if (!entries.length) return;
+    const now = Date.now();
+    const nextExpiry = Math.min(...entries.map(([, ts]) => Math.max(250, ts + RAISE_HAND_DURATION_MS - now)));
+    const timer = setTimeout(() => {
+      const cutoff = Date.now() - RAISE_HAND_DURATION_MS;
+      const localWasRaised = Boolean(raisedHandsRef.current[employeeId] && raisedHandsRef.current[employeeId] <= cutoff);
+      setRaisedHands(prev => {
+        let changed = false;
+        const next: Record<string, number> = {};
+        for (const [id, ts] of Object.entries(prev)) {
+          if (ts > cutoff) next[id] = ts;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+      if (localWasRaised && room?.localParticipant?.publishData) {
+        const localName = room.localParticipant.name || employeeId;
+        const encoded = new TextEncoder().encode(JSON.stringify({ identity: employeeId, name: localName, raisedAt: null }));
+        room.localParticipant.publishData(encoded, { reliable: true, topic: RAISE_HAND_TOPIC }).catch(() => {});
+      }
+    }, nextExpiry);
+    return () => clearTimeout(timer);
+  }, [raisedHands, employeeId, room]);
+
+  const toggleRaiseHand = useCallback(() => {
+    const currentlyRaised = Boolean(raisedHandsRef.current[employeeId]);
+    const localName = room?.localParticipant?.name || employeeId;
+    const nextRaisedAt = currentlyRaised ? null : Date.now();
+    setRaisedHands(prev => {
+      if (!nextRaisedAt) {
+        if (!prev[employeeId]) return prev;
+        const next = { ...prev };
+        delete next[employeeId];
+        return next;
+      }
+      return { ...prev, [employeeId]: nextRaisedAt };
+    });
+    if (nextRaisedAt) {
+      setRaiseHandNotices(prev => [
+        ...prev,
+        { id: `hand-${employeeId}-${nextRaisedAt}`, text: `${localName} raised a hand`, timestamp: new Date(nextRaisedAt).toISOString() },
+      ]);
+    }
+    if (room?.localParticipant?.publishData) {
+      const encoded = new TextEncoder().encode(JSON.stringify({ identity: employeeId, name: localName, raisedAt: nextRaisedAt }));
+      room.localParticipant.publishData(encoded, { reliable: true, topic: RAISE_HAND_TOPIC }).catch(() => {});
+    }
+  }, [employeeId, room]);
 
   const isManager = meetingRole === 'host' || meetingRole === 'co-host';
 
@@ -505,7 +646,7 @@ export function MeetingRoom({
   const resizePanel = (value: number) =>
     setPanelPercent(Math.max(minPercent, Math.min(42, value)));
 
-  const orderedParticipants = orderParticipants(participants);
+  const orderedParticipants = orderParticipants(participants, raisedHands);
 
   const closePanel = () => {
     changePanel(false);
@@ -892,6 +1033,7 @@ export function MeetingRoom({
                 cameras={camerasByIdentity}
                 mirrorLocalVideo={mirrorCamera}
                 spotlightIdentity={spotlight.identity}
+                raisedHands={raisedHands}
               />
             </div>
           ) : null}
@@ -902,6 +1044,7 @@ export function MeetingRoom({
               cameras={camerasByIdentity}
               mirrorLocalVideo={mirrorCamera}
               strip={sharing || showingSpeaker}
+              raisedHands={raisedHands}
             />
           )}
 
@@ -1179,13 +1322,22 @@ export function MeetingRoom({
             aria-relevant="additions"
             tabIndex={0}
           >
-            {transcripts.length || meetingFiles.length ? (
+            {transcripts.length || meetingFiles.length || raiseHandNotices.length ? (
               [
                 ...transcripts.map(entry => ({ kind: 'transcript' as const, sortAt: Date.parse(entry.timestamp) || 0, entry })),
                 ...meetingFiles.map(file => ({ kind: 'file' as const, sortAt: Date.parse(file.createdAt) || 0, file })),
+                ...raiseHandNotices.map(notice => ({ kind: 'hand' as const, sortAt: Date.parse(notice.timestamp) || 0, notice })),
               ]
                 .sort((a, b) => a.sortAt - b.sortAt)
                 .flatMap(timelineItem => {
+                  if (timelineItem.kind === 'hand') {
+                    return [
+                      <div className="chat-system-notice" key={timelineItem.notice.id}>
+                        <Hand size={13} aria-hidden="true" />
+                        <span>{timelineItem.notice.text}</span>
+                      </div>,
+                    ];
+                  }
                   if (timelineItem.kind === 'file') {
                     const file = timelineItem.file;
                     const isLocal = file.uploaderId === employeeId;
@@ -1424,93 +1576,139 @@ export function MeetingRoom({
             Di ruang rapat <span>{participants.length}</span>
           </h3>
 
-          {participants.map(participant => {
+          {orderedParticipants.map(participant => {
             const isSelf = participant.identity === employeeId;
             const isHost = participant.identity === meetingHostId;
             const isCoHost = meetingCoHostIds.includes(participant.identity);
+            const hasRaisedHand = Boolean(raisedHands[participant.identity]);
             const canManage =
               !isSelf &&
               (meetingRole === 'host' ||
                 (meetingRole === 'co-host' && !isHost && !isCoHost));
+            const canKick =
+              !isSelf &&
+              (isSuperAdmin || (meetingRole === 'host' && !isHost && !isCoHost));
+            const menuOpen = openParticipantMenuId === participant.identity;
 
             return (
-              <div className="attendance-entry" key={participant.identity}>
+              <div className={`attendance-entry ${hasRaisedHand ? 'is-hand-raised' : ''}`} key={participant.identity}>
                 <span className="transcript-avatar">
                   {initials(participant.name || participant.identity)}
                 </span>
-                <div>
-                  <strong>
-                    {participant.name || participant.identity}
-                    {isHost && ' (Host)'}
-                    {!isHost && isCoHost && ' (Co-host)'}
-                    {isSelf && ' (Anda)'}
+                <div className="attendance-entry-main">
+                  <strong className="attendance-name-row">
+                    <span className="attendance-name-text">
+                      {participant.name || participant.identity}
+                      {isHost && ' (Host)'}
+                      {!isHost && isCoHost && ' (Co-host)'}
+                      {isSelf && ' (Anda)'}
+                    </span>
+                    {hasRaisedHand && (
+                      <span className="attendance-hand-badge" title="Mengangkat tangan" aria-label="Mengangkat tangan">
+                        <Hand size={12} />
+                      </span>
+                    )}
                   </strong>
-                  <small>{participant.identity}</small>
-
-                  {canManage && (
-                    <div className="participant-management">
-                      {meetingRole === 'host' && (
-                        <button
-                          type="button"
-                          disabled={busy || !connected}
-                          onClick={() =>
-                            void handleParticipantAction(
-                              participant.identity,
-                              isCoHost ? 'demote' : 'promote'
-                            )
-                          }
-                        >
-                          {isCoHost ? 'Turunkan co-host' : 'Jadikan co-host'}
-                        </button>
-                      )}
-
-                      {meetingRole === 'host' && !participant.identity.startsWith('GUEST-') && <button type="button" disabled={busy || !connected} onClick={() => { if (window.confirm(`Pindahkan peran host kepada ${participant.name || participant.identity}? Anda akan menjadi peserta.`)) void handleParticipantAction(participant.identity, 'transfer-host'); }}>Jadikan host</button>}
-
-                      <button
-                        type="button"
-                        disabled={busy || !connected}
-                        onClick={() =>
-                          void handleParticipantAction(participant.identity, 'mute')
-                        }
-                      >
-                        Mute
-                      </button>
-
-                      {pendingSpeakRequests.some(
-                        request => request.identity === participant.identity
-                      ) && (
-                        <button
-                          type="button"
-                          disabled={busy || !connected}
-                          onClick={() =>
-                            void handleParticipantAction(
-                              participant.identity,
-                              'approve-speak'
-                            )
-                          }
-                        >
-                          Izinkan Bicara
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        disabled={busy || !connected}
-                        onClick={() => {
-                          if (window.confirm('Keluarkan peserta ini dari meeting?')) {
-                            void handleParticipantAction(
-                              participant.identity,
-                              'remove'
-                            );
-                          }
-                        }}
-                      >
-                        Keluarkan
-                      </button>
-                    </div>
-                  )}
+                  <small title={participant.identity}>{participant.identity}</small>
                 </div>
-                <Check size={17} />
+                {canManage || canKick ? (
+                  <div className="attendance-more-wrap">
+                    <button
+                      type="button"
+                      className="attendance-more-btn"
+                      aria-label={`Opsi untuk ${participant.name || participant.identity}`}
+                      aria-expanded={menuOpen}
+                      aria-haspopup="menu"
+                      disabled={busy || !connected}
+                      onClick={() => setOpenParticipantMenuId(menuOpen ? null : participant.identity)}
+                    >
+                      <MoreVertical size={15} />
+                    </button>
+                    {menuOpen && (
+                      <div className="attendance-action-menu" role="menu">
+                        {canManage && meetingRole === 'host' && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || !connected}
+                            onClick={() => {
+                              setOpenParticipantMenuId(null);
+                              void handleParticipantAction(
+                                participant.identity,
+                                isCoHost ? 'demote' : 'promote'
+                              );
+                            }}
+                          >
+                            {isCoHost ? 'Turunkan co-host' : 'Jadikan co-host'}
+                          </button>
+                        )}
+                        {canManage && meetingRole === 'host' && !participant.identity.startsWith('GUEST-') && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || !connected}
+                            onClick={() => {
+                              setOpenParticipantMenuId(null);
+                              if (window.confirm(`Pindahkan peran host kepada ${participant.name || participant.identity}? Anda akan menjadi peserta.`)) {
+                                void handleParticipantAction(participant.identity, 'transfer-host');
+                              }
+                            }}
+                          >
+                            Jadikan host
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || !connected}
+                            onClick={() => {
+                              setOpenParticipantMenuId(null);
+                              void handleParticipantAction(participant.identity, 'mute');
+                            }}
+                          >
+                            Mute
+                          </button>
+                        )}
+                        {canManage && pendingSpeakRequests.some(request => request.identity === participant.identity) && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || !connected}
+                            onClick={() => {
+                              setOpenParticipantMenuId(null);
+                              void handleParticipantAction(participant.identity, 'approve-speak');
+                            }}
+                          >
+                            Izinkan Bicara
+                          </button>
+                        )}
+                        {canKick && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="attendance-action-danger"
+                            disabled={busy || !connected}
+                            onClick={() => {
+                              setOpenParticipantMenuId(null);
+                              if (window.confirm(`Keluarkan ${participant.name || participant.identity} dari meeting?`)) {
+                                if (room?.localParticipant?.publishData) {
+                                  const encoded = new TextEncoder().encode(JSON.stringify({ targetId: participant.identity }));
+                                  room.localParticipant.publishData(encoded, { reliable: true, topic: 'balicall.kicked.v1' }).catch(() => {});
+                                }
+                                void handleParticipantAction(participant.identity, 'remove');
+                              }
+                            }}
+                          >
+                            Kick
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Check size={16} />
+                )}
               </div>
             );
           })}
@@ -1569,6 +1767,8 @@ export function MeetingRoom({
       )}
 
       <MeetingControls
+        handRaised={Boolean(raisedHands[employeeId])}
+        onToggleRaiseHand={toggleRaiseHand}
         canManageMeeting={!employeeId.startsWith('GUEST-')}
         busy={busy}
         connected={connected}

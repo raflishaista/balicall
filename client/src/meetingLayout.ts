@@ -19,7 +19,16 @@ export function participantPage<T>(items: T[], requested: number, size = GRID_PA
   return { page, pages, items: items.slice(page * size, (page + 1) * size) };
 }
 
-export function orderParticipants<T extends { identity: string; joinedAt?: Date }>(items: T[]): T[] {
-  return items.toSorted((a, b) => (a.joinedAt?.getTime() || 0) - (b.joinedAt?.getTime() || 0) || a.identity.localeCompare(b.identity));
+export function orderParticipants<T extends { identity: string; joinedAt?: Date }>(
+  items: T[],
+  raisedHands?: Record<string, number>,
+): T[] {
+  return items.toSorted((a, b) => {
+    const aRaised = raisedHands?.[a.identity] || 0;
+    const bRaised = raisedHands?.[b.identity] || 0;
+    if (Boolean(aRaised) !== Boolean(bRaised)) return aRaised ? -1 : 1;
+    if (aRaised && bRaised && aRaised !== bRaised) return aRaised - bRaised;
+    return (a.joinedAt?.getTime() || 0) - (b.joinedAt?.getTime() || 0) || a.identity.localeCompare(b.identity);
+  });
 }
 

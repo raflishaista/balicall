@@ -20,7 +20,7 @@ import { SEA_LIVE_MODEL, MING_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL, isLiveTranscript
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
 import { useMicrophoneControl } from './useMicrophoneControl';
-import { Track, ConnectionState, MediaDeviceFailure, ScreenSharePresets } from 'livekit-client';
+import { Track, ConnectionState, DisconnectReason, MediaDeviceFailure, ScreenSharePresets } from 'livekit-client';
 import { LiveKitRoom, RoomAudioRenderer, useParticipants, useLocalParticipant, useConnectionState, useTracks, useRoomContext, isTrackReference } from '@livekit/components-react';
 
 export function InCallView({ callDuration,
@@ -38,6 +38,7 @@ export function InCallView({ callDuration,
   roomCode,
   employeeId,
   employeeName,
+  isSuperAdmin,
   transcripts,
   activeTab,
   setActiveTab,
@@ -53,6 +54,7 @@ export function InCallView({ callDuration,
   onToggleSharedMic,
   onToggleLiveDiarization,
   onToggleBatchDiarization,
+  onKicked,
 }: any) {
   const [mediaOptions] = useState(() => ({
     audioCaptureDefaults: {
@@ -95,6 +97,11 @@ export function InCallView({ callDuration,
       connect={true}
       onError={onRoomError}
       onConnected={onConnected}
+      onDisconnected={reason => {
+        if (reason === DisconnectReason.PARTICIPANT_REMOVED) {
+          onKicked?.();
+        }
+      }}
       audio={joinMedia.microphoneEnabled}
       options={mediaOptions}
       style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
@@ -121,6 +128,7 @@ export function InCallView({ callDuration,
         roomCode={roomCode}
         meetingId={meetingId}
         token={token}
+        isSuperAdmin={Boolean(isSuperAdmin)}
         employeeId={employeeId}
         employeeName={employeeName}
         transcripts={transcripts}
@@ -134,6 +142,7 @@ export function InCallView({ callDuration,
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
+        onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
         speakRequestAt={speakRequestAt}
@@ -172,11 +181,13 @@ function RoomContent({
   roomCode,
   meetingId,
   token,
+  isSuperAdmin,
   meetingRole,
   participantPanelRequest,
   meetingHostId,
   meetingCoHostIds,
   onManageParticipant,
+  onKicked,
   employeeId,
   transcripts,
   activeTab,
@@ -337,6 +348,7 @@ function RoomContent({
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
+        onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
         speakRequestAt={speakRequestAt}
@@ -347,6 +359,7 @@ function RoomContent({
         roomCode={roomCode}
         meetingId={meetingId}
         token={token}
+        isSuperAdmin={Boolean(isSuperAdmin)}
         employeeId={employeeId}
         cameraTracks={cameraTracks}
         isCameraEnabled={isCameraEnabled}
