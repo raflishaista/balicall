@@ -111,6 +111,9 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.equal((await request('/admin/audit', 'guest')).status, 403);
   assert.equal((await request('/admin/audit?from=2025-01-02&page=2', 'employee')).status, 403);
   assert.equal((await request('/admin/audit?page=2')).status, 401);
+  assert.equal((await request('/admin/audit/export', 'employee')).status, 403);
+  assert.equal((await request('/admin/audit/export', 'guest')).status, 403);
+  assert.equal((await request('/admin/audit/export')).status, 401);
 
   const { PgAdminStore } = await import('../adminStore.js');
   const admin = new PgAdminStore();
@@ -232,12 +235,174 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.deepEqual(page2.employees.map(employee => employee.employeeId), ['QC-21']);
     const inactive = await (await request('/admin/employees?department=QA%20Overview&status=inactive', 'admin')).json();
     assert.deepEqual(inactive.employees, [{
-      employeeId: 'QC-22', name: 'Rina 22', department: 'QA Overview', status: 'inactive', activated: true, isSuperAdmin: false,
+      employeeId: 'QC-22', name: 'Rina 22', department: 'QA Overview', status: 'inactive', activated: true, isSuperAdmin: false, lastLoginAt: null,
     }]);
     const literalSearch = await (await request('/admin/employees?q=%25', 'admin')).json();
     assert.equal(literalSearch.total, 0);
     assert.deepEqual(literalSearch.employees, []);
     assert.equal((await request('/admin/employees?page=0', 'admin')).status, 400);
+  });
+
+  await t.test('employee directory enforces summary cards, email and role filters, pagination, access gates and persistent last login', async () => {
+    // 1. Access gates
+    assert.equal((await request('/admin/employees')).status, 401);
+    assert.equal((await request('/admin/employees', 'employee')).status, 403);
+    assert.equal((await request('/admin/employees', 'guest')).status, 403);
+    const authed = await request('/admin/employees', 'admin');
+    assert.equal(authed.status, 200);
+
+    // 2. Role validation
+    assert.equal((await request('/admin/employees?role=invalid_role', 'admin')).status, 400);
+    assert.equal((await request('/admin/employees?role=super_admin', 'admin')).status, 200);
+    assert.equal((await request('/admin/employees?role=employee', 'admin')).status, 200);
+    assert.equal((await request('/admin/employees?role=', 'admin')).status, 200);
+
+    try {
+      // 3. Seed specific test employees
+      await query(`
+        INSERT INTO balicall_employees (employee_id, name, email, department, position, status)
+        VALUES
+          ('DIR-1', 'Santoso Unique', 'santoso.dir@unique.test', 'Operations', 'Lead', 'active'),
+          ('DIR-2', 'Aminah Unique', 'aminah.dir@unique.test', 'Engineering', 'Developer', 'active'),
+          ('DIR-3', 'Agus Belum', 'agus.dir@unique.test', 'Engineering', 'Junior Dev', 'active'),
+          ('DIR-4', 'Dewi Blank', 'dewi.dir@unique.test', '   ', 'Specialist', 'active'),
+          ('DIR-5', 'Joko Off', 'joko.dir@unique.test', 'Finance', 'Analyst', 'inactive')
+      `);
+      await query(`
+        INSERT INTO balicall_auth_accounts (employee_id, login_email, password_hash)
+        VALUES
+          ('DIR-1', 'santoso.login@company.test', 'fixture-hash-1'),
+          ('DIR-2', 'aminah.login@company.test', 'fixture-hash-2'),
+          ('DIR-3', 'agus.login@company.test', NULL),
+          ('DIR-4', 'dewi.login@company.test', 'fixture-hash-4'),
+          ('DIR-5', 'joko.login@company.test', 'fixture-hash-5')
+      `);
+      await query(`
+        INSERT INTO balicall_admin_roles (employee_id, role)
+        VALUES ('DIR-1', 'super_admin')
+      `);
+
+      // 4. Directory-wide summary counts
+      const baseDir = await (await request('/admin/employees', 'admin')).json();
+      assert.ok(baseDir.summary);
+      assert.equal(typeof baseDir.summary.activeAccounts, 'number');
+      assert.equal(typeof baseDir.summary.superAdmins, 'number');
+      assert.equal(typeof baseDir.summary.totalDepartments, 'number');
+      // Also present at top level
+      assert.equal(baseDir.activeAccounts, baseDir.summary.activeAccounts);
+      assert.equal(baseDir.superAdmins, baseDir.summary.superAdmins);
+      assert.equal(baseDir.totalDepartments, baseDir.summary.totalDepartments);
+
+      // Verify summary is constant across filtered queries
+      const filteredSearch = await (await request('/admin/employees?q=Aminah%20Unique', 'admin')).json();
+      assert.equal(filteredSearch.total, 1);
+      assert.deepEqual(filteredSearch.summary, baseDir.summary);
+
+      const filteredRole = await (await request('/admin/employees?role=super_admin', 'admin')).json();
+      assert.deepEqual(filteredRole.summary, baseDir.summary);
+
+      const filteredDept = await (await request('/admin/employees?department=Engineering', 'admin')).json();
+      assert.deepEqual(filteredDept.summary, baseDir.summary);
+
+      // 5. Search by name, employee email, login email (case-insensitive literal)
+      const byName = await (await request('/admin/employees?q=santoso%20unique', 'admin')).json();
+      assert.ok(byName.employees.some(e => e.employeeId === 'DIR-1'));
+
+      const byEmpEmail = await (await request('/admin/employees?q=santoso.dir@unique', 'admin')).json();
+      assert.ok(byEmpEmail.employees.some(e => e.employeeId === 'DIR-1'));
+
+      const byLoginEmail = await (await request('/admin/employees?q=SANTOSO.LOGIN@COMPANY', 'admin')).json();
+      assert.ok(byLoginEmail.employees.some(e => e.employeeId === 'DIR-1'));
+
+      // 6. Role filter
+      const superAdmins = await (await request('/admin/employees?role=super_admin', 'admin')).json();
+      assert.ok(superAdmins.employees.every(e => e.isSuperAdmin === true));
+      assert.ok(superAdmins.employees.some(e => e.employeeId === 'DIR-1'));
+
+      const regularEmployees = await (await request('/admin/employees?role=employee', 'admin')).json();
+      assert.ok(regularEmployees.employees.every(e => e.isSuperAdmin === false));
+      assert.ok(regularEmployees.employees.some(e => e.employeeId === 'DIR-2'));
+      assert.ok(!regularEmployees.employees.some(e => e.employeeId === 'DIR-1'));
+
+      // 7. Combined filter: role + search + department + status
+      const combined = await (await request('/admin/employees?role=employee&q=aminah&department=Engineering&status=active', 'admin')).json();
+      assert.equal(combined.total, 1);
+      assert.equal(combined.employees[0].employeeId, 'DIR-2');
+      assert.equal(combined.employees[0].isSuperAdmin, false);
+
+      // 8. Persistent last_login_at across session lifecycle & logout
+      // DIR-2 starts with no login history: lastLoginAt is null
+      assert.equal(combined.employees[0].lastLoginAt, null);
+
+      // Login DIR-2
+      const dir2Token = 'd'.repeat(43);
+      const dir2TokenHash = hashToken(dir2Token);
+      await auth.createSession(dir2TokenHash, 'DIR-2', 8);
+
+      // Fetch employee again: lastLoginAt is now populated
+      const loggedInCheck = await (await request('/admin/employees?q=aminah', 'admin')).json();
+      const recordedTimestamp = loggedInCheck.employees[0].lastLoginAt;
+      assert.ok(recordedTimestamp, 'lastLoginAt should be set after createSession');
+      assert.ok(!isNaN(Date.parse(recordedTimestamp)));
+
+      // Re-fetching does not alter the recorded timestamp
+      const refreshCheck = await (await request('/admin/employees?q=aminah', 'admin')).json();
+      assert.equal(refreshCheck.employees[0].lastLoginAt, recordedTimestamp);
+
+      // Failed login does not alter the recorded timestamp
+      const failedLogin = await request('/auth/login', null, { email: 'aminah.login@company.test', password: 'wrong' }, false, 'POST');
+      assert.equal(failedLogin.status, 401);
+      const afterFailedCheck = await (await request('/admin/employees?q=aminah', 'admin')).json();
+      assert.equal(afterFailedCheck.employees[0].lastLoginAt, recordedTimestamp);
+
+      // Logout / revoke session
+      await auth.revoke(dir2TokenHash);
+      const afterLogoutCheck = await (await request('/admin/employees?q=aminah', 'admin')).json();
+      assert.equal(afterLogoutCheck.employees[0].lastLoginAt, recordedTimestamp, 'lastLoginAt must persist after session revocation');
+
+      // 9. Payload safety: ensure sensitive credentials are not leaked
+      const sample = loggedInCheck.employees[0];
+      const forbiddenFields = ['password', 'password_hash', 'passwordHash', 'token', 'token_hash', 'tokenHash', 'activationCode', 'activation_code'];
+      for (const field of forbiddenFields) {
+        assert.equal(field in sample, false, `Field ${field} must not be present in employee response`);
+      }
+
+      // 10. Verify no runtime schema check exists on PgAuthStore
+      assert.equal(typeof auth.hasLastLoginColumn, 'undefined');
+
+      // 11. Transaction atomicity: if updating last_login_at fails, session creation is rolled back
+      const atomicToken = 'e'.repeat(43);
+      const atomicTokenHash = hashToken(atomicToken);
+      let failNextUpdate = false;
+      const failingClient = {
+        async query(sql, params) {
+          if (failNextUpdate && typeof sql === 'string' && sql.includes('UPDATE balicall_auth_accounts SET last_login_at')) {
+            throw new Error('Simulated last_login_at update failure');
+          }
+          return query(sql, params);
+        },
+        release() {}
+      };
+      const failingStore = new PgAuthStore({
+        async connect() { return failingClient; },
+        query(sql, params) { return query(sql, params); }
+      });
+
+      failNextUpdate = true;
+      await assert.rejects(
+        () => failingStore.createSession(atomicTokenHash, 'DIR-2', 8),
+        /Simulated last_login_at update failure/
+      );
+
+      // Verify transaction rollback: session was NOT created
+      const sessionCheck = await query('SELECT 1 FROM balicall_auth_sessions WHERE token_hash = $1', [atomicTokenHash]);
+      assert.equal(sessionCheck.rows.length, 0, 'Session must not be created when timestamp update fails');
+    } finally {
+      await query("DELETE FROM balicall_admin_roles WHERE employee_id LIKE 'DIR-%'");
+      await query("DELETE FROM balicall_auth_sessions WHERE employee_id LIKE 'DIR-%'");
+      await query("DELETE FROM balicall_auth_accounts WHERE employee_id LIKE 'DIR-%'");
+      await query("DELETE FROM balicall_employees WHERE employee_id LIKE 'DIR-%'");
+    }
   });
 
   await t.test('recording inventory pages metadata without granting access to uploaded content', async () => {
@@ -569,7 +734,154 @@ test('admin permissions are enforced and account changes are audited', async t =
     for (const queryString of ['from=2025-02-30', 'from=2025-01-03&to=2025-01-02', 'page=0', 'action=admin.grant&action=admin.revoke']) {
       assert.equal((await request('/admin/audit?' + queryString, 'admin')).status, 400, queryString);
     }
+
+    assert.ok(first.summary);
+    assert.equal(first.summary.total, first.total);
+    assert.equal(typeof first.summary.succeeded, 'number');
+    assert.equal(typeof first.summary.denied, 'number');
+    assert.equal(typeof first.summary.noChange, 'number');
+    assert.ok(Array.isArray(first.actors));
+
+    const searchRes = await (await request('/admin/audit?q=AUDIT-56', 'admin')).json();
+    assert.equal(searchRes.total, 1);
+    assert.equal(searchRes.entries[0].targetId, 'AUDIT-56');
+
+    // Test searching by Indonesian action label
+    const labelSearch = await (await request('/admin/audit?q=Beri+akses', 'admin')).json();
+    assert.ok(labelSearch.total > 0);
+    assert.ok(labelSearch.entries.every(e => e.action === 'admin.grant'));
+
+    // Test sorting ASC vs DESC
+    const ascRes = await (await request('/admin/audit?order=asc&pageSize=10', 'admin')).json();
+    const descRes = await (await request('/admin/audit?order=desc&pageSize=10', 'admin')).json();
+    assert.notEqual(ascRes.entries[0].id, descRes.entries[0].id);
+
+    // Test result=failed query support
+    const failedRes = await (await request('/admin/audit?result=failed', 'admin')).json();
+    assert.equal(failedRes.total, 0);
+
+    const statusRes = await (await request('/admin/audit?result=succeeded&pageSize=10', 'admin')).json();
+    assert.equal(statusRes.pageSize, 10);
+    assert.equal(statusRes.entries.length, 10);
+    assert.ok(statusRes.entries.every(e => e.result === 'succeeded'));
+
+    const csvRes = await request('/admin/audit/export?action=admin.grant', 'admin');
+    assert.equal(csvRes.status, 200);
+    assert.equal(csvRes.headers.get('content-type'), 'text/csv; charset=utf-8');
+    const csvText = await csvRes.text();
+    assert.ok(csvText.includes('ID Event,Waktu (WIB),Pelaku,Target,Tindakan,Hasil'));
+    assert.ok(csvText.includes('AUD-'));
+    assert.ok(csvText.includes('Beri akses Super Admin'));
   });
+  await t.test('processing jobs table supports filtering, failure investigation, error classification, and retry with audit', async () => {
+    await query(`
+      INSERT INTO balicall_recording_uploads(id, title, original_filename, owner_id, owner_name, file_size, status, stage, stt_model, diarizer, error, transcript, created_at, completed_at)
+      VALUES
+        ('job-1', 'Rekaman Rapat Divisi', 'divisi-meeting.mp4', $1, 'Budi QA', 2048000, 'done', null, 'whisper-small', 'none', null, '{"text":"Halo dunia"}'::jsonb, NOW() - interval '2 days', NOW() - interval '2 days' + interval '45 seconds'),
+        ('job-2', 'Rapat Koordinasi IT', 'it-sync.mp3', $1, 'Budi QA', 1024000, 'failed', null, 'qwen', 'nemotron', 'Worker STT tidak dapat dijangkau. Pastikan worker berjalan.', null, NOW() - interval '1 day', null),
+        ('job-3', 'Evaluasi Proyek', 'evaluasi.mp3', $1, 'Budi QA', 512000, 'failed', null, 'whisper-small', 'pyannote', 'Server dimulai ulang saat rekaman diproses. Unggah ulang rekaman.', '{"text":"Transkrip awal berhasil", "segments":[{"text":"Halo", "speaker":"SPEAKER_00", "start":0, "end":2}]}'::jsonb, NOW() - interval '3 hours', null),
+        ('job-4', 'Sync Mingguan', 'sync.mp4', $1, 'Budi QA', 4096000, 'processing', 'transcribing', 'sea', 'none', null, null, NOW() - interval '5 minutes', null)
+    `, [employeeId]);
+
+    try {
+      assert.equal((await request('/admin/system/jobs')).status, 401);
+      await auth.createSession(hashToken(tokens.employee), employeeId, 1);
+      assert.equal((await request('/admin/system/jobs', 'employee')).status, 403);
+      assert.equal((await request('/admin/system/jobs', 'guest')).status, 403);
+
+      const res = await request('/admin/system/jobs', 'admin');
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.ok(data.jobs.length >= 4);
+
+      const searchRes = await (await request('/admin/system/jobs?q=Koordinasi', 'admin')).json();
+      assert.equal(searchRes.total, 1);
+      assert.equal(searchRes.jobs[0].id, 'job-2');
+      assert.equal(searchRes.jobs[0].errorCategory.code, 'service_unavailable');
+      assert.equal(searchRes.jobs[0].canRetry, false);
+
+      const failedRes = await (await request('/admin/system/jobs?status=failed', 'admin')).json();
+      assert.ok(failedRes.jobs.every(j => j.status === 'failed'));
+
+      const detailRes = await request('/admin/system/jobs/job-3', 'admin');
+      assert.equal(detailRes.status, 200);
+      const detail = await detailRes.json();
+      assert.equal(detail.job.id, 'job-3');
+      assert.equal(detail.job.hasTranscript, true);
+      assert.equal(detail.job.segmentCount, 1);
+      assert.equal(detail.job.canRetry, true);
+      assert.equal(detail.job.errorCategory.code, 'interrupted');
+      assert.ok(!JSON.stringify(detail).includes('Transkrip awal berhasil'));
+
+      const retryRes = await request('/admin/system/jobs/job-3/retry', 'admin', {}, true, 'POST');
+      assert.equal(retryRes.status, 200);
+      const retryBody = await retryRes.json();
+      assert.equal(retryBody.success, true);
+
+      const rechecked = await (await request('/admin/system/jobs/job-3', 'admin')).json();
+      assert.ok(['processing', 'done'].includes(rechecked.job.status));
+
+      const duplicateRetry = await request('/admin/system/jobs/job-3/retry', 'admin', {}, true, 'POST');
+      assert.equal(duplicateRetry.status, 409);
+
+      const unretryable = await request('/admin/system/jobs/job-2/retry', 'admin', {}, true, 'POST');
+      assert.equal(unretryable.status, 422);
+
+      const auditRes = await (await request('/admin/audit?action=recording.retry', 'admin')).json();
+      assert.ok(auditRes.entries.some(e => e.targetId === 'job-3' && e.action === 'recording.retry'));
+
+      // Check detail reflects retryCount and retryHistory
+      const afterRetryDetail = await (await request('/admin/system/jobs/job-3', 'admin')).json();
+      assert.equal(afterRetryDetail.job.retryCount, 1);
+      assert.ok(Array.isArray(afterRetryDetail.job.retryHistory));
+      assert.equal(afterRetryDetail.job.retryHistory.length, 1);
+      assert.equal(afterRetryDetail.job.retryHistory[0].action, 'recording.retry');
+
+      // Test max retries prevention (5 attempts limit)
+      await query(`
+        INSERT INTO balicall_admin_audit(actor_id, target_id, action, result, reason)
+        VALUES
+          ($1, 'job-3', 'recording.retry', 'succeeded', 'Manual retry 2'),
+          ($1, 'job-3', 'recording.retry', 'succeeded', 'Manual retry 3'),
+          ($1, 'job-3', 'recording.retry', 'succeeded', 'Manual retry 4'),
+          ($1, 'job-3', 'recording.retry', 'succeeded', 'Manual retry 5')
+      `, [employeeId]);
+      await query("UPDATE balicall_recording_uploads SET status = 'failed' WHERE id = 'job-3'");
+
+      const maxedDetail = await (await request('/admin/system/jobs/job-3', 'admin')).json();
+      assert.equal(maxedDetail.job.retryCount, 5);
+      assert.equal(maxedDetail.job.canRetry, false);
+      assert.ok(maxedDetail.job.retryReason.includes('maksimum'));
+
+      const maxedRetryRes = await request('/admin/system/jobs/job-3/retry', 'admin', {}, true, 'POST');
+      assert.equal(maxedRetryRes.status, 422);
+      const maxedBody = await maxedRetryRes.json();
+      assert.ok(maxedBody.error.includes('maksimum'));
+
+      const sysRes = await (await request('/admin/system', 'admin')).json();
+      assert.ok(sysRes.queueStats);
+      assert.equal(typeof sysRes.queueStats.completed7d, 'number');
+      assert.equal(typeof sysRes.queueStats.failed7d, 'number');
+      assert.equal(sysRes.queueStats.windowDays, 7);
+
+      // Verify core infrastructure metadata
+      const dbService = sysRes.services.find(s => s.id === 'database');
+      assert.ok(dbService);
+      assert.ok(dbService.version);
+      assert.ok(dbService.connectionState);
+      assert.ok(dbService.lastChecked);
+
+      const apiService = sysRes.services.find(s => s.id === 'api');
+      assert.ok(apiService);
+      assert.equal(apiService.version, null);
+      assert.ok(apiService.lastChecked);
+    } finally {
+      await query("DELETE FROM balicall_recording_uploads WHERE id LIKE 'job-%'");
+    }
+  });
+
+  const disabled = await start({ ...config, authEnabled: false });
+  assert.equal((await disabled('/admin/access', 'admin')).status, 503);
   await t.test('activation requests can be submitted, searched, declined, and approved for login', async () => {
     const pass = 'applicant-password-12345';
     assert.equal((await request('/auth/request-activation', undefined, { name: 'Rina', email: 'rina@balitower.co.id', password: 'short' }, true, 'POST')).status, 400);
@@ -615,6 +927,4 @@ test('admin permissions are enforced and account changes are audited', async t =
     assert.equal(updatedLogin.status, 200);
     assert.equal((await updatedLogin.json()).user.email, 'rina@balitower.co.id');
   });
-  const disabled = await start({ ...config, authEnabled: false });
-  assert.equal((await disabled('/admin/access', 'admin')).status, 503);
 });
