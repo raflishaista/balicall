@@ -2,7 +2,7 @@ import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
 import { mkdir, open, rm } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchJson, ServiceError, summarize } from './providers.js';
 import { PYANNOTE_JSWOOK, QWEN_GGUF_MODEL, QWEN_STT_MODEL } from './config.js';
@@ -264,8 +264,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       await summarizeTranscript(id, row.title, transcript, row.llm_model);
     } catch (error) {
       await fail(id, error);
-    } finally {
-      // The recording is no longer needed once the transcript is saved (or processing failed).
+      // Clean up uploaded media file only on failure
       const row = await uploads.getUploadRow(id).catch(() => null);
       if (row?.file_path) {
         await rm(row.file_path, { force: true }).catch(() => {});
@@ -358,6 +357,13 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
   app.get('/api/recording-uploads/:id', requireActor, asyncRoute(async (req, res) => {
     const row = await findOwned(req, res);
     if (row) res.json({ success: true, upload: uploads.toApi(row, { detail: true }) });
+  }));
+
+  app.get('/api/recording-uploads/:id/media', requireActor, asyncRoute(async (req, res) => {
+    const row = await findOwned(req, res);
+    if (!row) return;
+    if (!row.file_path) return res.status(404).json({ error: 'Berkas audio rekaman tidak ditemukan.' });
+    res.sendFile(resolve(row.file_path));
   }));
 
   app.post('/api/recording-uploads/:id/summarize', requireActor, asyncRoute(async (req, res) => {

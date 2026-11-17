@@ -29,6 +29,7 @@ export interface RecordingUpload {
   updatedAt: string;
   completedAt: string | null;
   hasSummary: boolean;
+  hasMedia?: boolean;
   transcript?: RecordingTranscript | null;
   summary?: MeetingSummary | null;
   diarizer: string | null;
@@ -40,6 +41,8 @@ const UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 export const isActive = (item: Pick<RecordingUpload, 'status'>) =>
   item.status === 'queued' || item.status === 'processing';
+
+export const uploadMediaUrl = (id: string) => `/api/recording-uploads/${encodeURIComponent(id)}/media`;
 
 export function statusLabel(item: Pick<RecordingUpload, 'status' | 'stage'>) {
   if (item.status === 'queued') return 'Antre';

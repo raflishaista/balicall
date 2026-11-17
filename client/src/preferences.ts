@@ -19,6 +19,7 @@ export interface MeetingPreferences {
   sharedRoomMic: boolean;
   liveDiarization: boolean;
   batchDiarization: boolean;
+  aiNoiseSuppression: boolean;
 
   // Rekaman & Penyimpanan
   autoRecordMeeting: boolean;
@@ -48,6 +49,7 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   sharedRoomMic: false,
   liveDiarization: true,
   batchDiarization: true,
+  aiNoiseSuppression: false,
 
   // Rekaman & Penyimpanan
   autoRecordMeeting: false,

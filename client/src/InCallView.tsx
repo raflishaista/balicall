@@ -12,6 +12,7 @@ import './App.css';
 import { MeetingRoom } from './MeetingRoom';
 import { cameraErrorMessage, useCameraControl } from './useCameraControl';
 import { useBackgroundBlur } from './useBackgroundBlur';
+import { useAiNoiseSuppression } from './useAiNoiseSuppression';
 import { useScreenShareControl } from './useScreenShareControl';
 import { useDeviceSettings } from './useDeviceSettings';
 import { DeviceSettingsDialog } from './DeviceSettingsDialog';
@@ -230,6 +231,25 @@ function RoomContent({
     sampleRate: 48000,
   }), [callPreferences?.sharedRoomMic]);
   const microphone = useMicrophoneControl(localParticipant, connected, audioCaptureOptions);
+  const [aiNoiseSuppression, setAiNoiseSuppression] = useState<boolean>(() => Boolean(callPreferences?.aiNoiseSuppression));
+  const noiseSuppression = useAiNoiseSuppression(localParticipant, isMicrophoneEnabled, connected, aiNoiseSuppression);
+
+  const onToggleAiNoiseSuppression = useCallback((enabled: boolean) => {
+    setAiNoiseSuppression(enabled);
+    if (callPreferences) {
+      callPreferences.aiNoiseSuppression = enabled;
+      try {
+        const raw = localStorage.getItem(PREFERENCES_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          parsed.preferences = { ...parsed.preferences, aiNoiseSuppression: enabled };
+          localStorage.setItem(PREFERENCES_KEY, JSON.stringify(parsed));
+        }
+      } catch (e) {
+        console.warn('Failed to save aiNoiseSuppression preference', e);
+      }
+    }
+  }, [callPreferences]);
   useEffect(() => {
     const mediaStreamTrack = microphoneTrack?.track?.mediaStreamTrack;
     if (!mediaStreamTrack || typeof mediaStreamTrack.applyConstraints !== 'function') return;
@@ -476,6 +496,10 @@ function RoomContent({
           onToggleLiveDiarization={onToggleLiveDiarization}
           batchDiarization={callPreferences.batchDiarization ?? true}
           onToggleBatchDiarization={onToggleBatchDiarization}
+          aiNoiseSuppression={aiNoiseSuppression}
+          onToggleAiNoiseSuppression={noiseSuppression.supported ? onToggleAiNoiseSuppression : undefined}
+          noiseSuppressionActive={noiseSuppression.active}
+          noiseSuppressionApplying={noiseSuppression.applying}
           screenShareResolution={screenShare.resolution}
           onSelectScreenShareResolution={screenShare.setResolution}
           onClose={closeDevices}
