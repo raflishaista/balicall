@@ -9,6 +9,7 @@ export interface AdminEmployee {
   status: string | null;
   activated: boolean;
   isSuperAdmin: boolean;
+  lastLoginAt?: string | null;
 }
 
 type AccountAction = 'activate' | 'deactivate' | 'grant' | 'revoke' | 'invite';

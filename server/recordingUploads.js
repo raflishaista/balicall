@@ -6,6 +6,7 @@ import { extname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchJson, ServiceError, summarize } from './providers.js';
 import { PYANNOTE_JSWOOK, QWEN_GGUF_MODEL, QWEN_STT_MODEL } from './config.js';
+import { getPool } from './db.js';
 import * as uploads from './recordingStore.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -83,7 +84,8 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       if (model === QWEN_GGUF_MODEL) {
         candidates = q8?.ready === true && q8.model === model && q8.batchDiarization === true ? ['nemotron'] : [];
       } else if (model === QWEN_STT_MODEL) {
-        candidates = advertised(qwen, model).filter(name => name === 'none');
+        candidates = advertised(qwen, model)
+          .filter(name => name === 'none' || (name === 'nemotron' && config.recordingDiarizers.includes(name)));
       } else {
         candidates = advertised(whisper, model).filter(name => name !== PYANNOTE_JSWOOK);
         if (model === 'small' && advertised(pyannote, model).includes(PYANNOTE_JSWOOK)) {
@@ -200,7 +202,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     await appendRecording(form, row.file_path);
     form.append('model', row.stt_model || config.recordingSttModel);
     form.append('language', row.language);
-    const diarizer = isQ8 ? 'nemotron' : isQwen ? 'none' : row.diarizer;
+    const diarizer = isQ8 ? 'nemotron' : row.diarizer;
     const useDiarizer = diarizer && diarizer !== 'none';
     form.append('diarize', String(Boolean(useDiarizer)));
     if (useDiarizer) form.append('diarizer', diarizer);
@@ -336,7 +338,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
     res.json({ success: true, uploads: await uploads.listUploads(req.recordingActor.id, limit) });
   }));
-  
+
   app.get('/api/recording-uploads/options', requireActor, asyncRoute(async (_req, res) => {
     const capabilities = await recordingCapabilities();
     const models = [...capabilities.keys()];
@@ -378,5 +380,100 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     await uploads.deleteUpload(row.id);
     res.json({ success: true });
   }));
-  return { recordingCapabilities };
+  async function retryUpload(id, { actorId } = {}) {
+    const row = await uploads.getUploadRow(id);
+    if (!row) {
+      return { ok: false, status: 404, error: 'Rekaman tidak ditemukan.' };
+    }
+    if (row.status === 'processing' || row.status === 'queued') {
+      return { ok: false, status: 409, error: 'Pekerjaan sedang diproses atau dalam antrean.' };
+    }
+    if (row.status === 'done') {
+      return { ok: false, status: 409, error: 'Pekerjaan sudah selesai diproses.' };
+    }
+    if (row.status !== 'failed') {
+      return { ok: false, status: 400, error: 'Hanya pekerjaan dengan status gagal yang dapat dicoba ulang.' };
+    }
+
+    const pool = getPool();
+    if (pool) {
+      const { rows: countRows } = await pool.query(
+        "SELECT COUNT(*)::int AS count FROM balicall_admin_audit WHERE target_id = $1 AND action = 'recording.retry'",
+        [id],
+      ).catch(() => ({ rows: [{ count: 0 }] }));
+      if ((countRows[0]?.count ?? 0) >= 5) {
+        return {
+          ok: false,
+          status: 422,
+          error: 'Batas maksimum percobaan ulang (5 kali) telah tercapai untuk pekerjaan ini.',
+          reason: 'max_retries_exceeded',
+        };
+      }
+    }
+
+    if (row.transcript?.text) {
+      const updated = await uploads.updateUpload(row.id, {
+        status: 'processing',
+        stage: 'summarizing',
+        error: null,
+      });
+      enqueue(() => resummarize(row.id));
+      return {
+        ok: true,
+        message: 'Pemrosesan ulang ringkasan berhasil dimasukkan ke antrean.',
+        reason: 'retry_summarize',
+        job: updated,
+      };
+    }
+
+    if (row.file_path) {
+      const updated = await uploads.updateUpload(row.id, {
+        status: 'queued',
+        stage: 'queued',
+        error: null,
+      });
+      enqueue(() => processUpload(row.id));
+      return {
+        ok: true,
+        message: 'Pemrosesan ulang transkripsi berhasil dimasukkan ke antrean.',
+        reason: 'retry_transcribe',
+        job: updated,
+      };
+    }
+
+    return {
+      ok: false,
+      status: 422,
+      error: 'File audio asli telah dibersihkan dan transkrip belum tersimpan. Rekaman harus diunggah ulang.',
+    };
+  }
+
+  return { recordingCapabilities, retryUpload };
+}
+
+export function classifyJobError(error) {
+  if (!error) return null;
+  const lower = String(error).toLowerCase();
+  if (/timeout|melebihi batas waktu|timed out/.test(lower)) {
+    return { code: 'timeout', label: 'Batas Waktu (Timeout)', severity: 'warning' };
+  }
+  if (/tidak dapat dijangkau|unreachable|econnrefused|502|503|belum dikonfigurasi/.test(lower)) {
+    return { code: 'service_unavailable', label: 'Layanan Worker Offline', severity: 'error' };
+  }
+  if (/pemisah pembicara|diariz/.test(lower)) {
+    return { code: 'diarization_failure', label: 'Kegagalan Diarisasi', severity: 'error' };
+  }
+  if (/format|ukuran file|tidak didukung|tidak cocok|hanya file|invalid/.test(lower)) {
+    return { code: 'invalid_input', label: 'Berkas Tidak Valid', severity: 'warning' };
+  }
+  if (/penyimpanan|disk|storage|enospc|enoent/.test(lower)) {
+    return { code: 'storage_failure', label: 'Kendala Penyimpanan', severity: 'error' };
+  }
+  if (/dimulai ulang|restart|interrupted/.test(lower)) {
+    return { code: 'interrupted', label: 'Terganggu Restart Server', severity: 'warning' };
+  }
+  if (/transkrip|worker tidak mengonfirmasi|tidak ada ucapan|transcription/.test(lower)) {
+    return { code: 'transcription_failure', label: 'Transkripsi Gagal', severity: 'error' };
+  }
+  return { code: 'unknown', label: 'Kesalahan Sistem Lainnya', severity: 'error' };
 }

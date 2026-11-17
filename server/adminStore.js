@@ -1,3 +1,4 @@
+import { classifyJobError } from './recordingUploads.js';
 import { getPool } from './db.js';
 import { issueActivationInvite } from './authStore.js';
 
@@ -13,6 +14,7 @@ const EMPLOYEE_PAGE_SIZE = 20;
 const AUDIT_PAGE_SIZE = 50;
 const MEETING_HISTORY_PAGE_SIZE = 20;
 const RECORDING_PAGE_SIZE = 20;
+const PROCESSING_JOB_PAGE_SIZE = 20;
 export const validAdminEmployeeId = value =>
   typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/i.test(value);
 
@@ -111,6 +113,81 @@ export function formatMeetingHistoryCsv(rows) {
   return '\uFEFF' + lines.join('\r\n') + '\r\n';
 }
 
+const auditActionLabels = {
+  'admin.bootstrap': 'Tetapkan Super Admin pertama',
+  'admin.grant': 'Beri akses Super Admin',
+  'admin.revoke': 'Cabut akses Super Admin',
+  'account.status.change': 'Ubah status akun',
+  'account.invite': 'Buat undangan aktivasi',
+  'account.request.approve': 'Setujui permintaan aktivasi',
+  'account.request.decline': 'Tolak permintaan aktivasi',
+};
+
+const auditResultLabels = {
+  succeeded: 'Berhasil',
+  no_change: 'Tanpa perubahan',
+  denied: 'Ditolak',
+  failed: 'Gagal',
+};
+
+const auditValueLabels = {
+  active: 'Aktif',
+  inactive: 'Nonaktif',
+  super_admin: 'Super Admin',
+  none: 'Tanpa akses admin',
+};
+
+const auditReasonLabels = {
+  last_super_admin: 'Super Admin aktif terakhir',
+  bootstrap_complete: 'Super Admin pertama sudah ditetapkan',
+  account_not_found: 'Akun tidak ditemukan',
+  account_not_activated: 'Akun belum aktif atau belum diaktivasi',
+  account_inactive: 'Akun nonaktif',
+  account_already_activated: 'Akun sudah diaktivasi',
+  employee_email_missing: 'Email karyawan belum tersedia atau tidak valid',
+  login_email_conflict: 'Email login sudah dipakai akun lain',
+  admin_access_revoked: 'Akses pelaku sudah dicabut',
+  request_not_found: 'Permintaan aktivasi tidak ditemukan',
+  request_already_reviewed: 'Permintaan aktivasi sudah diproses',
+};
+
+export function formatAuditCsv(rows) {
+  const headers = ['ID Event', 'Waktu (WIB)', 'Pelaku', 'Target', 'Tindakan', 'Hasil', 'Sebelum', 'Sesudah', 'Keterangan'];
+  const lines = [headers.map(escapeCsvCell).join(',')];
+
+  const adminWibDate = new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Jakarta',
+  });
+
+  for (const row of rows) {
+    const eventId = `AUD-${row.id}`;
+    const time = row.occurredAt ? `${adminWibDate.format(new Date(row.occurredAt))} WIB` : '—';
+    const actor = row.actorId ? (row.actorName ? `${row.actorId} (${row.actorName})` : row.actorId) : 'Sistem (Penetapan awal)';
+    const target = row.targetId ? (row.targetName ? `${row.targetId} (${row.targetName})` : row.targetId) : '—';
+    const action = auditActionLabels[row.action] || row.action;
+    const result = auditResultLabels[row.result] || row.result;
+    const before = auditValueLabels[row.previousValue] || row.previousValue || '—';
+    const after = auditValueLabels[row.newValue] || row.newValue || '—';
+    const reason = auditReasonLabels[row.reason] || row.reason || '—';
+
+    lines.push([
+      escapeCsvCell(eventId),
+      escapeCsvCell(time),
+      escapeCsvCell(actor),
+      escapeCsvCell(target),
+      escapeCsvCell(action),
+      escapeCsvCell(result),
+      escapeCsvCell(before),
+      escapeCsvCell(after),
+      escapeCsvCell(reason),
+    ].join(','));
+  }
+
+  return '\uFEFF' + lines.join('\r\n') + '\r\n';
+}
+
 export class PgAdminStore {
   constructor(pool = getPool()) {
     this.pool = pool;
@@ -125,29 +202,210 @@ export class PgAdminStore {
     return await isActiveSuperAdmin(this.requirePool(), employeeId) ? superAdminPermissions : [];
   }
 
-  async listAudit({ from, to, action, page }) {
+  async listAudit({ from, to, action, page, search = '', result: resultFilter = '', actorId = '', order = 'desc', pageSize = AUDIT_PAGE_SIZE }) {
+    const limit = pageSize || AUDIT_PAGE_SIZE;
+    const sortDir = order === 'asc' ? 'ASC' : 'DESC';
     const { rows: [result] } = await this.requirePool().query(`
       WITH matching AS (
-        SELECT * FROM balicall_admin_audit
-        WHERE ($1::date IS NULL OR occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
-          AND ($2::date IS NULL OR occurred_at < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
-          AND ($3 = '' OR action = $3)
+        SELECT a.id, a.actor_id, a.target_id, a.action, a.result,
+          a.previous_value, a.new_value, a.reason, a.occurred_at,
+          actor_emp.name AS actor_name,
+          target_emp.name AS target_name
+        FROM balicall_admin_audit a
+        LEFT JOIN balicall_employees actor_emp ON actor_emp.employee_id = a.actor_id
+        LEFT JOIN balicall_employees target_emp ON target_emp.employee_id = a.target_id
+        WHERE ($1::date IS NULL OR a.occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($2::date IS NULL OR a.occurred_at < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($3 = '' OR a.action = $3)
+          AND ($7 = '' OR a.result = $7)
+          AND ($8 = '' OR a.actor_id = $8 OR ($8 = 'system' AND a.actor_id IS NULL))
+          AND ($6 = '' OR (
+            a.id::text ILIKE '%' || $6 || '%'
+            OR ('AUD-' || a.id::text) ILIKE '%' || $6 || '%'
+            OR COALESCE(a.actor_id, '') ILIKE '%' || $6 || '%'
+            OR a.target_id ILIKE '%' || $6 || '%'
+            OR COALESCE(actor_emp.name, '') ILIKE '%' || $6 || '%'
+            OR COALESCE(target_emp.name, '') ILIKE '%' || $6 || '%'
+            OR a.action ILIKE '%' || $6 || '%'
+            OR (
+              CASE a.action
+                WHEN 'admin.bootstrap' THEN 'Tetapkan Super Admin pertama'
+                WHEN 'admin.grant' THEN 'Beri akses Super Admin'
+                WHEN 'admin.revoke' THEN 'Cabut akses Super Admin'
+                WHEN 'account.status.change' THEN 'Ubah status akun'
+                WHEN 'account.invite' THEN 'Buat undangan aktivasi'
+                WHEN 'account.request.approve' THEN 'Setujui permintaan aktivasi'
+                WHEN 'account.request.decline' THEN 'Tolak permintaan aktivasi'
+                ELSE a.action
+              END
+            ) ILIKE '%' || $6 || '%'
+            OR (
+              CASE a.result
+                WHEN 'succeeded' THEN 'Berhasil'
+                WHEN 'denied' THEN 'Ditolak'
+                WHEN 'no_change' THEN 'Tanpa perubahan'
+                WHEN 'failed' THEN 'Gagal'
+                ELSE a.result
+              END
+            ) ILIKE '%' || $6 || '%'
+            OR COALESCE(a.reason, '') ILIKE '%' || $6 || '%'
+            OR (
+              CASE a.reason
+                WHEN 'last_super_admin' THEN 'Super Admin aktif terakhir'
+                WHEN 'bootstrap_complete' THEN 'Super Admin pertama sudah ditetapkan'
+                WHEN 'account_not_found' THEN 'Akun tidak ditemukan'
+                WHEN 'account_not_activated' THEN 'Akun belum aktif atau belum diaktivasi'
+                WHEN 'account_inactive' THEN 'Akun nonaktif'
+                WHEN 'account_already_activated' THEN 'Akun sudah diaktivasi'
+                WHEN 'employee_email_missing' THEN 'Email karyawan belum tersedia atau tidak valid'
+                WHEN 'login_email_conflict' THEN 'Email login sudah dipakai akun lain'
+                WHEN 'admin_access_revoked' THEN 'Akses pelaku sudah dicabut'
+                WHEN 'request_not_found' THEN 'Permintaan aktivasi tidak ditemukan'
+                WHEN 'request_already_reviewed' THEN 'Permintaan aktivasi sudah diproses'
+                ELSE COALESCE(a.reason, '')
+              END
+            ) ILIKE '%' || $6 || '%'
+            OR COALESCE(a.previous_value, '') ILIKE '%' || $6 || '%'
+            OR (
+              CASE a.previous_value
+                WHEN 'active' THEN 'Aktif'
+                WHEN 'inactive' THEN 'Nonaktif'
+                WHEN 'super_admin' THEN 'Super Admin'
+                WHEN 'none' THEN 'Tanpa akses admin'
+                ELSE COALESCE(a.previous_value, '')
+              END
+            ) ILIKE '%' || $6 || '%'
+            OR COALESCE(a.new_value, '') ILIKE '%' || $6 || '%'
+            OR (
+              CASE a.new_value
+                WHEN 'active' THEN 'Aktif'
+                WHEN 'inactive' THEN 'Nonaktif'
+                WHEN 'super_admin' THEN 'Super Admin'
+                WHEN 'none' THEN 'Tanpa akses admin'
+                ELSE COALESCE(a.new_value, '')
+              END
+            ) ILIKE '%' || $6 || '%'
+            OR (a.actor_id IS NULL AND ('sistem' ILIKE '%' || $6 || '%' OR 'penetapan' ILIKE '%' || $6 || '%'))
+          ))
       ), page_info AS (
         SELECT COUNT(*)::int AS total,
           LEAST($4::bigint, GREATEST(1, (COUNT(*) + $5::int - 1) / $5::int))::int AS page
         FROM matching
       ), page_rows AS (
-        SELECT id::text AS id, actor_id AS "actorId", target_id AS "targetId", action, result,
-          previous_value AS "previousValue", new_value AS "newValue", reason, occurred_at AS "occurredAt"
-        FROM matching ORDER BY occurred_at DESC, matching.id DESC
+        SELECT matching.id::text AS id, actor_id AS "actorId", target_id AS "targetId", action, result,
+          previous_value AS "previousValue", new_value AS "newValue", reason, occurred_at AS "occurredAt",
+          actor_name AS "actorName", target_name AS "targetName"
+        FROM matching ORDER BY occurred_at ${sortDir}, matching.id ${sortDir}
         LIMIT $5 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $5)
+      ), summary_info AS (
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE result = 'succeeded')::int AS succeeded,
+          COUNT(*) FILTER (WHERE result IN ('denied', 'failed'))::int AS denied,
+          COUNT(*) FILTER (WHERE result = 'no_change')::int AS "noChange"
+        FROM matching
       )
       SELECT page_info.*,
-        COALESCE((SELECT JSON_AGG(p ORDER BY p."occurredAt" DESC, p.id::bigint DESC) FROM page_rows p), '[]'::json) AS entries,
-        ARRAY(SELECT DISTINCT action FROM balicall_admin_audit ORDER BY action) AS actions
+        COALESCE((SELECT JSON_AGG(p ORDER BY p."occurredAt" ${sortDir}, p.id::bigint ${sortDir}) FROM page_rows p), '[]'::json) AS entries,
+        ARRAY(SELECT DISTINCT action FROM balicall_admin_audit ORDER BY action) AS actions,
+        ARRAY(SELECT DISTINCT actor_id FROM balicall_admin_audit WHERE actor_id IS NOT NULL ORDER BY actor_id) AS actors,
+        (SELECT ROW_TO_JSON(summary_info.*) FROM summary_info) AS summary
       FROM page_info
-    `, [from, to, action, page, AUDIT_PAGE_SIZE]);
-    return { ...result, pageSize: AUDIT_PAGE_SIZE };
+    `, [from, to, action, page, limit, search, resultFilter, actorId]);
+    return {
+      ...result,
+      pageSize: limit,
+      summary: result?.summary || { total: 0, succeeded: 0, denied: 0, noChange: 0 },
+      actors: result?.actors || [],
+    };
+  }
+
+  async exportAuditCsv({ from, to, action, search = '', result: resultFilter = '', actorId = '', order = 'desc' }) {
+    const sortDir = order === 'asc' ? 'ASC' : 'DESC';
+    const { rows } = await this.requirePool().query(`
+      SELECT a.id::text AS id, a.actor_id AS "actorId", a.target_id AS "targetId", a.action, a.result,
+        a.previous_value AS "previousValue", a.new_value AS "newValue", a.reason, a.occurred_at AS "occurredAt",
+        actor_emp.name AS "actorName", target_emp.name AS "targetName"
+      FROM balicall_admin_audit a
+      LEFT JOIN balicall_employees actor_emp ON actor_emp.employee_id = a.actor_id
+      LEFT JOIN balicall_employees target_emp ON target_emp.employee_id = a.target_id
+      WHERE ($1::date IS NULL OR a.occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
+        AND ($2::date IS NULL OR a.occurred_at < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta'))
+        AND ($3 = '' OR a.action = $3)
+        AND ($4 = '' OR a.result = $4)
+        AND ($5 = '' OR a.actor_id = $5 OR ($5 = 'system' AND a.actor_id IS NULL))
+        AND ($6 = '' OR (
+          a.id::text ILIKE '%' || $6 || '%'
+          OR ('AUD-' || a.id::text) ILIKE '%' || $6 || '%'
+          OR COALESCE(a.actor_id, '') ILIKE '%' || $6 || '%'
+          OR a.target_id ILIKE '%' || $6 || '%'
+          OR COALESCE(actor_emp.name, '') ILIKE '%' || $6 || '%'
+          OR COALESCE(target_emp.name, '') ILIKE '%' || $6 || '%'
+          OR a.action ILIKE '%' || $6 || '%'
+          OR (
+            CASE a.action
+              WHEN 'admin.bootstrap' THEN 'Tetapkan Super Admin pertama'
+              WHEN 'admin.grant' THEN 'Beri akses Super Admin'
+              WHEN 'admin.revoke' THEN 'Cabut akses Super Admin'
+              WHEN 'account.status.change' THEN 'Ubah status akun'
+              WHEN 'account.invite' THEN 'Buat undangan aktivasi'
+              WHEN 'account.request.approve' THEN 'Setujui permintaan aktivasi'
+              WHEN 'account.request.decline' THEN 'Tolak permintaan aktivasi'
+              ELSE a.action
+            END
+          ) ILIKE '%' || $6 || '%'
+          OR (
+            CASE a.result
+              WHEN 'succeeded' THEN 'Berhasil'
+              WHEN 'denied' THEN 'Ditolak'
+              WHEN 'no_change' THEN 'Tanpa perubahan'
+              WHEN 'failed' THEN 'Gagal'
+              ELSE a.result
+            END
+          ) ILIKE '%' || $6 || '%'
+          OR COALESCE(a.reason, '') ILIKE '%' || $6 || '%'
+          OR (
+            CASE a.reason
+              WHEN 'last_super_admin' THEN 'Super Admin aktif terakhir'
+              WHEN 'bootstrap_complete' THEN 'Super Admin pertama sudah ditetapkan'
+              WHEN 'account_not_found' THEN 'Akun tidak ditemukan'
+              WHEN 'account_not_activated' THEN 'Akun belum aktif atau belum diaktivasi'
+              WHEN 'account_inactive' THEN 'Akun nonaktif'
+              WHEN 'account_already_activated' THEN 'Akun sudah diaktivasi'
+              WHEN 'employee_email_missing' THEN 'Email karyawan belum tersedia atau tidak valid'
+              WHEN 'login_email_conflict' THEN 'Email login sudah dipakai akun lain'
+              WHEN 'admin_access_revoked' THEN 'Akses pelaku sudah dicabut'
+              WHEN 'request_not_found' THEN 'Permintaan aktivasi tidak ditemukan'
+              WHEN 'request_already_reviewed' THEN 'Permintaan aktivasi sudah diproses'
+              ELSE COALESCE(a.reason, '')
+            END
+          ) ILIKE '%' || $6 || '%'
+          OR COALESCE(a.previous_value, '') ILIKE '%' || $6 || '%'
+          OR (
+            CASE a.previous_value
+              WHEN 'active' THEN 'Aktif'
+              WHEN 'inactive' THEN 'Nonaktif'
+              WHEN 'super_admin' THEN 'Super Admin'
+              WHEN 'none' THEN 'Tanpa akses admin'
+              ELSE COALESCE(a.previous_value, '')
+            END
+          ) ILIKE '%' || $6 || '%'
+          OR COALESCE(a.new_value, '') ILIKE '%' || $6 || '%'
+          OR (
+            CASE a.new_value
+              WHEN 'active' THEN 'Aktif'
+              WHEN 'inactive' THEN 'Nonaktif'
+              WHEN 'super_admin' THEN 'Super Admin'
+              WHEN 'none' THEN 'Tanpa akses admin'
+              ELSE COALESCE(a.new_value, '')
+            END
+          ) ILIKE '%' || $6 || '%'
+          OR (a.actor_id IS NULL AND ('sistem' ILIKE '%' || $6 || '%' OR 'penetapan' ILIKE '%' || $6 || '%'))
+        ))
+      ORDER BY a.occurred_at ${sortDir}, a.id ${sortDir}
+    `, [from, to, action, resultFilter, actorId, search]);
+
+    return formatAuditCsv(rows);
   }
 
   async listMeetingMetadata() {
@@ -310,12 +568,203 @@ export class PgAdminStore {
     return metrics;
   }
 
+  async recordingQueueExtendedStats() {
+    const { rows: [stats] } = await this.requirePool().query(`
+      WITH recent AS (
+        SELECT status,
+          (status = 'done' AND completed_at BETWEEN NOW() - INTERVAL '168 hours' AND NOW()) AS completed_7d,
+          (status = 'failed' AND COALESCE(updated_at, created_at) BETWEEN NOW() - INTERVAL '168 hours' AND NOW()) AS failed_7d
+        FROM balicall_recording_uploads
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE completed_7d = true)::int AS "completed7d",
+        COUNT(*) FILTER (WHERE failed_7d = true)::int AS "failed7d",
+        COUNT(*) FILTER (WHERE status = 'done')::int AS "totalCompleted",
+        COUNT(*) FILTER (WHERE status = 'failed')::int AS "totalFailed",
+        7 AS "windowDays"
+      FROM recent
+    `);
+    return stats;
+  }
+
+  async listProcessingJobs({ search = '', status = '', processingType = '', from = null, to = null, order = 'desc', page = 1, pageSize = PROCESSING_JOB_PAGE_SIZE }) {
+    const limit = Math.max(1, Math.min(100, Number(pageSize) || PROCESSING_JOB_PAGE_SIZE));
+    const pageNum = Math.max(1, Number(page) || 1);
+    const sortDir = order === 'asc' ? 'ASC' : 'DESC';
+
+    const { rows: [result] } = await this.requirePool().query(`
+      WITH matching AS (
+        SELECT
+          id,
+          title,
+          original_filename AS "originalFilename",
+          owner_id AS "ownerId",
+          owner_name AS "ownerName",
+          file_size::text AS "fileSize",
+          language,
+          status,
+          stage,
+          stt_model AS "sttModel",
+          diarizer,
+          llm_model AS "llmModel",
+          provider,
+          error,
+          duration_seconds AS "durationSeconds",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          completed_at AS "completedAt",
+          (transcript IS NOT NULL) AS "hasTranscript",
+          (summary IS NOT NULL) AS "hasSummary",
+          (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') AS "retryCount",
+          CASE
+            WHEN status = 'failed' AND (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') >= 5 THEN false
+            WHEN status = 'failed' AND transcript IS NOT NULL THEN true
+            WHEN status = 'failed' AND file_path IS NOT NULL THEN true
+            ELSE false
+          END AS "canRetry",
+          CASE
+            WHEN status = 'failed' AND (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') >= 5 THEN 'Batas maksimum percobaan ulang (5 kali) telah tercapai.'
+            WHEN status = 'failed' AND transcript IS NOT NULL THEN 'Transkrip tersimpan; siap diringkas ulang.'
+            WHEN status = 'failed' AND file_path IS NOT NULL THEN 'Berkas audio asli tersedia; siap ditranskrip ulang.'
+            WHEN status = 'failed' THEN 'File audio asli telah dibersihkan; rekaman perlu diunggah ulang.'
+            WHEN status = 'done' THEN 'Pemrosesan sudah selesai.'
+            WHEN status IN ('queued', 'processing') THEN 'Sedang dalam antrean pemrosesan.'
+            ELSE 'Percobaan ulang tidak tersedia.'
+          END AS "retryReason"
+        FROM balicall_recording_uploads
+        WHERE ($1 = '' OR STRPOS(LOWER(id), LOWER($1)) > 0
+               OR STRPOS(LOWER(title), LOWER($1)) > 0
+               OR STRPOS(LOWER(COALESCE(original_filename, '')), LOWER($1)) > 0
+               OR STRPOS(LOWER(COALESCE(owner_name, '')), LOWER($1)) > 0
+               OR STRPOS(LOWER(COALESCE(owner_id, '')), LOWER($1)) > 0)
+          AND ($2 = '' OR status = $2)
+          AND ($3 = '' OR STRPOS(LOWER(COALESCE(stt_model, '')), LOWER($3)) > 0
+               OR STRPOS(LOWER(COALESCE(diarizer, '')), LOWER($3)) > 0)
+          AND ($4::timestamp IS NULL OR created_at >= ($4::timestamp AT TIME ZONE 'Asia/Jakarta'))
+          AND ($5::timestamp IS NULL OR created_at < (($5::timestamp + INTERVAL '1 day') AT TIME ZONE 'Asia/Jakarta'))
+      ), page_info AS (
+        SELECT COUNT(*)::int AS total,
+          LEAST($7::bigint, GREATEST(1, (COUNT(*) + $8::int - 1) / $8::int))::int AS page
+        FROM matching
+      ), page_rows AS (
+        SELECT * FROM matching
+        ORDER BY
+          CASE WHEN $6 = 'asc' THEN "createdAt" END ASC NULLS LAST,
+          CASE WHEN $6 = 'desc' OR $6 = '' THEN "createdAt" END DESC NULLS LAST,
+          id DESC
+        LIMIT $8 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $8)
+      )
+      SELECT page_info.*,
+        COALESCE((SELECT JSON_AGG(r ORDER BY
+          CASE WHEN $6 = 'asc' THEN r."createdAt" END ASC NULLS LAST,
+          CASE WHEN $6 = 'desc' OR $6 = '' THEN r."createdAt" END DESC NULLS LAST,
+          r.id DESC) FROM page_rows r), '[]'::json) AS jobs
+      FROM page_info
+    `, [search, status, processingType, from, to, sortDir.toLowerCase(), pageNum, limit]);
+
+    const jobs = (result?.jobs || []).map(job => ({
+      ...job,
+      errorCategory: classifyJobError(job.error),
+    }));
+    const total = result?.total || 0;
+    const actualPage = result?.page || 1;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return { jobs, total, page: actualPage, pageSize: limit, totalPages };
+  }
+
+  async getProcessingJobDetail(id) {
+    const { rows: [row] } = await this.requirePool().query(`
+      SELECT
+        id,
+        title,
+        original_filename AS "originalFilename",
+        owner_id AS "ownerId",
+        owner_name AS "ownerName",
+        file_size::text AS "fileSize",
+        language,
+        status,
+        stage,
+        stt_model AS "sttModel",
+        diarizer,
+        llm_model AS "llmModel",
+        provider,
+        error,
+        duration_seconds AS "durationSeconds",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt",
+        completed_at AS "completedAt",
+        (transcript IS NOT NULL) AS "hasTranscript",
+        CASE
+          WHEN transcript IS NOT NULL AND jsonb_typeof(transcript->'segments') = 'array'
+          THEN jsonb_array_length(transcript->'segments')
+          ELSE 0
+        END AS "segmentCount",
+        (summary IS NOT NULL) AS "hasSummary",
+        (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') AS "retryCount",
+        CASE
+          WHEN status = 'failed' AND (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') >= 5 THEN false
+          WHEN status = 'failed' AND transcript IS NOT NULL THEN true
+          WHEN status = 'failed' AND file_path IS NOT NULL THEN true
+          ELSE false
+        END AS "canRetry",
+        CASE
+          WHEN status = 'failed' AND (SELECT COUNT(*)::int FROM balicall_admin_audit WHERE target_id = balicall_recording_uploads.id AND action = 'recording.retry') >= 5 THEN 'Batas maksimum percobaan ulang (5 kali) telah tercapai.'
+          WHEN status = 'failed' AND transcript IS NOT NULL THEN 'Transkrip tersimpan; siap diringkas ulang.'
+          WHEN status = 'failed' AND file_path IS NOT NULL THEN 'Berkas audio asli tersedia; siap ditranskrip ulang.'
+          WHEN status = 'failed' THEN 'File audio asli telah dibersihkan; rekaman perlu diunggah ulang.'
+          WHEN status = 'done' THEN 'Pemrosesan sudah selesai.'
+          WHEN status IN ('queued', 'processing') THEN 'Sedang dalam antrean pemrosesan.'
+          ELSE 'Percobaan ulang tidak tersedia.'
+        END AS "retryReason"
+      FROM balicall_recording_uploads
+      WHERE id = $1
+    `, [id]);
+    if (!row) return null;
+
+    const { rows: retryHistory } = await this.requirePool().query(`
+      SELECT
+        a.id,
+        a.actor_id AS "actorId",
+        e.name AS "actorName",
+        a.action,
+        a.result,
+        a.reason,
+        a.occurred_at AS "occurredAt"
+      FROM balicall_admin_audit a
+      LEFT JOIN balicall_employees e ON e.employee_id = a.actor_id
+      WHERE a.target_id = $1 AND a.action = 'recording.retry'
+      ORDER BY a.occurred_at DESC, a.id DESC
+    `, [id]);
+
+    return {
+      ...row,
+      retryHistory: retryHistory || [],
+      errorCategory: classifyJobError(row.error),
+    };
+  }
+
+  async recordAudit({ actorId, targetId, action, result = 'succeeded', previousValue = null, newValue = null, reason = null }) {
+    await this.requirePool().query(`
+      INSERT INTO balicall_admin_audit(actor_id, target_id, action, result, previous_value, new_value, reason)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [actorId, targetId, action, result, previousValue, newValue, reason]);
+  }
+
   async databaseReady() {
     try {
       await this.requirePool().query('SELECT 1');
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async databaseVersion() {
+    try {
+      const { rows } = await this.requirePool().query('SHOW server_version');
+      return rows[0]?.server_version ? `PostgreSQL ${rows[0].server_version}` : 'PostgreSQL';
+    } catch {
+      return null;
     }
   }
 
@@ -387,34 +836,48 @@ export class PgAdminStore {
     return { days, ...totals };
   }
 
-  async listEmployees({ search, department, status, page }) {
+  async listEmployees({ search, department, status, role = '', page }) {
     const { rows: [result] } = await this.requirePool().query(`
-      WITH matching AS (
+      WITH directory_summary AS (
+        SELECT
+          COUNT(*) FILTER (WHERE BTRIM(e.status) = 'active' AND a.password_hash IS NOT NULL)::int AS "activeAccounts",
+          COUNT(*) FILTER (WHERE BTRIM(e.status) = 'active' AND a.password_hash IS NOT NULL AND r.role = 'super_admin')::int AS "superAdmins",
+          COUNT(DISTINCT BTRIM(e.department)) FILTER (WHERE BTRIM(e.department) <> '')::int AS "totalDepartments"
+        FROM balicall_employees e
+        LEFT JOIN balicall_auth_accounts a USING (employee_id)
+        LEFT JOIN balicall_admin_roles r ON r.employee_id = e.employee_id AND r.role = 'super_admin'
+      ), matching AS (
         SELECT e.employee_id AS "employeeId", e.name, BTRIM(e.department) AS department,
           BTRIM(e.status) AS status, a.password_hash IS NOT NULL AS activated,
-          r.role IS NOT NULL AS "isSuperAdmin"
+          r.role IS NOT NULL AS "isSuperAdmin",
+          a.last_login_at AS "lastLoginAt"
         FROM balicall_employees e
         LEFT JOIN balicall_auth_accounts a USING (employee_id)
         LEFT JOIN balicall_admin_roles r USING (employee_id)
-        WHERE ($1 = '' OR STRPOS(LOWER(e.name), LOWER($1)) > 0)
-          AND ($2 = '' OR BTRIM(e.department)=$2)
-          AND ($3 = '' OR BTRIM(e.status)=$3)
+        WHERE ($1 = '' OR STRPOS(LOWER(e.name), LOWER($1)) > 0 OR STRPOS(LOWER(COALESCE(e.email, '')), LOWER($1)) > 0 OR STRPOS(LOWER(COALESCE(a.login_email, '')), LOWER($1)) > 0)
+          AND ($2 = '' OR BTRIM(e.department) = $2)
+          AND ($3 = '' OR BTRIM(e.status) = $3)
+          AND ($4 = '' OR ($4 = 'super_admin' AND r.role IS NOT NULL) OR ($4 = 'employee' AND r.role IS NULL))
       ), page_info AS (
         SELECT COUNT(*)::int AS total,
-          LEAST($4::bigint, GREATEST(1, (COUNT(*) + $5::int - 1) / $5::int))::int AS page
+          LEAST($5::bigint, GREATEST(1, (COUNT(*) + $6::int - 1) / $6::int))::int AS page
         FROM matching
       ), page_rows AS (
         SELECT * FROM matching ORDER BY LOWER(name), "employeeId"
-        LIMIT $5 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $5)
+        LIMIT $6 OFFSET (((SELECT page FROM page_info) - 1)::bigint * $6)
       )
       SELECT page_info.*,
+        ROW_TO_JSON(directory_summary.*) AS summary,
+        directory_summary."activeAccounts",
+        directory_summary."superAdmins",
+        directory_summary."totalDepartments",
         COALESCE((SELECT JSON_AGG(p ORDER BY LOWER(p.name), p."employeeId") FROM page_rows p), '[]'::json) AS employees,
         ARRAY(SELECT DISTINCT BTRIM(department) FROM balicall_employees WHERE BTRIM(department) <> ''
           ORDER BY BTRIM(department)) AS departments,
         ARRAY(SELECT DISTINCT BTRIM(status) FROM balicall_employees WHERE BTRIM(status) <> ''
           ORDER BY BTRIM(status)) AS statuses
-      FROM page_info
-    `, [search, department, status, page, EMPLOYEE_PAGE_SIZE]);
+      FROM page_info CROSS JOIN directory_summary
+    `, [search, department, status, role, page, EMPLOYEE_PAGE_SIZE]);
     return { ...result, pageSize: EMPLOYEE_PAGE_SIZE };
   }
 
@@ -518,7 +981,6 @@ export class PgAdminStore {
       }
     });
   }
-
   async listActivationRequests(search = '') {
     const { rows } = await this.requirePool().query(`
       SELECT id::text AS id, name, email, status, created_at AS "createdAt"
