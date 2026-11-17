@@ -9,7 +9,8 @@ export type AppView =
   | 'settings'
   | 'recordings'
   | 'admin'
-  | 'documentation';
+  | 'documentation'
+  | 'observer';
 
 export type SettingsSection =
   | 'overview'
@@ -37,6 +38,7 @@ export const ADMIN_SECTIONS = {
   employees: 'Karyawan',
   requests: 'Permintaan',
   meetings: 'Rapat',
+  'live-monitor': 'Live Monitor',
   recordings: 'Rekaman',
   system: 'Layanan',
   audit: 'Audit',
@@ -89,6 +91,8 @@ export function routeToHash(route: RouteState): string {
       return '#/lobby?intent=create';
     case 'in-call':
       return route.meetingId ? `#/call/${encodeURIComponent(route.meetingId)}` : '#/call';
+    case 'observer':
+      return route.meetingId ? `#/observer/${encodeURIComponent(route.meetingId)}` : '#/observer';
     default:
       return '#/home';
   }
@@ -172,6 +176,14 @@ export function hashToRoute(hash: string, fallback?: RouteState): RouteState {
       };
     }
 
+    case 'observer': {
+      const meetingId = segments[1] ? decodeURIComponent(segments[1]) : null;
+      return {
+        view: 'observer',
+        meetingId,
+      };
+    }
+
 
     default:
       return fallback || { view: 'home' };
@@ -198,6 +210,9 @@ export function isSameRoute(a: RouteState, b: RouteState): boolean {
   if (a.view === 'in-call') {
     return (a.meetingId || null) === (b.meetingId || null);
   }
+  if (a.view === 'observer') {
+    return (a.meetingId || null) === (b.meetingId || null);
+  }
   return true;
 }
 
@@ -217,7 +232,7 @@ export function sanitizeRouteForUser(route: RouteState, user?: { isGuest?: boole
   if (user?.isGuest) {
     return sanitizeRouteForGuest(route, true);
   }
-  if (!user?.isSuperAdmin && route.view === 'admin') {
+  if (!user?.isSuperAdmin && (route.view === 'admin' || route.view === 'observer')) {
     return { view: 'home' };
   }
   return route;

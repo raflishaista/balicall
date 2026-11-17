@@ -293,6 +293,31 @@ export function MeetingRoom({
   onKicked,
 }: MeetingRoomProps) {
   const room = useRoomContext();
+  const [isEnterpriseMonitored, setIsEnterpriseMonitored] = useState<boolean>(() => {
+    try {
+      const meta = room?.metadata ? JSON.parse(room.metadata) : null;
+      return Boolean(meta?.isMonitored);
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (!room) return;
+    const handleMetadataChange = () => {
+      try {
+        const meta = room.metadata ? JSON.parse(room.metadata) : null;
+        setIsEnterpriseMonitored(Boolean(meta?.isMonitored));
+      } catch {
+        setIsEnterpriseMonitored(false);
+      }
+    };
+    handleMetadataChange();
+    room.on(RoomEvent.RoomMetadataChanged, handleMetadataChange);
+    return () => {
+      room.off(RoomEvent.RoomMetadataChanged, handleMetadataChange);
+    };
+  }, [room]);
   const [meetingFiles, setMeetingFiles] = useState<MeetingFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
@@ -994,6 +1019,13 @@ export function MeetingRoom({
             <span className="presentation-clock" aria-label="Durasi rapat">
               BaliCall · {callDuration}
             </span>
+          )}
+
+          {isEnterpriseMonitored && (
+            <div className="enterprise-monitoring-badge" role="status" aria-live="polite" title="Sesi ini dipantau oleh Administrator Kepatuhan Perusahaan sesuai kebijakan organisasi.">
+              <ShieldCheck size={14} aria-hidden="true" />
+              <span>Pemantauan Kepatuhan Aktif</span>
+            </div>
           )}
 
           <span className="participant-count">

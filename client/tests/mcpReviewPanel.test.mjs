@@ -13,8 +13,8 @@ for(const decision of [true,false])test(`host ${decision?'Yes':'No'} requires ex
  const calls=[];let root;
  const request=async(path,options)=>{if(options.method==='POST'){calls.push(JSON.parse(options.body));return {...ready,status:decision?'sent':'rejected',canDecide:!decision};}return ready;};
  try{await act(async()=>{root=create(React.createElement(exports.McpReviewPanel,{meetingId:'m',token:'token',request}));});assert.equal(calls.length,0);assert.match(JSON.stringify(root.toJSON()),/Periksa jaringan/);
- const buttons=root.root.findAllByType('button');await act(async()=>buttons[decision?0:1].props.onClick());
- assert.deepEqual(calls,[{decision,revision:'rev',planDigest:'digest'}]);assert.match(JSON.stringify(root.toJSON()),decision?/Perubahan telah dikirim/:/Host memilih tidak mengirim/);
+ const buttons=root.root.findAllByType('button');await act(async()=>buttons[decision?0:2].props.onClick());
+ assert.deepEqual(calls,[{decision,approvedIndexes:decision?[0]:[],edits:{},revision:'rev',planDigest:'digest'}]);assert.match(JSON.stringify(root.toJSON()),decision?/Perubahan telah dikirim/:/Host memilih tidak mengirim/);
  }finally{await act(async()=>root?.unmount());}
 });
 test('participants have no approval controls; failed load never enables sending',async()=>{

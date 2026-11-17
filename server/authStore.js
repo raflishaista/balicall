@@ -16,7 +16,7 @@ export async function initAdminDb(client) {
     CREATE TABLE IF NOT EXISTS balicall_admin_audit (
       id BIGSERIAL PRIMARY KEY,
       actor_id VARCHAR(32),
-      target_id VARCHAR(32) NOT NULL,
+      target_id VARCHAR(128) NOT NULL,
       action TEXT NOT NULL,
       result TEXT NOT NULL CHECK (result IN ('succeeded', 'no_change', 'denied')),
       previous_value TEXT,
@@ -24,6 +24,7 @@ export async function initAdminDb(client) {
       reason TEXT,
       occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
     );
+    ALTER TABLE balicall_admin_audit ALTER COLUMN target_id TYPE VARCHAR(128);
     CREATE TABLE IF NOT EXISTS balicall_activation_requests (
       id BIGSERIAL PRIMARY KEY,
       name VARCHAR(128) NOT NULL,
@@ -34,6 +35,22 @@ export async function initAdminDb(client) {
       reviewed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS balicall_observer_sessions (
+      observer_id VARCHAR(64) PRIMARY KEY,
+      admin_user_id VARCHAR(32) NOT NULL REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE,
+      meeting_id VARCHAR(128) NOT NULL,
+      access_reason TEXT NOT NULL,
+      approval_status VARCHAR(32) NOT NULL DEFAULT 'approved' CHECK (approval_status IN ('approved', 'pending', 'rejected')),
+      session_status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (session_status IN ('active', 'ended', 'revoked', 'expired')),
+      token_hash CHAR(64),
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ended_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS balicall_observer_sessions_meeting ON balicall_observer_sessions(meeting_id);
+    CREATE INDEX IF NOT EXISTS balicall_observer_sessions_admin ON balicall_observer_sessions(admin_user_id);
+    CREATE INDEX IF NOT EXISTS balicall_observer_sessions_active ON balicall_observer_sessions(session_status, expires_at);
   `);
 }
 

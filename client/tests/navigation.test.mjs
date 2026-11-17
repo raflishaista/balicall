@@ -182,6 +182,26 @@ test('sanitizeRouteForUser restricts admin navigation for normal users and guest
     sanitizeRouteForUser({ view: 'summary', meetingId: 'm1' }, { isSuperAdmin: false }),
     { view: 'summary', meetingId: 'm1' }
   );
+
+  // Observer route is strictly protected: non-superadmin redirected to home
+  assert.deepEqual(
+    sanitizeRouteForUser({ view: 'observer', meetingId: 'meet-123' }, { isSuperAdmin: false }),
+    { view: 'home' }
+  );
+  assert.deepEqual(
+    sanitizeRouteForUser({ view: 'observer', meetingId: 'meet-123' }, { isSuperAdmin: true }),
+    { view: 'observer', meetingId: 'meet-123' }
+  );
+});
+
+test('live-monitor and observer routes format and parse correctly', () => {
+  const monitorRoute = { view: 'admin', adminSection: 'live-monitor' };
+  assert.equal(routeToHash(monitorRoute), '#/admin/live-monitor');
+  assert.deepEqual(hashToRoute('#/admin/live-monitor'), monitorRoute);
+
+  const observerRoute = { view: 'observer', meetingId: 'sec-ops-99' };
+  assert.equal(routeToHash(observerRoute), '#/observer/sec-ops-99');
+  assert.deepEqual(hashToRoute('#/observer/sec-ops-99'), observerRoute);
 });
 
 test('syncBrowserHistory updates pushState and replaceState appropriately', () => {

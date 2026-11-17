@@ -3,6 +3,7 @@ import { SEA_LIVE_MODEL, seaLiveCapabilities, seaSessionDiarized } from './seaLi
 import express from 'express';
 import { attachAuth, isOriginAllowed } from './auth.js';
 import { attachAdminApi } from './adminApi.js';
+import { PgAdminStore } from './adminStore.js';
 import cors from 'cors';
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
@@ -786,7 +787,7 @@ async function syncActionItemsToItProject(
   attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
   const { recordingCapabilities, retryUpload } = attachRecordingUploads(app, config, { fetchImpl });
-  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload });
+  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, roomService });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {
@@ -1162,6 +1163,17 @@ async function syncActionItemsToItProject(
   }
 
   app.post('/api/token', asyncRoute(async (req, res) => {
+    const rawEmployeeId = String(req.body?.employeeId || '').trim();
+    if (rawEmployeeId.startsWith('observer-')) {
+      new PgAdminStore().recordAudit({
+        actorId: req.auth?.user?.employeeId || rawEmployeeId,
+        targetId: String(req.body?.roomName || 'unknown'),
+        action: 'observer.policy.violation',
+        result: 'denied',
+        reason: 'Percobaan bergabung sebagai peserta biasa menggunakan identitas pemantau',
+      }).catch(() => {});
+      return res.status(403).json({ error: 'Identitas pemantau tidak dapat bergabung sebagai peserta biasa.' });
+    }
     if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
     let { roomName, employeeId, employeeName, department = 'General', roomCode, intent, waitingRoom } = req.body || {};
     if (!nonEmpty(department)) department = 'General';
@@ -1196,6 +1208,16 @@ async function syncActionItemsToItProject(
     }
 
     const cleanId = employeeId.trim();
+    if (cleanId.startsWith('observer-')) {
+      new PgAdminStore().recordAudit({
+        actorId: req.auth?.user?.employeeId || cleanId,
+        targetId: roomName || 'unknown',
+        action: 'observer.policy.violation',
+        result: 'denied',
+        reason: 'Percobaan bergabung sebagai peserta biasa menggunakan identitas pemantau',
+      }).catch(() => {});
+      return res.status(403).json({ error: 'Identitas pemantau tidak dapat bergabung sebagai peserta biasa.' });
+    }
 
     // Verify employee ID format and database registration
     if (config.verifyEmployeeId && !req.auth?.user.isGuest) {
@@ -1621,6 +1643,19 @@ async function syncActionItemsToItProject(
     if (!token) return res.status(401).json({ error: 'A meeting token is required' });
     let claims;
     try { claims = await verifier.verify(token); } catch { return res.status(401).json({ error: 'Meeting token is invalid or expired' }); }
+    if (claims.sub?.startsWith('observer-') || claims.metadata?.includes('"isObserver":true') || claims.video?.hidden) {
+      new PgAdminStore().recordAudit({
+        actorId: claims.sub,
+        targetId: meeting.id,
+        action: 'observer.policy.violation',
+        result: 'denied',
+        reason: `Percobaan mutasi ilegal ${req.method} ${req.path} oleh token pemantau`,
+      }).catch(() => {});
+      return res.status(403).json({
+        error: 'Mode pemantau pribadi hanya memiliki akses baca (read-only) dan tidak diizinkan mengubah status rapat.',
+        code: 'OBSERVER_READ_ONLY',
+      });
+    }
     if (claims.video?.room !== meeting.livekitRoom || !claims.video?.roomJoin || !meeting.participants.has(claims.sub)) return res.status(403).json({ error: 'This token cannot access the meeting' });
     req.meetingId = meeting.id;
     if (req.auth && claims.sub !== req.auth.user.employeeId) return res.status(403).json({ error: 'Token rapat bukan milik akun ini.' });
