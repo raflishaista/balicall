@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Circle, Hand, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
+import { AudioLines, Check, ChevronUp, Circle, Hand, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, handRaised = false, onToggleRaiseHand }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, handRaised = false, onToggleRaiseHand, isHost = false, screenSharePolicy = 'all', chatDisabled = false, onChangeScreenSharePolicy, onToggleChatDisabled }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
   handRaised?: boolean; onToggleRaiseHand?: () => void;
+  isHost?: boolean;
+  screenSharePolicy?: 'all' | 'co-hosts' | 'host';
+  chatDisabled?: boolean;
+  onChangeScreenSharePolicy?: (policy: 'all' | 'co-hosts' | 'host') => void;
+  onToggleChatDisabled?: (disabled: boolean) => void;
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   microphoneRestricted: boolean; speakRequestPending: boolean; onRequestToSpeak: () => Promise<void>;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
@@ -15,8 +20,10 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
   isCameraBlur?: boolean; cameraBlurPending?: boolean; cameraBlurSupported?: boolean; onToggleCameraBlur?: () => Promise<void>;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const more = useRef<HTMLDivElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
+  const shareMenu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moreOpen) return;
     more.current?.querySelector<HTMLButtonElement>('.meeting-more-menu button:not([disabled])')?.focus();
@@ -24,6 +31,17 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
   }, [moreOpen]);
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const outside = (event: PointerEvent) => { if (!shareMenu.current?.contains(event.target as Node)) setShareMenuOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setShareMenuOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [shareMenuOpen]);
   return <footer className="call-control-bar" role="group" aria-label="Kontrol rapat" id="meeting-controls">
     <div className="call-controls call-controls-left">
       <button
@@ -94,9 +112,52 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
         </button>
       )}
       {onOpenBackgrounds ? <button type="button" className="call-control" aria-label="Latar kamera" aria-haspopup="dialog" disabled={busy || devicePending || cameraPending || !connected} onClick={onOpenBackgrounds}><Sparkles size={22} /><span>Latar kamera</span></button> : cameraBlurSupported && onToggleCameraBlur ? <button type="button" className={`call-control ${isCameraBlur ? 'control-active' : ''}`} aria-label={isCameraBlur ? 'Nonaktifkan blur latar belakang' : 'Aktifkan blur latar belakang'} aria-pressed={isCameraBlur} aria-busy={cameraBlurPending} disabled={busy || !isCameraEnabled || cameraBlurPending || devicePending || !connected} onClick={() => void onToggleCameraBlur()}><Sparkles size={22} /><span>Blur latar</span></button> : null}
-      <button type="button" className={`call-control ${isScreenShareEnabled ? 'control-active' : ''}`} aria-label={isScreenShareEnabled ? 'Hentikan berbagi layar' : 'Bagikan layar'} aria-pressed={isScreenShareEnabled} aria-busy={screenSharePending} disabled={busy || screenSharePending || !connected || (!screenShareSupported && !isScreenShareEnabled)} onClick={() => void onToggleScreenShare()}>
-        {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
-      </button>
+      <div className="screen-share-split" ref={shareMenu}>
+        <button type="button" className={`call-control ${isScreenShareEnabled ? 'control-active' : ''}`} aria-label={isScreenShareEnabled ? 'Hentikan berbagi layar' : 'Bagikan layar'} aria-pressed={isScreenShareEnabled} aria-busy={screenSharePending} disabled={busy || screenSharePending || !connected || (!screenShareSupported && !isScreenShareEnabled)} onClick={() => void onToggleScreenShare()}>
+          {screenSharePending ? <Loader2 className="ui-spinner" size={22} aria-hidden="true" /> : isScreenShareEnabled ? <MonitorOff size={22} /> : <MonitorUp size={22} />}<span>{screenSharePending ? 'Memproses…' : isScreenShareEnabled ? 'Hentikan layar' : 'Bagikan layar'}</span>
+        </button>
+        {isHost && onChangeScreenSharePolicy && (
+          <>
+            <button
+              type="button"
+              className={`screen-share-caret ${shareMenuOpen ? 'open' : ''}`}
+              aria-label="Pengaturan berbagi layar"
+              aria-expanded={shareMenuOpen}
+              aria-haspopup="menu"
+              disabled={busy || !connected}
+              onClick={() => setShareMenuOpen(open => !open)}
+              title="Siapa yang dapat berbagi layar"
+            >
+              <ChevronUp size={11} />
+            </button>
+            {shareMenuOpen && (
+              <div className="screen-share-policy-menu" role="menu" aria-label="Siapa yang dapat berbagi layar">
+                <p className="screen-share-policy-title">Siapa yang dapat berbagi layar?</p>
+                {([
+                  ['all', 'Semua peserta'],
+                  ['co-hosts', 'Host & Co-host'],
+                  ['host', 'Hanya Host'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={screenSharePolicy === value}
+                    className={screenSharePolicy === value ? 'selected' : ''}
+                    onClick={() => {
+                      setShareMenuOpen(false);
+                      onChangeScreenSharePolicy(value);
+                    }}
+                  >
+                    <span>{label}</span>
+                    {screenSharePolicy === value && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
       {onToggleRaiseHand && (
         <button
           type="button"
@@ -119,6 +180,21 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
         <div className="meeting-more-menu" id="meeting-more-options" role="group" aria-label="Pilihan lainnya" hidden={!moreOpen}>
           <button type="button" aria-label={speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkripsi' : 'Mulai transkripsi'} aria-pressed={speechEnabled && !speechError} disabled={busy || !connected || isMuted || saveBlocked} onClick={onToggleTranscription}><AudioLines size={18} /><span>{speechError ? 'Coba transkripsi lagi' : speechEnabled ? 'Jeda transkrip' : 'Mulai transkrip'}</span>{isListening && <i className="status-dot online" />}</button>
           <button type="button" aria-label="Pengaturan perangkat" aria-haspopup="dialog" disabled={busy || !connected} onClick={() => { setMoreOpen(false); moreButton.current?.focus(); onOpenDevices(); }}><Settings2 size={18} /><span>Perangkat audio &amp; video</span></button>
+          {isHost && onToggleChatDisabled && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!chatDisabled}
+              disabled={busy || !connected}
+              onClick={() => onToggleChatDisabled(!chatDisabled)}
+            >
+              <MessageSquareText size={18} />
+              <span>Chat peserta</span>
+              <span className={`meeting-more-toggle-pill ${!chatDisabled ? 'on' : 'off'}`}>
+                {!chatDisabled ? 'On' : 'Off'}
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </div>

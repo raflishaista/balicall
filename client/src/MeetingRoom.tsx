@@ -99,6 +99,9 @@ interface MeetingRoomProps {
   meetingId?: string;
   token?: string;
   isSuperAdmin?: boolean;
+  screenSharePolicy?: 'all' | 'co-hosts' | 'host';
+  chatDisabled?: boolean;
+  onUpdatePermissions?: (patch: { screenSharePolicy?: 'all' | 'co-hosts' | 'host'; chatDisabled?: boolean }) => Promise<void>;
   onKicked?: () => void;
   roomName: string;
   roomCode?: string;
@@ -284,6 +287,9 @@ export function MeetingRoom({
   meetingId,
   token,
   isSuperAdmin = false,
+  screenSharePolicy = 'all',
+  chatDisabled = false,
+  onUpdatePermissions,
   onKicked,
 }: MeetingRoomProps) {
   const room = useRoomContext();
@@ -300,6 +306,14 @@ export function MeetingRoom({
   const [raisedHands, setRaisedHands] = useState<Record<string, number>>({});
   const [raiseHandNotices, setRaiseHandNotices] = useState<{ id: string; text: string; timestamp: string }[]>([]);
   const [openParticipantMenuId, setOpenParticipantMenuId] = useState<string | null>(null);
+  const [livePermissions, setLivePermissions] = useState<{ screenSharePolicy: 'all' | 'co-hosts' | 'host'; chatDisabled: boolean }>({
+    screenSharePolicy,
+    chatDisabled,
+  });
+
+  useEffect(() => {
+    setLivePermissions({ screenSharePolicy, chatDisabled });
+  }, [screenSharePolicy, chatDisabled]);
   const RAISE_HAND_TOPIC = 'balicall.raise_hand.v1';
   const RAISE_HAND_DURATION_MS = 180_000;
   const raisedHandsRef = useRef<Record<string, number>>({});
@@ -372,12 +386,29 @@ export function MeetingRoom({
         /* ignore malformed kick payload */
       }
     };
+    const handlePermData = (payload: Uint8Array, _participant?: Participant, _kind?: unknown, topic?: string) => {
+      if (topic !== 'balicall.permissions.v1') return;
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as {
+          screenSharePolicy?: 'all' | 'co-hosts' | 'host';
+          chatDisabled?: boolean;
+        };
+        setLivePermissions(prev => ({
+          screenSharePolicy: msg.screenSharePolicy ?? prev.screenSharePolicy,
+          chatDisabled: typeof msg.chatDisabled === 'boolean' ? msg.chatDisabled : prev.chatDisabled,
+        }));
+      } catch {
+        /* ignore malformed permissions payload */
+      }
+    };
     room.on(RoomEvent.DataReceived, handleRaiseData);
     room.on(RoomEvent.DataReceived, handleKickData);
+    room.on(RoomEvent.DataReceived, handlePermData);
     room.on(RoomEvent.ParticipantConnected, handlePeerConnected);
     return () => {
       room.off(RoomEvent.DataReceived, handleRaiseData);
       room.off(RoomEvent.DataReceived, handleKickData);
+      room.off(RoomEvent.DataReceived, handlePermData);
       room.off(RoomEvent.ParticipantConnected, handlePeerConnected);
     };
   }, [room, employeeId, onKicked]);
@@ -407,6 +438,72 @@ export function MeetingRoom({
     }, nextExpiry);
     return () => clearTimeout(timer);
   }, [raisedHands, employeeId, room]);
+
+  const effectiveScreenSharePolicy = livePermissions.screenSharePolicy;
+  const effectiveChatDisabled = livePermissions.chatDisabled;
+  const canShareScreenByPolicy =
+    effectiveScreenSharePolicy === 'all' ||
+    meetingRole === 'host' ||
+    (effectiveScreenSharePolicy === 'co-hosts' && meetingRole === 'co-host');
+  const canSendChatByPolicy =
+    !effectiveChatDisabled || meetingRole === 'host' || meetingRole === 'co-host';
+
+  const [policyNotice, setPolicyNotice] = useState<string | null>(null);
+  const prevScreenSharePolicyRef = useRef(effectiveScreenSharePolicy);
+  const toggleScreenShareRef = useRef(onToggleScreenShare);
+  toggleScreenShareRef.current = onToggleScreenShare;
+  const screenShareEnabledRef = useRef(isScreenShareEnabled);
+  screenShareEnabledRef.current = isScreenShareEnabled;
+
+  useEffect(() => {
+    if (prevScreenSharePolicyRef.current === effectiveScreenSharePolicy) return;
+    prevScreenSharePolicyRef.current = effectiveScreenSharePolicy;
+
+    const policyMessage =
+      effectiveScreenSharePolicy === 'host'
+        ? 'The host has enabled screen sharing for hosts only.'
+        : effectiveScreenSharePolicy === 'co-hosts'
+          ? 'The host has enabled screen sharing for hosts and co-hosts only.'
+          : 'The host has enabled screen sharing for all participants.';
+
+    if (screenShareEnabledRef.current && !canShareScreenByPolicy) {
+      void toggleScreenShareRef.current?.();
+      setPolicyNotice(
+        effectiveScreenSharePolicy === 'host'
+          ? 'The host disabled screen sharing for non-hosts. Your screen share was stopped.'
+          : 'The host restricted screen sharing to hosts and co-hosts only. Your screen share was stopped.'
+      );
+    } else {
+      setPolicyNotice(policyMessage);
+    }
+  }, [effectiveScreenSharePolicy, canShareScreenByPolicy]);
+
+  useEffect(() => {
+    if (!policyNotice) return;
+    const timer = setTimeout(() => setPolicyNotice(null), 5500);
+    return () => clearTimeout(timer);
+  }, [policyNotice]);
+
+  const handleUpdatePermissions = useCallback(
+    async (patch: { screenSharePolicy?: 'all' | 'co-hosts' | 'host'; chatDisabled?: boolean }) => {
+      if (!onUpdatePermissions) return;
+      const next = {
+        screenSharePolicy: patch.screenSharePolicy ?? livePermissions.screenSharePolicy,
+        chatDisabled: patch.chatDisabled ?? livePermissions.chatDisabled,
+      };
+      setLivePermissions(next);
+      if (room?.localParticipant?.publishData) {
+        const encoded = new TextEncoder().encode(JSON.stringify(next));
+        room.localParticipant.publishData(encoded, { reliable: true, topic: 'balicall.permissions.v1' }).catch(() => {});
+      }
+      try {
+        await onUpdatePermissions(patch);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'Gagal memperbarui izin rapat.');
+      }
+    },
+    [onUpdatePermissions, livePermissions, room]
+  );
 
   const toggleRaiseHand = useCallback(() => {
     const currentlyRaised = Boolean(raisedHandsRef.current[employeeId]);
@@ -835,6 +932,19 @@ export function MeetingRoom({
       }}
     >
       <section className={`call-stage ${screenTracks.length ? 'has-screen-share' : ''}`}>
+        {policyNotice && (
+          <div className="stage-policy-notice" role="status" aria-live="polite">
+            <span>{policyNotice}</span>
+            <button
+              type="button"
+              className="stage-policy-notice-close"
+              aria-label="Tutup notifikasi"
+              onClick={() => setPolicyNotice(null)}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
         {isManager && waitingPopups.length > 0 && (
           <div className="waiting-room-popups" role="region" aria-label="Notifikasi waiting room">
             {waitingPopups.map(popup => (
@@ -1502,6 +1612,9 @@ export function MeetingRoom({
           </div>
 
           <div className="meeting-chat-bar">
+            {!canSendChatByPolicy && (
+              <p className="meeting-chat-locked-notice" role="status">Chat dinonaktifkan oleh host.</p>
+            )}
             {fileError && (
               <p className="meeting-chat-file-error" role="alert">{fileError}</p>
             )}
@@ -1509,6 +1622,7 @@ export function MeetingRoom({
               className="meeting-chat-form"
               onSubmit={event => {
                 event.preventDefault();
+                if (!canSendChatByPolicy) return;
                 if (manualText.trim()) {
                   onAddSpeechLine(manualText.trim());
                   setManualText('');
@@ -1535,9 +1649,9 @@ export function MeetingRoom({
                 <input
                   aria-label="Pesan chat"
                   value={manualText}
-                  disabled={busy || saveBlocked}
+                  disabled={busy || saveBlocked || !canSendChatByPolicy}
                   onChange={event => setManualText(event.target.value)}
-                  placeholder="Ketik pesan chat ke ruang rapat…"
+                  placeholder={canSendChatByPolicy ? 'Ketik pesan chat ke ruang rapat…' : 'Chat dinonaktifkan oleh host'}
                 />
               </div>
               <button
@@ -1545,7 +1659,7 @@ export function MeetingRoom({
                 className="meeting-chat-file-button"
                 aria-label="Kirim file"
                 title="Kirim file (maks. 10 MB)"
-                disabled={busy || saveBlocked || uploadingFile || !meetingId || !token}
+                disabled={busy || saveBlocked || uploadingFile || !meetingId || !token || !canSendChatByPolicy}
                 onClick={() => fileInputRef.current?.click()}
               >
                 {uploadingFile ? <Loader2 size={15} className="ui-spinner" /> : <Paperclip size={15} />}
@@ -1554,7 +1668,7 @@ export function MeetingRoom({
                 type="submit"
                 aria-label="Kirim pesan"
                 title="Kirim pesan"
-                disabled={busy || saveBlocked || !manualText.trim()}
+                disabled={busy || saveBlocked || !manualText.trim() || !canSendChatByPolicy}
               >
                 <Send size={15} />
                 <span>Kirim</span>
@@ -1782,7 +1896,12 @@ export function MeetingRoom({
         cameraPending={cameraPending}
         isScreenShareEnabled={isScreenShareEnabled}
         screenSharePending={screenSharePending}
-        screenShareSupported={screenShareSupported}
+        screenShareSupported={screenShareSupported && canShareScreenByPolicy}
+        isHost={meetingRole === 'host'}
+        screenSharePolicy={effectiveScreenSharePolicy}
+        chatDisabled={effectiveChatDisabled}
+        onChangeScreenSharePolicy={policy => void handleUpdatePermissions({ screenSharePolicy: policy })}
+        onToggleChatDisabled={disabled => void handleUpdatePermissions({ chatDisabled: disabled })}
         speechEnabled={speechEnabled}
         speechError={speechError}
         isListening={isListening}

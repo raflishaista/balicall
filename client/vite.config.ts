@@ -6,6 +6,16 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      react: path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+    },
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-zoom-pan-pinch', '@livekit/components-react'],
+  },
   cacheDir: path.join(os.tmpdir(), 'vite-balicall-client'),
   server: {
     host: '0.0.0.0',

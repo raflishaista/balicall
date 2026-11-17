@@ -153,6 +153,8 @@ export class MeetingStore {
           waitingRoom: Boolean(participant.waitingRoom),
           waitingUsers: [],
           admittedIds: [],
+          screenSharePolicy: 'all',
+          chatDisabled: false,
 
           participants: new Map(),
           transcripts: [],

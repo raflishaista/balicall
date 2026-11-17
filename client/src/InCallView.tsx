@@ -54,6 +54,9 @@ export function InCallView({ callDuration,
   onToggleSharedMic,
   onToggleLiveDiarization,
   onToggleBatchDiarization,
+  screenSharePolicy,
+  chatDisabled,
+  onUpdatePermissions,
   onKicked,
 }: any) {
   const [mediaOptions] = useState(() => ({
@@ -142,6 +145,9 @@ export function InCallView({ callDuration,
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
+        screenSharePolicy={screenSharePolicy}
+        chatDisabled={chatDisabled}
+        onUpdatePermissions={onUpdatePermissions}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
@@ -187,6 +193,9 @@ function RoomContent({
   meetingHostId,
   meetingCoHostIds,
   onManageParticipant,
+  screenSharePolicy,
+  chatDisabled,
+  onUpdatePermissions,
   onKicked,
   employeeId,
   transcripts,
@@ -348,6 +357,9 @@ function RoomContent({
         meetingHostId={meetingHostId}
         meetingCoHostIds={meetingCoHostIds}
         onManageParticipant={onManageParticipant}
+        screenSharePolicy={screenSharePolicy}
+        chatDisabled={chatDisabled}
+        onUpdatePermissions={onUpdatePermissions}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}

@@ -2245,3 +2245,161 @@ input::placeholder { color: #a1b1c6; }
 .attendance-action-menu button.attendance-action-danger:hover:not(:disabled) {
   background: #fef2f2;
 }
+
+.screen-share-split {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.screen-share-caret {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #e2edf5;
+  cursor: pointer;
+}
+
+.screen-share-caret:hover:not(:disabled),
+.screen-share-caret.open {
+  background: #0865ed;
+  color: #ffffff;
+  border-color: #60a5fa;
+}
+
+.screen-share-caret:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.screen-share-policy-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  min-width: 215px;
+  padding: 8px;
+  border: 1px solid #d5e1ef;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+  display: grid;
+  gap: 2px;
+}
+
+.screen-share-policy-title {
+  margin: 0 0 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.screen-share-policy-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #1e293b;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.screen-share-policy-menu button:hover {
+  background: #f1f5f9;
+}
+
+.screen-share-policy-menu button.selected {
+  background: #eff6ff;
+  color: #0865ed;
+  font-weight: 600;
+}
+
+.meeting-more-toggle-pill {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.meeting-more-toggle-pill.on {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.meeting-more-toggle-pill.off {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.meeting-chat-locked-notice {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: #b45309;
+  font-weight: 500;
+}
+
+.call-stage {
+  position: relative;
+}
+
+.stage-policy-notice {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92%, 520px);
+  padding: 10px 14px;
+  border: 1px solid #dbe5f1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22);
+}
+
+.stage-policy-notice-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.stage-policy-notice-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
