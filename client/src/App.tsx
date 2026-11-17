@@ -184,6 +184,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [meetingHost, setMeetingHost] = useState<{ meetingId: string; name?: string } | null>(null);
   const [participantPanelRequest, setParticipantPanelRequest] = useState(0);
   const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
+  const [screenSharePolicy, setScreenSharePolicy] = useState<'all' | 'co-hosts' | 'host'>('all');
+  const [chatDisabled, setChatDisabled] = useState(false);
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
   const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
@@ -236,6 +238,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           roomCode?: string;
           participants?: Array<{ employeeId: string; employeeName: string }>;
           coHostIds?: string[];
+          screenSharePolicy?: 'all' | 'co-hosts' | 'host';
+          chatDisabled?: boolean;
           microphoneRestricted?: boolean;
           speakRequestAt?: string | null;
           pendingSpeakRequests?: Array<{
@@ -250,6 +254,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
         if (cancelled) return;
 
+        if ((data as { kicked?: boolean }).kicked) {
+          handleKickedFromMeeting();
+          return;
+        }
+
         if (data.status === 'ended' && !endingMeeting.current) {
           void handleEndMeetingRef.current?.(true);
           return;
@@ -263,6 +272,8 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         const confirmedCode = normalizeRoomCode(data.roomCode);
         if (confirmedCode) setRoomCode(confirmedCode);
         setMeetingCoHostIds(data.coHostIds || []);
+        if (data.screenSharePolicy) setScreenSharePolicy(data.screenSharePolicy);
+        if (typeof data.chatDisabled === 'boolean') setChatDisabled(data.chatDisabled);
         setMicrophoneRestricted(Boolean(data.microphoneRestricted));
         setSpeakRequestAt(data.speakRequestAt || null);
         setPendingSpeakRequests(data.pendingSpeakRequests || []);
@@ -1374,6 +1385,31 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     }).then(result => ({ ...result, meetingId })));
   };
 
+  const updateMeetingPermissions = useCallback(async (patch: { screenSharePolicy?: 'all' | 'co-hosts' | 'host'; chatDisabled?: boolean }) => {
+    if (!meetingId || !token) return;
+    const res = await apiRequest<{ success: boolean; screenSharePolicy: 'all' | 'co-hosts' | 'host'; chatDisabled: boolean }>(
+      meetingPath(meetingId, 'permissions'),
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(patch),
+      }
+    );
+    setScreenSharePolicy(res.screenSharePolicy);
+    setChatDisabled(res.chatDisabled);
+  }, [meetingId, token]);
+
+  const handleKickedFromMeeting = useCallback(() => {
+    setToken(null);
+    setMeetingId(null);
+    if (typeof saveCallSession === 'function') saveCallSession(null);
+    navigateTo({ view: isGuest ? 'lobby' : 'home', intent: isGuest ? 'join' : undefined });
+    window.dispatchEvent(new CustomEvent('balicall:kicked'));
+  }, [isGuest]);
+
   const manageParticipant = async (
     participantId: string,
     action: 'promote' | 'demote' | 'transfer-host' | 'mute' | 'remove' | 'approve-speak'
@@ -1841,6 +1877,10 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             meetingHostId={meetingHostId}
             meetingCoHostIds={meetingCoHostIds}
             onManageParticipant={manageParticipant}
+            screenSharePolicy={screenSharePolicy}
+            chatDisabled={chatDisabled}
+            onUpdatePermissions={updateMeetingPermissions}
+            onKicked={handleKickedFromMeeting}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
             recordingError={recordingError}
@@ -1871,6 +1911,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             roomCode={roomCode}
             employeeId={employeeId}
             employeeName={employeeName}
+            isSuperAdmin={Boolean(authUser?.isSuperAdmin)}
             transcripts={transcripts}
             activeTab={activeTab}
             setActiveTab={setActiveTab}

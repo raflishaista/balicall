@@ -6,14 +6,15 @@ import type { TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import { ParticipantVideoTile } from './ParticipantVideoTile';
 import { fitParticipantGrid } from './meetingLayout';
 
-export function ParticipantLayout({ participants, cameras, mirrorLocalVideo, strip = false, spotlightIdentity }: {
+export function ParticipantLayout({ participants, cameras, mirrorLocalVideo, strip = false, spotlightIdentity, raisedHands }: {
   participants: Participant[]; cameras: Map<string, TrackReferenceOrPlaceholder>; mirrorLocalVideo: boolean;
-  strip?: boolean; spotlightIdentity?: string;
+  strip?: boolean; spotlightIdentity?: string; raisedHands?: Record<string, number>;
 }) {
   const { ref, width, height } = useMeasuredBox<HTMLDivElement>();
   const layout = fitParticipantGrid(participants.length, width, height);
   const tiles = (items: Participant[]) => items.map(participant => <ParticipantVideoTile key={participant.identity} mirrorLocalVideo={mirrorLocalVideo}
       spotlight={participant.identity === spotlightIdentity}
+      handRaised={Boolean(raisedHands?.[participant.identity])}
       trackRef={cameras.get(participant.identity) || { participant, source: Track.Source.Camera }} />);
   return <div ref={ref} className={`participant-grid ${strip ? 'participant-strip' : 'equal-grid'}`}
     role="region" aria-label={strip ? 'Thumbnail peserta' : 'Video peserta rapat'} tabIndex={0}

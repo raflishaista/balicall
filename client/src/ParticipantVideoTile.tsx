@@ -5,10 +5,10 @@ import type { TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import { useState } from 'react';
 import { useTrackUnavailable } from './useTrackUnavailable';
 import { Track } from 'livekit-client';
-import { AudioLines, Mic, MicOff, VideoOff } from 'lucide-react';
+import { AudioLines, Hand, Mic, MicOff, VideoOff } from 'lucide-react';
 import { initials } from './presentation';
 
-export function ParticipantVideoTile({ trackRef, spotlight = false, mirrorLocalVideo = true }: { trackRef: TrackReferenceOrPlaceholder; spotlight?: boolean; mirrorLocalVideo?: boolean }) {
+export function ParticipantVideoTile({ trackRef, spotlight = false, mirrorLocalVideo = true, handRaised = false }: { trackRef: TrackReferenceOrPlaceholder; spotlight?: boolean; mirrorLocalVideo?: boolean; handRaised?: boolean }) {
   const participant = trackRef.participant;
   const cameraMuted = useIsMuted(trackRef);
   const microphoneMuted = useIsMuted({ participant, source: Track.Source.Microphone });
@@ -45,5 +45,10 @@ export function ParticipantVideoTile({ trackRef, spotlight = false, mirrorLocalV
       </span>
     </div>
     {speaking && <span className="speaker-label"><span />Berbicara</span>}
+    {handRaised && (
+      <span className="tile-raise-hand" role="img" aria-label="Mengangkat tangan" title="Mengangkat tangan">
+        <Hand size={14} />
+      </span>
+    )}
   </ParticipantTile>;
 }

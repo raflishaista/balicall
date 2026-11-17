@@ -24,7 +24,7 @@ function isAdminDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch }) {
+export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload }) {
   const router = Router();
   const store = new PgAdminStore();
   const hostNameForMeeting = id => {
@@ -46,19 +46,68 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
   router.get('/access', (req, res) => res.json({
     role: 'super_admin', employeeId: req.admin.employeeId, permissions: req.admin.permissions,
   }));
-  router.get('/audit', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
-    const { from = '', to = '', action = '', page = '1' } = req.query;
+  const parseAuditQuery = query => {
+    const { from = '', to = '', action = '', q = '', result = '', actorId = '', order = 'desc', page = '1', pageSize = '50', format = '' } = query;
     if ((from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))) {
-      return res.status(400).json({ error: 'Tanggal audit tidak valid.' });
+      return { error: 'Tanggal audit tidak valid.' };
     }
     if (from && to && from > to) {
-      return res.status(400).json({ error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' });
+      return { error: 'Tanggal akhir tidak boleh sebelum tanggal awal.' };
     }
     if (typeof action !== 'string' || (action !== '' && !/^[a-z0-9][a-z0-9_.-]{0,99}$/i.test(action))
       || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) {
-      return res.status(400).json({ error: 'Jenis tindakan atau nomor halaman tidak valid.' });
+      return { error: 'Jenis tindakan atau nomor halaman tidak valid.' };
     }
-    res.json(await store.listAudit({ from: from || null, to: to || null, action, page: Number(page) }));
+    if (typeof q !== 'string' || q.length > 100 || q.includes('\0')) {
+      return { error: 'Kata kunci pencarian tidak valid.' };
+    }
+    if (typeof result !== 'string' || (result !== '' && !['succeeded', 'denied', 'no_change', 'failed'].includes(result))) {
+      return { error: 'Status hasil tidak valid.' };
+    }
+    if (typeof actorId !== 'string' || (actorId !== '' && actorId !== 'system' && !validAdminEmployeeId(actorId))) {
+      return { error: 'ID pelaku tidak valid.' };
+    }
+    if (typeof order !== 'string' || !['asc', 'desc'].includes(order)) {
+      return { error: 'Urutan data tidak valid.' };
+    }
+    if (typeof pageSize !== 'string' || !['10', '25', '50', '100'].includes(pageSize)) {
+      return { error: 'Ukuran halaman tidak valid.' };
+    }
+    return {
+      params: {
+        from: from || null,
+        to: to || null,
+        action,
+        search: q.trim(),
+        result,
+        actorId,
+        order,
+        page: Number(page),
+        pageSize: Number(pageSize),
+        format,
+      },
+    };
+  };
+
+  router.get('/audit/export', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
+    const parsed = parseAuditQuery({ ...req.query, pageSize: '100' });
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const csv = await store.exportAuditCsv(parsed.params);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="audit-admin.csv"');
+    res.send(csv);
+  }));
+
+  router.get('/audit', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
+    const parsed = parseAuditQuery(req.query);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (parsed.params.format === 'csv') {
+      const csv = await store.exportAuditCsv(parsed.params);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="audit-admin.csv"');
+      return res.send(csv);
+    }
+    res.json(await store.listAudit(parsed.params));
   }));
   router.get('/meetings', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (_req, res) => {
     const [history, schedules, rooms] = await Promise.all([
@@ -99,14 +148,86 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json(await store.listMeetingHistory({ search: q.trim(), from: from || null, to: to || null, page: Number(page), hostNameForMeeting }));
   }));
   router.get('/system', requirePermission(AdminPermission.READ_SYSTEM), asyncRoute(async (_req, res) => {
-    const [system, recordingQueue] = await Promise.all([
+    const [system, recordingQueue, queueStats] = await Promise.all([
       readAdminSystem({
-        config, probe, fetchImpl, recordingCapabilities, postMeetingBatch, databaseReady: () => store.databaseReady(),
+        config, probe, fetchImpl, recordingCapabilities, postMeetingBatch,
+        databaseReady: () => store.databaseReady(),
+        databaseVersion: () => store.databaseVersion(),
       }),
       store.recordingQueue().catch(() => null),
+      store.recordingQueueExtendedStats().catch(() => null),
     ]);
-    res.json({ ...system, recordingQueue });
+    res.json({ ...system, recordingQueue, queueStats });
   }));
+
+  const handleListProcessingJobs = asyncRoute(async (req, res) => {
+    const { q = '', status = '', processingType = '', from = '', to = '', order = 'desc', page = '1', pageSize = '20' } = req.query;
+    if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
+      || !['', 'queued', 'processing', 'done', 'failed'].includes(status)
+      || typeof processingType !== 'string' || processingType.length > 64
+      || (from !== '' && !isAdminDate(from)) || (to !== '' && !isAdminDate(to))
+      || (from && to && from > to)
+      || !['asc', 'desc'].includes(order)
+      || typeof page !== 'string' || !/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))
+      || typeof pageSize !== 'string' || !['10', '20', '50'].includes(pageSize)) {
+      return res.status(400).json({ error: 'Parameter filter pekerjaan pemrosesan tidak valid.' });
+    }
+    const data = await store.listProcessingJobs({
+      search: q.trim(),
+      status,
+      processingType: processingType.trim(),
+      from: from || null,
+      to: to || null,
+      order,
+      page: Number(page),
+      pageSize: Number(pageSize),
+    });
+    res.json(data);
+  });
+
+  router.get('/system/jobs', requirePermission(AdminPermission.READ_SYSTEM), handleListProcessingJobs);
+  router.get('/processing-jobs', requirePermission(AdminPermission.READ_SYSTEM), handleListProcessingJobs);
+
+  const handleGetProcessingJobDetail = asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) {
+      return res.status(400).json({ error: 'ID pekerjaan tidak valid.' });
+    }
+    const job = await store.getProcessingJobDetail(id);
+    if (!job) {
+      return res.status(404).json({ error: 'Pekerjaan pemrosesan tidak ditemukan.' });
+    }
+    res.json({ job });
+  });
+
+  router.get('/system/jobs/:id', requirePermission(AdminPermission.READ_SYSTEM), handleGetProcessingJobDetail);
+  router.get('/processing-jobs/:id', requirePermission(AdminPermission.READ_SYSTEM), handleGetProcessingJobDetail);
+
+  const handleRetryProcessingJob = asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    if (typeof id !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(id)) {
+      return res.status(400).json({ error: 'ID pekerjaan tidak valid.' });
+    }
+    if (typeof retryUpload !== 'function') {
+      return res.status(503).json({ error: 'Fungsi percobaan ulang antrean tidak tersedia di server.' });
+    }
+    const outcome = await retryUpload(id, { actorId: req.admin.employeeId });
+    if (!outcome.ok) {
+      return res.status(outcome.status || 400).json({ error: outcome.error });
+    }
+    await store.recordAudit({
+      actorId: req.admin.employeeId,
+      targetId: id,
+      action: 'recording.retry',
+      result: 'succeeded',
+      newValue: 'queued',
+      reason: outcome.reason || 'Admin memicu percobaan ulang pekerjaan',
+    }).catch(err => console.warn('[ADMIN] Audit log for retry failed:', err.message));
+    res.json({ success: true, message: outcome.message, job: outcome.job });
+  });
+
+  router.post('/system/jobs/:id/retry', requirePermission(AdminPermission.READ_SYSTEM), handleRetryProcessingJob);
+  router.post('/processing-jobs/:id/retry', requirePermission(AdminPermission.READ_SYSTEM), handleRetryProcessingJob);
   router.get('/recordings', requirePermission(AdminPermission.READ_RECORDINGS), asyncRoute(async (req, res) => {
     const { q = '', status = '', page = '1' } = req.query;
     if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
@@ -127,14 +248,16 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json(await store.overview(Number(days)));
   }));
   router.get('/employees', manage, asyncRoute(async (req, res) => {
-    const { q = '', department = '', status = '', page = '1' } = req.query;
+    const { q = '', department = '', status = '', role = '', page = '1' } = req.query;
     if (typeof q !== 'string' || q.length > 100 || typeof department !== 'string' || department.length > 64
-      || typeof status !== 'string' || status.length > 32 || typeof page !== 'string' || !/^[1-9]\d*$/.test(page)
+      || typeof status !== 'string' || status.length > 32
+      || typeof role !== 'string' || !['', 'super_admin', 'employee'].includes(role)
+      || typeof page !== 'string' || !/^[1-9]\d*$/.test(page)
       || !Number.isSafeInteger(Number(page))) {
       return res.status(400).json({ error: 'Filter atau nomor halaman tidak valid.' });
     }
     res.json(await store.listEmployees({
-      search: q.trim(), department: department.trim(), status: status.trim(), page: Number(page),
+      search: q.trim(), department: department.trim(), status: status.trim(), role: role.trim(), page: Number(page),
     }));
   }));
   router.patch('/accounts/:employeeId/status', manage, asyncRoute(async (req, res) => {

@@ -24,6 +24,7 @@ export function AuthGate() {
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [logoutPending, setLogoutPending] = useState(false);
+  const [kickedOpen, setKickedOpen] = useState(false);
   const generation = useRef({ value: 0 });
   const logoutLock = useRef(false);
   const accept = useCallback((next: Session) => {
@@ -60,12 +61,17 @@ export function AuthGate() {
     const onStorage = (e: StorageEvent) => {
       if (e.key === 'balicall_active_session') void check();
     };
+    const onKicked = () => {
+      setKickedOpen(true);
+    };
     window.addEventListener(AUTH_EXPIRED_EVENT, expired);
     window.addEventListener('storage', onStorage);
+    window.addEventListener('balicall:kicked', onKicked);
     return () => {
       lifecycle.value++;
       window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener('balicall:kicked', onKicked);
     };
   }, [check]);
   const logout = async () => {
@@ -90,15 +96,42 @@ export function AuthGate() {
       logoutLock.current = false; setLogoutPending(false);
     }
   };
+  const kickedModal = kickedOpen ? (
+    <div className="kicked-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="kicked-modal-title">
+      <div className="kicked-modal">
+        <div className="kicked-modal-icon" aria-hidden="true">
+          <AlertCircle size={36} />
+        </div>
+        <h2 id="kicked-modal-title">Anda telah di-kick dari ruang meeting.</h2>
+        <button
+          type="button"
+          className="kicked-modal-continue"
+          onClick={() => {
+            setKickedOpen(false);
+            if (session?.user?.isGuest) {
+              setAuthCsrfToken(null);
+              setAccountScope(null);
+              setSession({ enabled: true, user: null });
+              setError(null);
+            }
+          }}
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   if (!checking && session && (!session.enabled || session.user)) {
     return <><Suspense fallback={<WorkspaceLoading />}><App key={session.user?.employeeId || 'legacy'} authUser={session.user}
       onProfileUpdated={user=>setSession(current=>current?.user?.employeeId===user.employeeId
         ? {...current,user:{...current.user,...user}} : current)}
       onLogout={session.enabled ? logout : undefined} logoutPending={logoutPending} /></Suspense>
-      {error && <div className="login-session-error" role="alert">{error}</div>}</>;
+      {error && <div className="login-session-error" role="alert">{error}</div>}
+      {kickedModal}</>;
   }
-  return <LoginPage checking={checking} serviceError={error} unavailable={!session && !checking}
-    onRetry={async()=>{setChecking(true);await check();}} onAuthenticated={accept} />;
+  return <><LoginPage checking={checking} serviceError={error} unavailable={!session && !checking}
+    onRetry={async()=>{setChecking(true);await check();}} onAuthenticated={accept} />{kickedModal}</>;
 
 }
 export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{

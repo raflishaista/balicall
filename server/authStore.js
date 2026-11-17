@@ -8,6 +8,7 @@ const superAdminColumn = "EXISTS (SELECT 1 FROM balicall_admin_roles r WHERE r.e
 
 export async function initAdminDb(client) {
   await client.query(`
+    ALTER TABLE balicall_auth_accounts ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS balicall_admin_roles (
       employee_id VARCHAR(32) PRIMARY KEY REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE,
       role TEXT NOT NULL CHECK (role = 'super_admin')
@@ -63,8 +64,10 @@ export async function initAuthDb(pool = getPool()) {
         login_email TEXT NOT NULL UNIQUE CHECK(login_email=lower(login_email)),
         password_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        password_changed_at TIMESTAMPTZ
+        password_changed_at TIMESTAMPTZ,
+        last_login_at TIMESTAMPTZ
       );
+      ALTER TABLE balicall_auth_accounts ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
       CREATE TABLE IF NOT EXISTS balicall_auth_sessions (
         token_hash CHAR(64) PRIMARY KEY,
         employee_id VARCHAR(32) NOT NULL REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE,
@@ -111,16 +114,36 @@ export class PgAuthStore {
     return rows[0] ? publicUser(rows[0]) : null;
   }
   async createSession(tokenHash, employeeId, hours) {
+    if (!this.pool) throw Object.assign(new Error('Layanan login belum tersambung ke database.'), { status: 503 });
     await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');
-    const { rows } = await this.query(`
-      INSERT INTO balicall_auth_sessions(token_hash,employee_id,expires_at)
-      SELECT $1,e.employee_id,NOW()+$3*interval '1 hour'
-      FROM balicall_employees e JOIN balicall_auth_accounts a USING (employee_id)
-      WHERE e.employee_id=$2 AND e.status='active' AND a.password_hash IS NOT NULL
-      FOR UPDATE OF e
-      RETURNING employee_id
-    `, [tokenHash, employeeId, hours]);
-    return rows.length === 1;
+    const client = typeof this.pool.connect === 'function'
+      ? await this.pool.connect()
+      : { query: (sql, params) => this.pool.query(sql, params), release() {} };
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(`
+        INSERT INTO balicall_auth_sessions(token_hash,employee_id,expires_at)
+        SELECT $1,e.employee_id,NOW()+$3*interval '1 hour'
+        FROM balicall_employees e JOIN balicall_auth_accounts a USING (employee_id)
+        WHERE e.employee_id=$2 AND e.status='active' AND a.password_hash IS NOT NULL
+        FOR UPDATE OF e
+        RETURNING employee_id
+      `, [tokenHash, employeeId, hours]);
+      if (rows.length === 1) {
+        await client.query(`
+          UPDATE balicall_auth_accounts SET last_login_at=NOW() WHERE employee_id=$1
+        `, [employeeId]);
+        await client.query('COMMIT');
+        return true;
+      }
+      await client.query('ROLLBACK');
+      return false;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async hasActiveSession(employeeId, exceptTokenHash = null) {
     await this.query('DELETE FROM balicall_auth_sessions WHERE expires_at<=NOW()');

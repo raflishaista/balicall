@@ -785,8 +785,8 @@ async function syncActionItemsToItProject(
 
   attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
-  const { recordingCapabilities } = attachRecordingUploads(app, config, { fetchImpl });
-  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch });
+  const { recordingCapabilities, retryUpload } = attachRecordingUploads(app, config, { fetchImpl });
+  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {
@@ -1125,6 +1125,42 @@ async function syncActionItemsToItProject(
     }
   }
 
+  function canParticipantScreenShare(meeting, participantId) {
+    const policy = meeting?.screenSharePolicy || 'all';
+    if (policy === 'host') return participantId === meeting.hostId;
+    if (policy === 'co-hosts') return participantId === meeting.hostId || (meeting.coHostIds || []).includes(participantId);
+    return true;
+  }
+
+  function allowedPublishSources(meeting, participantId) {
+    const micAllowed = !meeting.participants.get(participantId)?.moderatorMuted;
+    const screenAllowed = canParticipantScreenShare(meeting, participantId);
+    const sources = [1];
+    if (micAllowed) sources.push(2);
+    if (screenAllowed) sources.push(3, 4);
+    return sources;
+  }
+
+  async function syncLivekitPublishPermissions(meeting, targetIds = null) {
+    try {
+      const liveParticipants = await roomService.listParticipants(meeting.livekitRoom);
+      for (const liveParticipant of liveParticipants) {
+        if (targetIds && !targetIds.includes(liveParticipant.identity)) continue;
+        const perm = liveParticipant.permission || {};
+        await roomService.updateParticipant(meeting.livekitRoom, liveParticipant.identity, {
+          permission: {
+            canSubscribe: perm.canSubscribe ?? true,
+            canPublish: perm.canPublish ?? true,
+            canPublishData: perm.canPublishData ?? true,
+            canPublishSources: allowedPublishSources(meeting, liveParticipant.identity),
+          },
+        });
+      }
+    } catch {
+      /* LiveKit may be offline in unit tests or between reconnects */
+    }
+  }
+
   app.post('/api/token', asyncRoute(async (req, res) => {
     if (req.auth) req.body = { ...req.body, employeeId: req.auth.user.employeeId, employeeName: req.auth.user.name, department: req.auth.user.department };
     let { roomName, employeeId, employeeName, department = 'General', roomCode, intent, waitingRoom } = req.body || {};
@@ -1310,10 +1346,10 @@ async function syncActionItemsToItProject(
       canUpdateOwnMetadata: true,
     };
 
-    if (microphoneIsRestricted) {
+    if (microphoneIsRestricted || !canParticipantScreenShare(meeting, cleanId)) {
       // TrackSource: camera=1, microphone=2,
       // screen_share=3, screen_share_audio=4.
-      grant.canPublishSources = [1, 3, 4];
+      grant.canPublishSources = allowedPublishSources(meeting, cleanId);
     }
 
     at.addGrant(grant);
@@ -1325,6 +1361,8 @@ async function syncActionItemsToItProject(
       roomCode: meeting.roomCode,
       meetingId: meeting.id,
       waitingRoom: Boolean(meeting.waitingRoom),
+      screenSharePolicy: meeting.screenSharePolicy || 'all',
+      chatDisabled: Boolean(meeting.chatDisabled),
       sttProvider: config.sttProvider,
     });
   }));
@@ -1673,6 +1711,7 @@ async function syncActionItemsToItProject(
 
       if (role === 'host') {
         const result = store.transferHost(req.meetingId, req.speakerId, req.params.participantId);
+        void syncLivekitPublishPermissions(access.meeting, [req.speakerId, req.params.participantId]);
         return res.json({ success: true, participant: result });
       }
 
@@ -1682,10 +1721,36 @@ async function syncActionItemsToItProject(
         req.params.participantId,
         role === 'co-host'
       );
+      void syncLivekitPublishPermissions(access.meeting, [req.params.participantId]);
 
       res.json({ success: true, participant: result });
     }
   );
+
+  app.patch('/api/meetings/:id/permissions', asyncRoute(async (req, res) => {
+    const access = requireMeetingManager(req, res, ['host']);
+    if (!access) return;
+    const { screenSharePolicy, chatDisabled } = req.body || {};
+    if (screenSharePolicy !== undefined && !['all', 'co-hosts', 'host'].includes(screenSharePolicy)) {
+      return res.status(400).json({ error: 'Kebijakan berbagi layar harus all, co-hosts, atau host.' });
+    }
+    if (chatDisabled !== undefined && typeof chatDisabled !== 'boolean') {
+      return res.status(400).json({ error: 'Nilai chatDisabled harus berupa boolean.' });
+    }
+    const previousPolicy = access.meeting.screenSharePolicy || 'all';
+    store.transact(() => {
+      if (screenSharePolicy !== undefined) access.meeting.screenSharePolicy = screenSharePolicy;
+      if (chatDisabled !== undefined) access.meeting.chatDisabled = chatDisabled;
+    });
+    if (screenSharePolicy !== undefined && screenSharePolicy !== previousPolicy) {
+      await syncLivekitPublishPermissions(access.meeting);
+    }
+    res.json({
+      success: true,
+      screenSharePolicy: access.meeting.screenSharePolicy || 'all',
+      chatDisabled: Boolean(access.meeting.chatDisabled),
+    });
+  }));
 
   app.post(
     '/api/meetings/:id/participants/:participantId/mute',
@@ -1736,10 +1801,7 @@ async function syncActionItemsToItProject(
           const currentPermission = liveParticipant.permission || {};
 
           // Pertahankan izin yang ada, tetapi cabut izin publish mikrofon.
-          const currentSources = currentPermission.canPublishSources;
-          const allowedSources = Array.isArray(currentSources)
-            ? currentSources.filter(source => Number(source) !== 2)
-            : [1, 3, 4];
+          const allowedSources = allowedPublishSources(access.meeting, targetId);
 
           await roomService.updateParticipant(
             access.meeting.livekitRoom,
@@ -1853,11 +1915,7 @@ async function syncActionItemsToItProject(
 
         if (liveParticipant) {
           const permission = liveParticipant.permission || {};
-          const sources = Array.isArray(permission.canPublishSources)
-            ? permission.canPublishSources.map(Number)
-            : [1, 2, 3, 4];
-
-          if (!sources.includes(2)) sources.push(2);
+          const sources = allowedPublishSources(access.meeting, targetId);
 
           await roomService.updateParticipant(
             access.meeting.livekitRoom,
@@ -1891,11 +1949,20 @@ async function syncActionItemsToItProject(
   app.delete(
     '/api/meetings/:id/participants/:participantId',
     asyncRoute(async (req, res) => {
-      const access = requireMeetingManager(req, res);
-      if (!access) return;
+      const meeting = store.get(req.meetingId);
+      if (!meeting || meeting.status !== 'active') {
+        return res.status(404).json({ error: 'Rapat tidak ditemukan atau sudah berakhir.' });
+      }
+      const isSuperAdmin = Boolean(req.auth?.user?.isSuperAdmin);
+      const isHost = meeting.hostId === req.speakerId;
+      if (!isSuperAdmin && !isHost) {
+        return res.status(403).json({
+          error: 'Hanya host atau Super Admin yang dapat mengeluarkan peserta.',
+        });
+      }
 
       const targetId = req.params.participantId;
-      const target = access.meeting.participants.get(targetId);
+      const target = meeting.participants.get(targetId);
 
       if (!target || target.leftAt) {
         return res.status(404).json({
@@ -1910,19 +1977,38 @@ async function syncActionItemsToItProject(
       }
 
       if (
-        access.role === 'co-host' &&
-        (targetId === access.meeting.hostId ||
-          (access.meeting.coHostIds || []).includes(targetId))
+        !isSuperAdmin &&
+        (targetId === meeting.hostId ||
+          (meeting.coHostIds || []).includes(targetId))
       ) {
         return res.status(403).json({
-          error: 'Co-host hanya dapat mengeluarkan peserta biasa.',
+          error: 'Host hanya dapat mengeluarkan peserta biasa.',
         });
       }
 
-      await roomService.removeParticipant(
-        access.meeting.livekitRoom,
-        targetId
-      );
+      try {
+        await roomService.removeParticipant(
+          meeting.livekitRoom,
+          targetId
+        );
+      } catch (err) {
+        const msg = String(err?.message || '');
+        const code = String(err?.code || '');
+        if (!/participant does not exist|room does not exist|not_found|404/i.test(msg + ' ' + code)) {
+          throw err;
+        }
+      }
+
+      store.transact(() => {
+        const current = meeting.participants.get(targetId);
+        if (current) {
+          const nowIso = new Date().toISOString();
+          current.leftAt = nowIso;
+          current.kickedAt = nowIso;
+          current.connected = false;
+          if (current.isGuest) delete current.guestSessionHash;
+        }
+      });
 
       res.json({ success: true, removed: targetId });
     })
@@ -2013,11 +2099,14 @@ async function syncActionItemsToItProject(
       roomName: meeting.roomName,
       roomCode: meeting.roomCode,
       status: meeting.status,
+      kicked: Boolean(currentParticipant?.kickedAt),
       isSummarizing: inFlightSummarize.has(meeting.id),
       hostId: meeting.hostId,
       coHostIds: meeting.coHostIds || [],
       currentRole,
       waitingRoom: Boolean(meeting.waitingRoom),
+      screenSharePolicy: meeting.screenSharePolicy || 'all',
+      chatDisabled: Boolean(meeting.chatDisabled),
       waitingUsers: (currentRole === 'host' || currentRole === 'co-host')
         ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting')
         : [],
@@ -2509,8 +2598,12 @@ async function syncActionItemsToItProject(
 
   app.post('/api/meetings/:id/files', receiveMeetingFile, asyncRoute(async (req, res) => {
     if (!writable(req, res)) return;
-    if (!req.file) return res.status(400).json({ error: 'Pilih file untuk dikirim.' });
     const meeting = store.get(req.meetingId);
+    const isManager = req.speakerId === meeting.hostId || (meeting.coHostIds || []).includes(req.speakerId);
+    if (meeting.chatDisabled && !isManager) {
+      return res.status(403).json({ error: 'Chat dan pengiriman file dinonaktifkan oleh host.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Pilih file untuk dikirim.' });
     const participant = meeting.participants.get(req.speakerId);
     const uploaderName = participant?.employeeName || req.auth?.user?.name || req.speakerId;
     const rawName = basename(req.file.originalname || 'file').trim() || 'file';
