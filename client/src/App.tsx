@@ -25,7 +25,7 @@ import { upsertSummary, mergeSummaryRecords, validSummary, normalizeDbSummary, n
 import { McpReviewPanel } from './McpReviewPanel';
 import type { AuthUser } from './AuthGate';
 import type { MeetingSummary, TranscriptEntry, SummaryRecord, InProgressRecord } from './summaryHistory';
-import { ADMIN_SECTIONS, routeToHash, hashToRoute, isSameRoute, sanitizeRouteForUser, syncBrowserHistory, type AdminSection } from './navigation';
+import { ADMIN_SECTIONS, routeToHash, hashToRoute, isSameRoute, sanitizeRouteForGuest, sanitizeRouteForUser, syncBrowserHistory, type AdminSection } from './navigation';
 import type { AppView, SettingsSection, RouteState } from './navigation';
 import { SummaryHistoryView } from './SummaryHistoryView';
 import { RecordingUploadView } from './RecordingUploadView';
@@ -50,6 +50,8 @@ type MeetingRole = 'host' | 'co-host' | 'participant';
 
 const InCallView = lazy(() => import('./InCallView').then(module => ({ default: module.InCallView })));
 const AdminDashboard = lazy(() => import('./AdminDashboard'));
+const ObserverRoomView = lazy(() => import('./ObserverRoomView').then(module => ({ default: module.ObserverRoomView })));
+import type { ObserverSessionData } from './ObserverRoomView';
 
 const PRESET_PERSONAS = [
   { id: 'BT-10492', name: 'Rafli Aditya', dept: 'NOC & Core Network' },
@@ -89,7 +91,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [initialRoute] = useState<RouteState>(() => {
     if (typeof window !== 'undefined' && window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/' && !window.location.hash.startsWith('#main-content')) {
       const parsed = hashToRoute(window.location.hash);
-      return sanitizeRouteForUser(parsed, authUser);
+      const sanitized = sanitizeRouteForUser(parsed, authUser);
+      if (sanitized.view === 'observer') {
+        return { view: 'admin', adminSection: 'live-monitor' };
+      }
+      return sanitized;
     }
     if (isGuest) return { view: 'lobby', intent: 'join' };
     if (initialSummaryState.session) return { view: 'summary', meetingId: initialSummaryState.session.meetingId || null };
@@ -125,6 +131,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     status: 'waiting' | 'denied' | 'ended';
   } | null>(null);
   const [lobbyInviteCode, setLobbyInviteCode] = useState(initialRoute.roomCode);
+  const [observerSession, setObserverSession] = useState<ObserverSessionData | null>(null);
   const [view, setView] = useState<AppView>(initialRoute.view);
   const contentRef = useRef<HTMLElement>(null);
   usePageFocus(`${view}:${view === 'lobby' ? meetingIntent : ''}`, contentRef);
@@ -335,6 +342,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
     syncBrowserHistory(sanitized, replace);
 
+    if (sanitized.view === 'observer' && !observerSession) {
+      syncBrowserHistory({ view: 'admin', adminSection: 'live-monitor' }, true);
+      setView('admin');
+      setAdminSection('live-monitor');
+      return;
+    }
+
     setView(sanitized.view);
     if (sanitized.view === 'settings') {
       setSettingsSection(sanitized.section || 'overview');
@@ -401,13 +415,22 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         ? event.state
         : hashToRoute(window.location.hash, currentRouteRef.current);
 
-      const nextRoute = sanitizeRouteForUser(rawRoute, authUser);
+      const nextRoute = typeof sanitizeRouteForUser === 'function'
+        ? sanitizeRouteForUser(rawRoute, authUser)
+        : (typeof sanitizeRouteForGuest === 'function' ? sanitizeRouteForGuest(rawRoute, isGuest) : rawRoute);
 
       if (currentRouteRef.current.view === 'lobby' && nextRoute.view !== 'lobby') {
         joinGeneration.current++;
         joinPending.current = false;
         setIsJoining(false);
         preJoinMedia.stopAll();
+      }
+
+      if (nextRoute.view === 'observer' && !observerSession) {
+        setView('admin');
+        setAdminSection('live-monitor');
+        syncBrowserHistory({ view: 'admin', adminSection: 'live-monitor' }, true);
+        return;
       }
 
       setView(nextRoute.view);
@@ -828,7 +851,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         intent: currentIntent,
       };
       if (currentIntent === 'create') {
-        payload.waitingRoom = createWaitingRoom;
+        payload.waitingRoom = typeof createWaitingRoom !== 'undefined' ? createWaitingRoom : false;
       }
       if (currentRoomCode) {
         payload.roomCode = currentRoomCode;
@@ -894,9 +917,9 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setToken(tokenStr); setMeetingId(data.meetingId); setServerUrl(serverUrlStr); setSttProvider(resolveTranscriptionPreferences(userPreferences.preferences, backendHealth?.sttConfigured || false, backendHealth?.sttModels || [], backendHealth?.sttModel || '', defaultProvider).provider);
       setTranscripts([]); setCallDuration('00:00'); setMeetingStartTime(Date.now()); setRecordingError(null); setIsRecording(false);
       setGuestInviteCode('');
-      setMeetingRole('participant');
-      setMeetingHost(null);
-      setParticipantPanelRequest(0);
+      if (typeof setMeetingRole === 'function') setMeetingRole('participant');
+      if (typeof setMeetingHost === 'function') setMeetingHost(null);
+      if (typeof setParticipantPanelRequest === 'function') setParticipantPanelRequest(0);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       navigateTo({ view: 'in-call', meetingId: data.meetingId });
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
@@ -1655,6 +1678,11 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             <span>Admin / {ADMIN_SECTIONS[adminSection]}</span>
             <strong>Administrasi BaliCall</strong>
           </div>
+        ) : view === 'observer' ? (
+          <div className="page-identity">
+            <span>Kepatuhan / Pemantau Pribadi</span>
+            <strong>Super Admin Observer Mode</strong>
+          </div>
         ) : (
           <div className="page-identity">
             <span>Workspace / {view === 'home' ? 'Beranda' : view === 'lobby' ? 'Ruang rapat' : view === 'schedule' ? 'Jadwalkan rapat' : view === 'settings' ?'Pengaturan' : view === 'documentation' ? 'Dokumentasi' : view === 'recordings' ? 'Rekaman' : 'Notulen'}</span>
@@ -1705,8 +1733,29 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
         {pendingSaves > 0 && <span>{pendingSaves} ucapan menunggu tersimpan.</span>}
         {transcriptSaveError && <button className="text-button" onClick={() => saveQueue.retry()}>Coba simpan lagi</button>}
       </div>}
-      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah',admin:'Admin'}[view]}>
-        {view === 'admin' && <Suspense fallback={<BalitowerLoading variant="workspace" reduceMotion={userPreferences.preferences.reduceMotion} />}><AdminDashboard section={adminSection} /></Suspense>}
+      <main ref={contentRef} id="main-content" className="app-main" tabIndex={-1} aria-label={{home:'Beranda',lobby:meetingIntent === 'create'?'Buat rapat':'Gabung rapat','in-call':'Ruang rapat',summary:'Notulen rapat',schedule:'Jadwal rapat',settings:'Pengaturan',documentation:'Dokumentasi',recordings:'Rekaman terunggah',admin:'Admin',observer:'Mode Pemantau Pribadi'}[view]}>
+        {view === 'admin' && (
+          <Suspense fallback={<BalitowerLoading variant="workspace" reduceMotion={userPreferences.preferences.reduceMotion} />}>
+            <AdminDashboard
+              section={adminSection}
+              onEnterObserverMode={session => {
+                setObserverSession(session);
+                navigateTo({ view: 'observer', meetingId: session.meetingId });
+              }}
+            />
+          </Suspense>
+        )}
+        {view === 'observer' && observerSession && (
+          <Suspense fallback={<BalitowerLoading variant="workspace" reduceMotion={userPreferences.preferences.reduceMotion} />}>
+            <ObserverRoomView
+              session={observerSession}
+              onExit={() => {
+                setObserverSession(null);
+                navigateTo({ view: 'admin', adminSection: 'live-monitor' });
+              }}
+            />
+          </Suspense>
+        )}
         {view === 'home' && <HomeDashboard
           backendHealth={backendHealth}
           lastMeeting={lastMeeting}

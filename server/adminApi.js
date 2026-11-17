@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
+import { AccessToken } from 'livekit-server-sdk';
 import { AdminPermission, PgAdminStore, validAdminEmployeeId } from './adminStore.js';
-import { compileAdminMeetings, readAdminSystem, readLiveKitRooms } from './adminMonitoring.js';
+import { compileAdminMeetings, compileLiveMeetingMonitor, readAdminSystem, readLiveKitRooms } from './adminMonitoring.js';
 
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
@@ -24,7 +26,7 @@ function isAdminDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload }) {
+export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, roomService }) {
   const router = Router();
   const store = new PgAdminStore();
   const hostNameForMeeting = id => {
@@ -114,6 +116,269 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
       store.listMeetingMetadata(), store.listScheduleMetadata(), readLiveKitRooms(probe),
     ]);
     res.json(compileAdminMeetings({ history, schedules, rooms, snapshots: meetingStore.meetings.values() }));
+  }));
+
+  const handleLiveMonitor = asyncRoute(async (_req, res) => {
+    const [rooms, schedules, activeSessions] = await Promise.all([
+      readLiveKitRooms(probe),
+      store.listScheduleMetadata().catch(() => []),
+      store.getActiveObserverSessions().catch(() => []),
+    ]);
+    const data = compileLiveMeetingMonitor({
+      snapshots: [...meetingStore.meetings.values()],
+      rooms,
+      activeSessions,
+      schedules,
+    });
+    res.json(data);
+  });
+
+  router.get('/live-monitor', requirePermission(AdminPermission.READ_MEETINGS), handleLiveMonitor);
+  router.get('/live-monitor/meetings', requirePermission(AdminPermission.READ_MEETINGS), handleLiveMonitor);
+
+  router.get('/live-monitor/meetings/:id', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const meeting = meetingStore.meetings.get(id) || [...meetingStore.meetings.values()].find(m => m.id === id || m.roomCode === id);
+    if (!meeting) {
+      return res.status(404).json({ error: 'Rapat tidak ditemukan.' });
+    }
+    const [rooms, activeSessions, sessionHistory] = await Promise.all([
+      readLiveKitRooms(probe),
+      store.getActiveObserverSessions(meeting.id).catch(() => []),
+      store.listObserverSessions({ meetingId: meeting.id, pageSize: 20 }).catch(() => ({ sessions: [] })),
+    ]);
+    const attendees = [...meeting.participants.values()].filter(p => !p.leftAt).map(p => ({
+      employeeId: p.employeeId,
+      employeeName: p.employeeName,
+      department: p.department,
+      joinedAt: p.joinedAt,
+      isHost: p.employeeId === meeting.hostId,
+      isCoHost: (meeting.coHostIds || []).includes(p.employeeId),
+      isGuest: Boolean(p.isGuest),
+      moderatorMuted: Boolean(p.moderatorMuted),
+    }));
+    const connectedRooms = new Map((rooms ?? []).map(r => [r.name, r.numParticipants]));
+    const liveCount = rooms ? connectedRooms.get(meeting.livekitRoom ?? `meeting-${meeting.id}`) ?? attendees.length : attendees.length;
+
+    res.json({
+      meeting: {
+        id: meeting.id,
+        roomName: meeting.roomName,
+        roomCode: meeting.roomCode,
+        hostId: meeting.hostId,
+        hostName: meeting.participants.get(meeting.hostId)?.employeeName || meeting.hostId,
+        status: meeting.status,
+        createdAt: meeting.createdAt,
+        livekitRoom: meeting.livekitRoom,
+        participantCount: liveCount,
+        isMonitored: Boolean(meeting.isMonitored || activeSessions.length > 0),
+        activeObserverCount: activeSessions.length,
+      },
+      participants: attendees,
+      activeObserverSessions: activeSessions,
+      observerHistory: sessionHistory.sessions,
+      connectionHealth: rooms ? 'healthy' : 'unavailable',
+    });
+  }));
+
+  router.post('/observer/sessions', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { meetingId, accessReason } = req.body || {};
+    if (!meetingId || typeof meetingId !== 'string') {
+      return res.status(400).json({ error: 'ID rapat (meetingId) diperlukan.' });
+    }
+    const cleanReason = typeof accessReason === 'string' ? accessReason.trim() : '';
+    if (cleanReason.length < 5) {
+      await store.recordAudit({
+        actorId: req.admin.employeeId,
+        targetId: meetingId,
+        action: 'observer.session.denied',
+        result: 'denied',
+        reason: 'Alasan akses tidak memenuhi ketentuan audit kepatuhan (minimal 5 karakter)',
+      }).catch(() => {});
+      return res.status(400).json({
+        error: 'Alasan akses (access reason) wajib diisi minimal 5 karakter sesuai kebijakan kepatuhan organisasi.',
+      });
+    }
+
+    const meeting = meetingStore.meetings.get(meetingId)
+      || [...meetingStore.meetings.values()].find(m => m.id === meetingId || m.roomCode === meetingId);
+    if (!meeting || meeting.status !== 'active') {
+      await store.recordAudit({
+        actorId: req.admin.employeeId,
+        targetId: meetingId,
+        action: 'observer.session.denied',
+        result: 'denied',
+        reason: 'Rapat tidak aktif atau tidak ditemukan',
+      }).catch(() => {});
+      return res.status(404).json({ error: 'Rapat tidak aktif atau tidak ditemukan.' });
+    }
+
+    const observerId = randomUUID();
+    const session = await store.createObserverSession({
+      observerId,
+      adminUserId: req.admin.employeeId,
+      meetingId: meeting.id,
+      accessReason: cleanReason,
+      durationMinutes: 60,
+    });
+
+    await store.recordAudit({
+      actorId: req.admin.employeeId,
+      targetId: meeting.id,
+      action: 'observer.session.start',
+      result: 'succeeded',
+      newValue: observerId,
+      reason: cleanReason,
+    }).catch(err => console.warn('[OBSERVER] Audit log failed:', err.message));
+
+    meeting.activeObserverCount = (meeting.activeObserverCount || 0) + 1;
+    meeting.isMonitored = true;
+    if (roomService?.updateRoomMetadata) {
+      await roomService.updateRoomMetadata(meeting.livekitRoom, JSON.stringify({
+        isMonitored: true,
+        monitoredAt: new Date().toISOString(),
+        disclosureNotice: 'Sesi ini sedang dipantau oleh Administrator Kepatuhan Perusahaan sesuai kebijakan organisasi.',
+      })).catch(err => console.warn('[OBSERVER] Room metadata update warning:', err.message));
+    }
+
+    const observerIdentity = `observer-${req.admin.employeeId}-${observerId.slice(0, 8)}`;
+    const at = new AccessToken(config.livekitKey, config.livekitSecret, {
+      identity: observerIdentity,
+      name: `Private Observer (${req.admin.employeeId})`,
+      ttl: '1h',
+      metadata: JSON.stringify({
+        isObserver: true,
+        observerId,
+        meetingId: meeting.id,
+        adminUserId: req.admin.employeeId,
+        readOnly: true,
+      }),
+    });
+    at.addGrant({
+      room: meeting.livekitRoom,
+      roomJoin: true,
+      canPublish: false,
+      canPublishData: false,
+      canPublishSources: [],
+      canSubscribe: true,
+      hidden: true,
+    });
+    const token = await at.toJwt();
+
+    res.status(201).json({
+      success: true,
+      observerId,
+      meetingId: meeting.id,
+      roomName: meeting.roomName,
+      roomCode: meeting.roomCode,
+      hostName: meeting.participants.get(meeting.hostId)?.employeeName || meeting.hostId,
+      token,
+      url: config.livekitUrl,
+      livekitRoom: meeting.livekitRoom,
+      expiresAt: session.expiresAt,
+      session,
+    });
+  }));
+
+  router.post('/observer/sessions/:observerId/end', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { observerId } = req.params;
+    if (!observerId || typeof observerId !== 'string') {
+      return res.status(400).json({ error: 'ID sesi pemantau tidak valid.' });
+    }
+    const session = await store.getObserverSession(observerId);
+    if (!session) {
+      return res.status(404).json({ error: 'Sesi pemantau tidak ditemukan.' });
+    }
+    if (session.sessionStatus !== 'active') {
+      return res.json({ success: true, sessionStatus: session.sessionStatus, message: 'Sesi pemantau sudah selesai atau kedaluwarsa.' });
+    }
+
+    const endedSession = await store.endObserverSession(observerId, { reason: req.body?.reason });
+    const started = session.startedAt ? new Date(session.startedAt).getTime() : Date.now();
+    const ended = endedSession?.endedAt ? new Date(endedSession.endedAt).getTime() : Date.now();
+    const durationSeconds = Math.max(0, Math.floor((ended - started) / 1000));
+    await store.recordAudit({
+      actorId: req.admin.employeeId,
+      targetId: session.meetingId,
+      action: 'observer.session.end',
+      result: 'succeeded',
+      previousValue: observerId,
+      newValue: JSON.stringify({ durationSeconds, startedAt: session.startedAt, endedAt: endedSession?.endedAt }),
+      reason: `${req.body?.reason || 'Sesi pemantau diakhiri oleh Super Admin'} (durasi: ${durationSeconds} detik)`,
+    }).catch(err => console.warn('[OBSERVER] Audit log failed:', err.message));
+
+    const meeting = meetingStore.meetings.get(session.meetingId);
+    if (meeting) {
+      meeting.activeObserverCount = Math.max(0, (meeting.activeObserverCount || 1) - 1);
+      if (meeting.activeObserverCount === 0) {
+        meeting.isMonitored = false;
+        if (roomService?.updateRoomMetadata) {
+          await roomService.updateRoomMetadata(meeting.livekitRoom, JSON.stringify({ isMonitored: false })).catch(() => {});
+        }
+      }
+      const observerIdentity = `observer-${session.adminUserId}-${observerId.slice(0, 8)}`;
+      if (roomService?.removeParticipant) {
+        await roomService.removeParticipant(meeting.livekitRoom, observerIdentity).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, sessionStatus: 'ended', session: endedSession });
+  }));
+
+  router.post('/observer/sessions/:observerId/revoke', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { observerId } = req.params;
+    const session = await store.getObserverSession(observerId);
+    if (!session) {
+      return res.status(404).json({ error: 'Sesi pemantau tidak ditemukan.' });
+    }
+    const revokedSession = await store.revokeObserverSession(observerId, { reason: req.body?.reason });
+    const started = session.startedAt ? new Date(session.startedAt).getTime() : Date.now();
+    const ended = revokedSession?.endedAt ? new Date(revokedSession.endedAt).getTime() : Date.now();
+    const durationSeconds = Math.max(0, Math.floor((ended - started) / 1000));
+    await store.recordAudit({
+      actorId: req.admin.employeeId,
+      targetId: session.meetingId,
+      action: 'observer.session.revoked',
+      result: 'succeeded',
+      previousValue: observerId,
+      newValue: JSON.stringify({ durationSeconds, startedAt: session.startedAt, endedAt: revokedSession?.endedAt }),
+      reason: `${req.body?.reason || 'Sesi pemantau dicabut'} (durasi: ${durationSeconds} detik)`,
+    }).catch(err => console.warn('[OBSERVER] Audit log failed:', err.message));
+
+    const meeting = meetingStore.meetings.get(session.meetingId);
+    if (meeting) {
+      meeting.activeObserverCount = Math.max(0, (meeting.activeObserverCount || 1) - 1);
+      if (meeting.activeObserverCount === 0) {
+        meeting.isMonitored = false;
+        if (roomService?.updateRoomMetadata) {
+          await roomService.updateRoomMetadata(meeting.livekitRoom, JSON.stringify({ isMonitored: false })).catch(() => {});
+        }
+      }
+      const observerIdentity = `observer-${session.adminUserId}-${observerId.slice(0, 8)}`;
+      if (roomService?.removeParticipant) {
+        await roomService.removeParticipant(meeting.livekitRoom, observerIdentity).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, sessionStatus: 'revoked', session: revokedSession });
+  }));
+
+  router.get('/observer/sessions/active', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { meetingId } = req.query;
+    const sessions = await store.getActiveObserverSessions(meetingId ? String(meetingId).trim() : null);
+    res.json({ sessions });
+  }));
+
+  router.get('/observer/sessions', requirePermission(AdminPermission.READ_AUDIT, AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+    const { meetingId = '', adminUserId = '', status = '', page = '1', pageSize = '20' } = req.query;
+    const data = await store.listObserverSessions({
+      meetingId: String(meetingId).trim(),
+      adminUserId: String(adminUserId).trim(),
+      status: String(status).trim(),
+      page: Number(page) || 1,
+      pageSize: Number(pageSize) || 20,
+    });
+    res.json(data);
   }));
   router.get('/meetings/history/export', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
     const { q = '', from = '', to = '' } = req.query;

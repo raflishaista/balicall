@@ -1076,4 +1076,119 @@ export class PgAdminStore {
       };
     });
   }
+
+  async createObserverSession({ observerId, adminUserId, meetingId, accessReason, durationMinutes = 60, tokenHash = null }) {
+    const { rows: [session] } = await this.requirePool().query(`
+      INSERT INTO balicall_observer_sessions (
+        observer_id, admin_user_id, meeting_id, access_reason, approval_status, session_status, token_hash, started_at, expires_at
+      )
+      VALUES ($1, $2, $3, $4, 'approved', 'active', $5, NOW(), NOW() + ($6 || ' minutes')::interval)
+      RETURNING observer_id AS "observerId", admin_user_id AS "adminUserId", meeting_id AS "meetingId",
+        access_reason AS "accessReason", approval_status AS "approvalStatus", session_status AS "sessionStatus",
+        started_at AS "startedAt", ended_at AS "endedAt", expires_at AS "expiresAt", created_at AS "createdAt"
+    `, [observerId, adminUserId, meetingId, accessReason, tokenHash, String(durationMinutes)]);
+    return session;
+  }
+
+  async getObserverSession(observerId) {
+    const { rows: [session] } = await this.requirePool().query(`
+      SELECT s.observer_id AS "observerId", s.admin_user_id AS "adminUserId", s.meeting_id AS "meetingId",
+        s.access_reason AS "accessReason", s.approval_status AS "approvalStatus", s.session_status AS "sessionStatus",
+        s.started_at AS "startedAt", s.ended_at AS "endedAt", s.expires_at AS "expiresAt", s.created_at AS "createdAt",
+        e.name AS "adminName", e.department AS "adminDepartment"
+      FROM balicall_observer_sessions s
+      LEFT JOIN balicall_employees e ON e.employee_id = s.admin_user_id
+      WHERE s.observer_id = $1
+    `, [observerId]);
+    if (!session) return null;
+    if (session.sessionStatus === 'active' && new Date(session.expiresAt) <= new Date()) {
+      await this.requirePool().query(`
+        UPDATE balicall_observer_sessions SET session_status = 'expired', ended_at = expires_at WHERE observer_id = $1
+      `, [observerId]);
+      session.sessionStatus = 'expired';
+      session.endedAt = session.expiresAt;
+    }
+    return session;
+  }
+
+  async getActiveObserverSessions(meetingId = null) {
+    await this.expireStaleObserverSessions().catch(() => {});
+    const { rows } = await this.requirePool().query(`
+      SELECT s.observer_id AS "observerId", s.admin_user_id AS "adminUserId", s.meeting_id AS "meetingId",
+        s.access_reason AS "accessReason", s.approval_status AS "approvalStatus", s.session_status AS "sessionStatus",
+        s.started_at AS "startedAt", s.ended_at AS "endedAt", s.expires_at AS "expiresAt",
+        e.name AS "adminName", e.department AS "adminDepartment"
+      FROM balicall_observer_sessions s
+      LEFT JOIN balicall_employees e ON e.employee_id = s.admin_user_id
+      WHERE s.session_status = 'active'
+        AND ($1::text IS NULL OR s.meeting_id = $1)
+      ORDER BY s.started_at DESC
+    `, [meetingId]);
+    return rows;
+  }
+
+  async endObserverSession(observerId, { reason = 'Sesi pemantau diakhiri' } = {}) {
+    const { rows: [session] } = await this.requirePool().query(`
+      UPDATE balicall_observer_sessions
+      SET session_status = 'ended', ended_at = NOW()
+      WHERE observer_id = $1 AND session_status = 'active'
+      RETURNING observer_id AS "observerId", admin_user_id AS "adminUserId", meeting_id AS "meetingId",
+        session_status AS "sessionStatus", started_at AS "startedAt", ended_at AS "endedAt", expires_at AS "expiresAt"
+    `, [observerId]);
+    return session || null;
+  }
+
+  async revokeObserverSession(observerId, { reason = 'Sesi pemantau dicabut' } = {}) {
+    const { rows: [session] } = await this.requirePool().query(`
+      UPDATE balicall_observer_sessions
+      SET session_status = 'revoked', ended_at = NOW()
+      WHERE observer_id = $1 AND session_status = 'active'
+      RETURNING observer_id AS "observerId", admin_user_id AS "adminUserId", meeting_id AS "meetingId",
+        session_status AS "sessionStatus", started_at AS "startedAt", ended_at AS "endedAt", expires_at AS "expiresAt"
+    `, [observerId]);
+    return session || null;
+  }
+
+  async expireStaleObserverSessions() {
+    const { rows } = await this.requirePool().query(`
+      UPDATE balicall_observer_sessions
+      SET session_status = 'expired', ended_at = expires_at
+      WHERE session_status = 'active' AND expires_at <= NOW()
+      RETURNING observer_id AS "observerId", admin_user_id AS "adminUserId", meeting_id AS "meetingId",
+        session_status AS "sessionStatus", started_at AS "startedAt", ended_at AS "endedAt", expires_at AS "expiresAt"
+    `);
+    return rows;
+  }
+
+  async listObserverSessions({ meetingId = '', adminUserId = '', status = '', page = 1, pageSize = 20 } = {}) {
+    await this.expireStaleObserverSessions().catch(() => {});
+    const limit = Math.max(1, Math.min(100, pageSize));
+    const offset = (Math.max(1, page) - 1) * limit;
+    const { rows } = await this.requirePool().query(`
+      SELECT s.observer_id AS "observerId", s.admin_user_id AS "adminUserId", s.meeting_id AS "meetingId",
+        s.access_reason AS "accessReason", s.approval_status AS "approvalStatus", s.session_status AS "sessionStatus",
+        s.started_at AS "startedAt", s.ended_at AS "endedAt", s.expires_at AS "expiresAt", s.created_at AS "createdAt",
+        e.name AS "adminName", e.department AS "adminDepartment",
+        COUNT(*) OVER()::int AS "fullCount"
+      FROM balicall_observer_sessions s
+      LEFT JOIN balicall_employees e ON e.employee_id = s.admin_user_id
+      WHERE ($1 = '' OR s.meeting_id = $1)
+        AND ($2 = '' OR s.admin_user_id = $2)
+        AND ($3 = '' OR s.session_status = $3)
+      ORDER BY s.created_at DESC
+      LIMIT $4 OFFSET $5
+    `, [meetingId, adminUserId, status, limit, offset]);
+
+    const total = rows[0]?.fullCount || 0;
+    return {
+      sessions: rows.map(r => {
+        const { fullCount, ...rest } = r;
+        return rest;
+      }),
+      total,
+      page,
+      pageSize: limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, ClipboardList, FileText, Home, LayoutDashboard, Loader2, LogIn, Mic, Plus, RefreshCw, Search, Settings, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check, ChevronRight, ClipboardList, FileText, Home, LayoutDashboard, Loader2, LogIn, Mic, Plus, Radio, RefreshCw, Search, Settings, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
@@ -27,11 +27,12 @@ const adminIcons = {
   employees: Users,
   requests: UserPlus,
   meetings: Calendar,
+  'live-monitor': Radio,
   recordings: FileText,
   system: Activity,
   audit: ClipboardList,
 } satisfies Record<AdminSection, typeof Calendar>;
-const adminSections = Object.keys(ADMIN_SECTIONS) as AdminSection[];
+const adminSections = Object.keys(ADMIN_SECTIONS || {}) as AdminSection[];
 
 export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHome, onCreate, onJoin, onSummary, onSchedule, onSettings, onDocumentation, adminSection, onAdmin, isGuest = false, authUser }: {
   authUser?: AuthUser|null; isGuest?: boolean;

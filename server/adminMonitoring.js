@@ -84,6 +84,76 @@ export function compileAdminMeetings({ history, schedules, snapshots, rooms, now
   return { meetings: meetings.slice(0, 100), livekitStatus: rooms ? 'reachable' : 'unavailable', checkedAt: now.toISOString() };
 }
 
+export function compileLiveMeetingMonitor({ snapshots = [], rooms, activeSessions = [], schedules = [], now = new Date() }) {
+  const connectedRooms = new Map((rooms ?? []).map(room => [room.name, room.numParticipants]));
+  const scheduled = new Map(schedules.map(schedule => [schedule.id, schedule]));
+  const sessionsByMeeting = new Map();
+  for (const session of activeSessions) {
+    if (!sessionsByMeeting.has(session.meetingId)) {
+      sessionsByMeeting.set(session.meetingId, []);
+    }
+    sessionsByMeeting.get(session.meetingId).push(session);
+  }
+
+  const liveMeetings = [];
+  const activeHosts = new Set();
+  let totalParticipants = 0;
+  let totalDuration = 0;
+
+  for (const snapshot of snapshots) {
+    if (snapshot.status !== 'active') continue;
+    const attendees = [...snapshot.participants.values()].filter(p => !p.leftAt);
+    const liveCount = rooms ? connectedRooms.get(snapshot.livekitRoom ?? `meeting-${snapshot.id}`) ?? attendees.length : attendees.length;
+    
+    const startedAt = snapshot.createdAt || (attendees.length ? attendees[0].joinedAt : null) || now.toISOString();
+    const durationSeconds = durationBetween(startedAt, now) ?? 0;
+    
+    const schedule = scheduled.get(snapshot.scheduleId);
+    const hostName = snapshot.participants.get(snapshot.hostId)?.employeeName
+      ?? (snapshot.hostId === schedule?.hostId ? schedule?.hostName : null)
+      ?? snapshot.hostId
+      ?? '—';
+
+    if (snapshot.hostId) {
+      activeHosts.add(snapshot.hostId);
+    }
+    totalParticipants += liveCount;
+    totalDuration += durationSeconds;
+
+    const observerSessions = sessionsByMeeting.get(snapshot.id) || [];
+
+    liveMeetings.push({
+      id: snapshot.id,
+      title: snapshot.roomName || schedule?.title || `Meeting ${snapshot.roomCode || snapshot.id}`,
+      roomCode: snapshot.roomCode || null,
+      hostId: snapshot.hostId || null,
+      hostName,
+      participantCount: liveCount,
+      startedAt,
+      durationSeconds,
+      status: 'active',
+      connectionHealth: rooms ? 'healthy' : 'unverified',
+      isMonitored: Boolean(snapshot.isMonitored || observerSessions.length > 0),
+      activeObserverCount: observerSessions.length,
+      observerSessions,
+    });
+  }
+
+  return {
+    summary: {
+      activeMeetings: liveMeetings.length,
+      totalParticipants,
+      activeHosts: activeHosts.size,
+      averageDurationSeconds: liveMeetings.length ? Math.floor(totalDuration / liveMeetings.length) : 0,
+      totalDurationSeconds: totalDuration,
+      meetingStatus: liveMeetings.length > 0 ? 'Aktif' : 'Standby',
+      connectionHealth: rooms ? 'healthy' : 'unavailable',
+    },
+    meetings: liveMeetings,
+    checkedAt: now.toISOString(),
+  };
+}
+
 async function workerHealth(url, key, fetchImpl) {
   if (!url) return null;
   try {
