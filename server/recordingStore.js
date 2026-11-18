@@ -29,6 +29,7 @@ export const toApi = (row, { detail = false } = {}) => ({
   updatedAt: row.updated_at,
   completedAt: row.completed_at,
   hasSummary: row.has_summary ?? Boolean(row.summary),
+  hasMedia: Boolean(row.file_path),
   diarizer: row.diarizer ?? null,
   ...(detail ? { transcript: row.transcript, summary: row.summary } : {}),
 });

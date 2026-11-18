@@ -14,6 +14,7 @@
     "@livekit/components-react": "^2.9.24",
     "@livekit/components-styles": "^1.2.0",
     "@livekit/track-processors": "^0.8.1",
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "ldrs": "^1.1.9",
     "livekit-client": "^2.22.3",
     "lucide-react": "^1.49.0",

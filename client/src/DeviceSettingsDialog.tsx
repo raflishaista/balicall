@@ -13,6 +13,7 @@ export function DeviceSettingsDialog({
   sharedRoomMic = false, sharedMicSupported = true, onToggleSharedMic,
   liveDiarization = true, onToggleLiveDiarization,
   batchDiarization = true, onToggleBatchDiarization, batchSupported = true,
+  aiNoiseSuppression = false, onToggleAiNoiseSuppression, noiseSuppressionActive = false, noiseSuppressionApplying = false,
   screenShareResolution = '1080p', onSelectScreenShareResolution,
   onClose,
 }: {
@@ -21,6 +22,10 @@ export function DeviceSettingsDialog({
   liveDiarization?: boolean; onToggleLiveDiarization?: (enabled: boolean) => void;
   batchDiarization?: boolean; onToggleBatchDiarization?: (enabled: boolean) => void;
   batchSupported?: boolean;
+  aiNoiseSuppression?: boolean;
+  onToggleAiNoiseSuppression?: (enabled: boolean) => void;
+  noiseSuppressionActive?: boolean;
+  noiseSuppressionApplying?: boolean;
   screenShareResolution?: ScreenShareResolution;
   onSelectScreenShareResolution?: (resolution: ScreenShareResolution) => void;
   onClose: () => void;
@@ -59,6 +64,26 @@ export function DeviceSettingsDialog({
     <div className="device-settings-grid"><div className="device-selectors">
       <DeviceSelector settings={settings} kind="audioinput" label="Mikrofon" icon={<Mic size={18} />} disabled={disabled} />
       <div className="device-input-meter"><span>{isMicrophoneEnabled ? 'Level mikrofon rapat' : 'Mikrofon nonaktif'}</span><i><b style={{ width: micVolume + '%' }} /></i></div>
+      {onToggleAiNoiseSuppression && (
+        <>
+          <label className="device-shared-mic-toggle">
+            <input
+              type="checkbox"
+              checked={aiNoiseSuppression}
+              disabled={disabled || noiseSuppressionApplying}
+              onChange={e => onToggleAiNoiseSuppression(e.target.checked)}
+            />
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              Peredam Kebisingan AI (RNNoise Wasm)
+              {noiseSuppressionActive && <span style={{ color: '#10b981', fontWeight: 600, fontSize: '11px' }}>● Aktif</span>}
+              {noiseSuppressionApplying && <span style={{ color: '#6b7280', fontSize: '11px' }}>Memproses...</span>}
+            </span>
+          </label>
+          <p className="device-help" style={{ margin: '-2px 0 6px 0', fontSize: '11.5px', color: '#6b7280' }}>
+            Meredam suara bising latar (keyboard, kipas, keramaian) menggunakan neural network RNN di browser.
+          </p>
+        </>
+      )}
       {onToggleSharedMic && <label className="device-shared-mic-toggle"><input type="checkbox" checked={sharedMicSupported && sharedRoomMic} disabled={disabled || !sharedMicSupported} onChange={e => onToggleSharedMic(e.target.checked)} /><span>Mode Mikrofon Ruang Rapat (Diarization)</span></label>}
       {!sharedMicSupported && <p className="device-notice" role="status">{QWEN_TRANSCRIPTION_NOTICE}</p>}
       {onToggleSharedMic && sharedMicSupported && sharedRoomMic && (

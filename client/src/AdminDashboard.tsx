@@ -193,7 +193,6 @@ interface DailyActivity {
   date: string;
   meetings: number;
   attendances: number;
-  meetingsWithParticipants?: number;
 }
 
 const overviewDay = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'UTC' });
@@ -204,165 +203,70 @@ function overviewDateLabel(value: string | undefined, formatter: Intl.DateTimeFo
   return Number.isFinite(timestamp) ? formatter.format(timestamp) : null;
 }
 
-const overviewSeries = [
-  { key: 'meetings', color: 'meetings' },
-  { key: 'attendances', color: 'attendances' },
-] as const;
-
-function OverviewActivityChart({ activity, meetingsLabel, weekly, periodEnd }: {
-  activity: DailyActivity[];
-  meetingsLabel: string;
-  weekly: boolean;
-  periodEnd?: string;
-}) {
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [keyboardIndex, setKeyboardIndex] = useState(0);
-  const interval = weekly ? 7 : 1;
-  const points = activity.filter((_, index) => index % interval === 0).map((day, index) => {
-    const days = activity.slice(index * interval, (index + 1) * interval);
-    return {
-      date: day.date,
-      end: days[days.length - 1].date,
-      meetings: days.reduce((total, item) => total + item.meetings, 0),
-      attendances: days.reduce((total, item) => total + item.attendances, 0),
-    };
-  });
-  const tickCount = Math.min(points.length, 5);
-  const tickIndices = Array.from({ length: tickCount }, (_, index) =>
-    Math.round(index * (points.length - 1) / Math.max(1, tickCount - 1)));
-  const active = selectedIndex === null ? undefined : points[selectedIndex];
-  const lastIndex = points.length - 1;
-  const x = (index: number) => lastIndex === 0 ? 50 : index / lastIndex * 100;
-  const labelFor = (point: (typeof points)[number]) => {
-    const first = overviewDateLabel(point.date, overviewDay) ?? 'Tanggal belum tersedia';
-    if (point.date === point.end) return first;
-    return first + ' – ' + (overviewDateLabel(point.end, overviewDay) ?? '—');
-  };
-  const labels = { meetings: meetingsLabel, attendances: 'Kehadiran tercatat' };
-  const partial = Boolean(periodEnd && points.at(-1)?.end === periodEnd.slice(0, 10));
-
+function OverviewActivityChart({ activity }: { activity: DailyActivity[] }) {
+  const series = [
+    { key: 'meetings', label: 'Rapat per hari' },
+    { key: 'attendances', label: 'Kehadiran peserta per hari' },
+  ] as const;
+  const tickIndices = [...new Set([0, Math.floor((activity.length - 1) / 2), activity.length - 1])];
+  const empty = activity.every(day => day.meetings === 0 && day.attendances === 0);
   return (
-    <section className="surface-card admin-section admin-trend" aria-labelledby="admin-activity-heading">
-      <div className="admin-section-heading">
-        <h3 id="admin-activity-heading">Tren penggunaan</h3>
-        <span className="admin-check-time">{weekly ? 'Per minggu' : 'Per hari'}</span>
-      </div>
-      {points.length === 0 ? <p>Data tren belum tersedia.</p> : <>
-        <div className={active ? 'admin-trend-readout is-selected' : 'admin-trend-readout'} aria-hidden="true">
-          {active ? <>
-            <strong>{labelFor(active)}</strong>
-            <span>{meetingsLabel} <b>{numberFormat.format(active.meetings)}</b></span>
-            <span>Kehadiran tercatat <b>{numberFormat.format(active.attendances)}</b></span>
-          </> : <span>Pilih titik untuk melihat angkanya.</span>}
-        </div>
-        <span className="admin-trend-announcement" role="status" aria-atomic="true">
-          {labelFor(points[keyboardIndex])}: {meetingsLabel} {numberFormat.format(points[keyboardIndex].meetings)}, Kehadiran tercatat {numberFormat.format(points[keyboardIndex].attendances)}
-        </span>
-        {overviewSeries.map(({ key, color }) => {
-          const peak = Math.max(1, ...points.map(day => day[key]));
-          const magnitude = 10 ** Math.floor(Math.log10(peak / 3));
-          const step = Math.max(1, Math.ceil(peak / 3 / magnitude) * magnitude);
-          const max = step * 3;
-          const y = (value: number) => 100 - value / max * 100;
-          const line = points.map((day, index) => x(index) + ',' + y(day[key])).join(' ');
-          const area = x(0) + ',100 ' + line + ' ' + x(lastIndex) + ',100';
-          return <div className={'admin-overview-series admin-overview-series--' + color} key={key}>
-            <strong>{labels[key]}</strong>
+    <section className="surface-card admin-section" aria-labelledby="admin-activity-heading">
+      <h2 id="admin-activity-heading">Aktivitas rapat</h2>
+      <p className="admin-check-time">Rapat dihitung pada hari pertama peserta bergabung, atau hari ruang dibuat jika belum ada kehadiran. Kehadiran dihitung per peserta dan rapat pada hari bergabung.</p>
+      {empty ? <p>Belum ada rapat atau kehadiran pada periode ini.</p> : <>
+        {series.map(({ key, label }) => {
+          const peak = Math.max(1, ...activity.map(day => day[key]));
+          return <div className="admin-overview-series" key={key} aria-hidden="true">
+            <strong>{label}</strong>
             <div className="admin-overview-plot">
-              <div className="admin-overview-scale" aria-hidden="true">
-                {[max, step * 2, step, 0].map(value => <span key={value}>{numberFormat.format(value)}</span>)}
+              <div className="admin-overview-scale">
+                <span>{numberFormat.format(peak)}</span><span>0</span>
               </div>
-              <div className="admin-trend-plot"
-                tabIndex={key === 'meetings' ? 0 : undefined}
-                role={key === 'meetings' ? 'group' : undefined}
-                aria-label={key === 'meetings' ? 'Grafik tren. Gunakan panah kiri atau kanan untuk memilih tanggal.' : undefined}
-                onFocus={key === 'meetings' ? () => setSelectedIndex(keyboardIndex) : undefined}
-                onBlur={key === 'meetings' ? () => setSelectedIndex(null) : undefined}
-                onKeyDown={key === 'meetings' ? event => {
-                  let next = keyboardIndex;
-                  switch (event.key) {
-                    case 'ArrowLeft': next = Math.max(0, keyboardIndex - 1); break;
-                    case 'ArrowRight': next = Math.min(lastIndex, keyboardIndex + 1); break;
-                    case 'Home': next = 0; break;
-                    case 'End': next = lastIndex; break;
-                    default: return;
-                  }
-                  event.preventDefault();
-                  setKeyboardIndex(next);
-                  setSelectedIndex(next);
-                } : undefined}
-                onPointerMove={event => {
-                  if (event.pointerType === 'touch') return;
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  setSelectedIndex(Math.max(0, Math.min(lastIndex, Math.round((event.clientX - bounds.left) / bounds.width * lastIndex))));
-                }}
-                onPointerDown={event => {
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  const index = Math.max(0, Math.min(lastIndex, Math.round((event.clientX - bounds.left) / bounds.width * lastIndex)));
-                  setKeyboardIndex(index);
-                  setSelectedIndex(index);
-                }}
-                onPointerLeave={event => { if (event.pointerType !== 'touch') setSelectedIndex(event.currentTarget.matches(':focus-visible') ? keyboardIndex : null); }}>
-                <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <polygon className="admin-trend-area" points={area} />
-                  <polyline className="admin-trend-line" points={line} vectorEffect="non-scaling-stroke" />
-                </svg>
-                <div aria-hidden="true">
-                  {active && selectedIndex !== null && <span className="admin-trend-guide" style={{ left: x(selectedIndex) + '%' }} />}
-                  {points.map((day, index) => (points.length <= 14 || index === selectedIndex) && <span
-                    key={day.date} className={'admin-trend-dot' + (index === selectedIndex ? ' is-selected' : '')}
-                    style={{ left: x(index) + '%', top: y(day[key]) + '%' }} />)}
-                </div>
-              </div>
-              <div className="admin-overview-ticks" aria-hidden="true">
-                {tickIndices.map(index => <span key={points[index].date} style={{ left: x(index) + '%' }}>
-                  {overviewDateLabel(points[index].date, overviewTick) ?? '—'}
+              <div className={`admin-overview-bars admin-overview-bars--${key}`}>
+                {activity.map(day => <span key={day.date}
+                  title={`${overviewDateLabel(day.date, overviewDay) ?? 'Tanggal belum tersedia'} · ${numberFormat.format(day[key])}`}>
+                  <i style={{ height: `${day[key] / peak * 100}%` }} />
                 </span>)}
+              </div>
+              <div className="admin-overview-ticks">
+                {tickIndices.map(index => <span key={activity[index].date}>{overviewDateLabel(activity[index].date, overviewTick) ?? '—'}</span>)}
               </div>
             </div>
           </div>;
         })}
-        <div className="admin-trend-footer">
-          <details>
-            <summary><ChevronRight size={16} aria-hidden="true" /> Lihat data harian</summary>
-            <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel aktivitas harian">
-              <table className="admin-table admin-overview-table">
-                <thead><tr><th scope="col">Tanggal (WIB)</th><th scope="col">{meetingsLabel}</th><th scope="col">Kehadiran tercatat</th></tr></thead>
-                <tbody>{activity.map(day => <tr key={day.date}>
-                  <th scope="row">{overviewDateLabel(day.date, overviewDay) ?? '—'}</th>
-                  <td>{numberFormat.format(day.meetings)}</td><td>{numberFormat.format(day.attendances)}</td>
-                </tr>)}</tbody>
-              </table>
-            </div>
-          </details>
-          {partial && <span className="admin-check-time">Hari ini · sementara</span>}
-        </div>
+        <details>
+          <summary>Lihat data harian</summary>
+          <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel aktivitas harian">
+            <table className="admin-table admin-overview-table">
+              <thead><tr><th scope="col">Tanggal (WIB)</th><th scope="col">Rapat</th><th scope="col">Kehadiran peserta</th></tr></thead>
+              <tbody>{activity.map(day => <tr key={day.date}>
+                <th scope="row">{overviewDateLabel(day.date, overviewDay) ?? '—'}</th>
+                <td>{numberFormat.format(day.meetings)}</td><td>{numberFormat.format(day.attendances)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </details>
       </>}
     </section>
   );
 }
-
 
 function AdminOverview() {
   const [days, setDays] = useState('30');
   const { data, loading, error, reload } = useAdminData<OverviewData>(`/admin/overview?days=${days}`);
   const periodStart = overviewDateLabel(data?.periodStart, overviewDay);
   const periodEnd = overviewDateLabel(data?.periodEnd, overviewDay);
-  const daily = data?.dailyActivity;
-  const hasAttendedCounts = Boolean(daily?.length && daily.every(day => Number.isFinite(day.meetingsWithParticipants)));
-  const meetingsLabel = hasAttendedCounts ? 'Rapat dengan peserta' : 'Rapat tercatat';
-  const activity = daily?.map(day => ({ ...day, meetings: hasAttendedCounts ? day.meetingsWithParticipants! : day.meetings }));
   const periodCards = data ? [
-    { label: meetingsLabel, value: numberFormat.format(activity?.length ? activity.reduce((sum, day) => sum + day.meetings, 0) : data.totalMeetings), icon: CalendarDays },
-    { label: 'Kehadiran tercatat', value: activity?.length ? numberFormat.format(activity.reduce((sum, day) => sum + day.attendances, 0)) : '—', icon: Users },
-    { label: 'Rekaman diunggah', value: data.totalRecordings == null ? '—' : numberFormat.format(data.totalRecordings), icon: FileText,
-      detail: data.uploadedBytes != null ? formatUploadedBytes(data.uploadedBytes) + (data.totalRecordings == null ? ' · seluruh waktu' : ' diunggah') : undefined },
+    { label: 'Rapat', value: numberFormat.format(data.totalMeetings), icon: CalendarDays },
+    { label: 'Rekaman diunggah', value: data.totalRecordings == null ? '—' : numberFormat.format(data.totalRecordings), icon: FileText },
+    { label: data.totalRecordings == null ? 'Ukuran unggahan seluruh waktu' : 'Ukuran file unggahan', value: formatUploadedBytes(data.uploadedBytes), icon: HardDrive },
   ] : [];
   return (
-    <section className="admin-section admin-overview" aria-labelledby="admin-overview-heading">
+    <section className="admin-section" aria-labelledby="admin-overview-heading">
       <div className="admin-section-heading">
-        <h2 id="admin-overview-heading">Ringkasan penggunaan</h2>
-        <label className="admin-field admin-overview-period">Periode aktivitas
+        <h2 id="admin-overview-heading">Overview</h2>
+        <label className="admin-field">Periode aktivitas
           <select value={days} onChange={event => setDays(event.target.value)}>
             {[7, 30, 90].map(value => <option key={value} value={value}>{value} hari terakhir</option>)}
           </select>
@@ -374,40 +278,32 @@ function AdminOverview() {
           {' sampai '}
           <time dateTime={data.periodEnd}>{periodEnd}</time> WIB
         </p> : <p className="admin-monitor-notice" role="status">Rentang tanggal belum tersedia.</p>}
-        <dl className="admin-kpis admin-overview-kpis" aria-label="Ringkasan periode aktivitas">
-          {periodCards.map(({ label, value, detail, icon: Icon }) => (
+        <dl className="admin-kpis" aria-label="Ringkasan periode aktivitas">
+          {periodCards.map(({ label, value, icon: Icon }) => (
             <div className="surface-card admin-kpi" key={label}>
               <Icon size={20} aria-hidden="true" />
-              <div><dt>{label}</dt><dd>{value}{detail && <small>{detail}</small>}</dd></div>
+              <div><dt>{label}</dt><dd>{value}</dd></div>
             </div>
           ))}
         </dl>
         <div className="admin-overview-panels">
-          <OverviewActivityChart key={days} activity={activity ?? []} meetingsLabel={meetingsLabel} weekly={days === '90'} periodEnd={data.periodEnd} />
+          {Array.isArray(data.dailyActivity) && <OverviewActivityChart activity={data.dailyActivity} />}
           <section className="surface-card admin-section" aria-labelledby="admin-recent-activity-heading">
             <h2 id="admin-recent-activity-heading">Aktivitas terbaru</h2>
             {!Array.isArray(data.recentActivity) ? <p>Data aktivitas terbaru belum tersedia.</p> :
               data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
-              <ul className="admin-overview-events">{data.recentActivity.slice(0, 5).map(event => {
+              <ul className="admin-overview-events">{data.recentActivity.map(event => {
                 const occurredAt = overviewDateLabel(event.occurredAt, adminWibDate);
                 return <li key={`${event.kind}:${event.id}`}>
-                  <a href={event.kind === 'meeting_created' ? '#/admin/meetings' : '#/admin/recordings'}>
-                    <span className="admin-overview-event-text">
-                      <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
-                      <span>{event.title || 'Tanpa judul'}</span>
-                      {occurredAt ? <time dateTime={event.occurredAt}>{occurredAt} WIB</time> : <span>Waktu belum tercatat</span>}
-                    </span>
-                    <ChevronRight size={16} aria-hidden="true" />
-                  </a>
+                  <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
+                  <span>{event.title || 'Tanpa judul'}</span>
+                  {occurredAt ? <time dateTime={event.occurredAt}>{occurredAt} WIB</time> : <span>Waktu belum tercatat</span>}
                 </li>;
               })}</ul>}
           </section>
         </div>
         <section className="surface-card admin-section" aria-labelledby="admin-accounts-overview-heading">
-          <div className="admin-section-heading">
-            <h2 id="admin-accounts-overview-heading">Akun saat ini</h2>
-            <a className="admin-overview-accounts-link" href="#/admin/employees">Buka Karyawan <ChevronRight size={16} aria-hidden="true" /></a>
-          </div>
+          <h2 id="admin-accounts-overview-heading">Akun saat ini</h2>
           <dl className="admin-kpis">
             <div className="admin-kpi"><Users size={20} aria-hidden="true" />
               <div><dt>Total karyawan</dt><dd>{numberFormat.format(data.totalEmployees)}</dd></div>
@@ -686,188 +582,58 @@ function AdminMeetingMonitoring() {
   );
 }
 
-interface MeetingHistorySummary {
-  totalEndedMeetings: number;
-  totalDurationSeconds: number;
-  durationSamples: number;
-  averageParticipants: number | null;
-  participantSamples: number;
-}
-
 interface MeetingHistoryPage {
   meetings: Array<{
     id: string;
     title: string;
-    status: MeetingStatus;
     createdAt: string | null;
     endedAt: string | null;
     startedAt: string | null;
-    hostName: string | null;
-    participantCount: number | null;
+    participantCount: number;
     durationSeconds: number | null;
   }>;
   total: number;
   page: number;
   pageSize: number;
-  summary?: MeetingHistorySummary;
 }
 
 const initialMeetingHistoryFilters = { q: '', from: '', to: '', page: '1' };
 
 function AdminMeetingHistory() {
-  const [inputFilters, setInputFilters] = useState(initialMeetingHistoryFilters);
-  const [appliedFilters, setAppliedFilters] = useState(initialMeetingHistoryFilters);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-
-  const { data, loading, error, reload } = useAdminData<MeetingHistoryPage>(
-    `/admin/meetings/history?${new URLSearchParams(appliedFilters)}`
-  );
-
+  const [filters, setFilters] = useState(initialMeetingHistoryFilters);
+  const { data, loading, error, reload } = useAdminData<MeetingHistoryPage>(`/admin/meetings/history?${new URLSearchParams(filters)}`);
   const applyFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setAppliedFilters({ ...inputFilters, page: '1' });
+    const form = new FormData(event.currentTarget);
+    setFilters({
+      q: String(form.get('q') ?? '').trim(),
+      from: String(form.get('from') ?? ''),
+      to: String(form.get('to') ?? ''),
+      page: '1',
+    });
   };
-
-  const resetFilters = () => {
-    setInputFilters(initialMeetingHistoryFilters);
-    setAppliedFilters(initialMeetingHistoryFilters);
-  };
-
-  const goToPage = (page: number) => {
-    setAppliedFilters(previous => ({ ...previous, page: String(page) }));
-  };
-
-  const exportCsv = async () => {
-    setExporting(true);
-    setExportError(null);
-    try {
-      const query = new URLSearchParams({
-        q: appliedFilters.q,
-        from: appliedFilters.from,
-        to: appliedFilters.to,
-      });
-      const response = await fetch(`${API_BASE}/admin/meetings/history/export?${query}`, {
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => null);
-        throw new Error(errJson?.error || `Ekspor CSV gagal (HTTP ${response.status})`);
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'riwayat-rapat.csv';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err: unknown) {
-      setExportError(err instanceof Error ? err.message : 'Gagal mengekspor riwayat rapat ke CSV.');
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const filtered = appliedFilters.q || appliedFilters.from || appliedFilters.to;
+  const goToPage = (page: number) => setFilters(previous => ({ ...previous, page: String(page) }));
+  const filtered = filters.q || filters.from || filters.to;
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
   return (
     <section className="surface-card admin-section" aria-labelledby="admin-history-heading">
       <div className="admin-section-heading">
         <h2 id="admin-history-heading">Riwayat rapat selesai</h2>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="button-secondary"
-            disabled={loading || exporting || data?.total === 0}
-            onClick={exportCsv}
-          >
-            <Download size={16} aria-hidden="true" /> {exporting ? 'Mengekspor...' : 'Ekspor CSV'}
-          </button>
-          <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
-            <RefreshCw size={16} aria-hidden="true" /> Perbarui
-          </button>
-        </div>
+        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+          <RefreshCw size={16} aria-hidden="true" /> Perbarui
+        </button>
       </div>
-
-      <div className="admin-directory-summary">
-        <dl className="admin-kpis">
-          <div className="admin-kpi">
-            <CalendarDays size={20} aria-hidden="true" />
-            <div>
-              <dt>Total rapat selesai</dt>
-              <dd>{numberFormat.format(data?.summary?.totalEndedMeetings ?? data?.total ?? 0)}</dd>
-              <small className="admin-check-time">Seluruh hasil filter</small>
-            </div>
-          </div>
-          <div className="admin-kpi">
-            <Clock size={20} aria-hidden="true" />
-            <div>
-              <dt>Total durasi</dt>
-              <dd>
-                {data?.summary && data.summary.durationSamples > 0
-                  ? durationLabel(data.summary.totalDurationSeconds)
-                  : 'Belum tersedia'}
-              </dd>
-              <small className="admin-check-time">
-                {data?.summary && data.summary.durationSamples > 0
-                  ? `Dari ${numberFormat.format(data.summary.durationSamples)} rapat`
-                  : '0 sampel valid'}
-              </small>
-            </div>
-          </div>
-          <div className="admin-kpi">
-            <Users size={20} aria-hidden="true" />
-            <div>
-              <dt>Rata-rata peserta</dt>
-              <dd>
-                {data?.summary?.averageParticipants != null
-                  ? `${numberFormat.format(data.summary.averageParticipants)} orang`
-                  : 'Belum tersedia'}
-              </dd>
-              <small className="admin-check-time">
-                {data?.summary && data.summary.participantSamples > 0
-                  ? `Dari ${numberFormat.format(data.summary.participantSamples)} rapat`
-                  : '0 sampel valid'}
-              </small>
-            </div>
-          </div>
-        </dl>
-        <p className="admin-summary-scope">Angka ringkasan mengikuti filter yang diterapkan.</p>
-      </div>
-
-      {exportError && <p className="admin-monitor-notice" role="alert">{exportError}</p>}
-
-      <form className="admin-filters" aria-label="Filter riwayat rapat" onSubmit={applyFilters} onReset={resetFilters}>
+      <form className="admin-filters" aria-label="Filter riwayat rapat" onSubmit={applyFilters}
+        onReset={() => setFilters(initialMeetingHistoryFilters)}>
         <label className="admin-field">Judul rapat
-          <input
-            type="search"
-            name="q"
-            maxLength={100}
-            placeholder="Cari judul rapat"
-            value={inputFilters.q}
-            onChange={e => setInputFilters(prev => ({ ...prev, q: e.target.value }))}
-          />
+          <input type="search" name="q" maxLength={100} placeholder="Cari judul rapat" />
         </label>
         <label className="admin-field">Tanggal awal (WIB)
-          <input
-            type="date"
-            name="from"
-            aria-describedby="admin-history-date-note"
-            value={inputFilters.from}
-            onChange={e => setInputFilters(prev => ({ ...prev, from: e.target.value }))}
-          />
+          <input type="date" name="from" aria-describedby="admin-history-date-note" />
         </label>
         <label className="admin-field">Tanggal akhir (WIB)
-          <input
-            type="date"
-            name="to"
-            aria-describedby="admin-history-date-note"
-            value={inputFilters.to}
-            onChange={e => setInputFilters(prev => ({ ...prev, to: e.target.value }))}
-          />
+          <input type="date" name="to" aria-describedby="admin-history-date-note" />
         </label>
         <button type="submit" className="button-primary">Terapkan</button>
         <button type="reset" className="button-secondary">Reset filter</button>
@@ -880,12 +646,8 @@ function AdminMeetingHistory() {
           <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel riwayat rapat">
             <table className="admin-table" aria-label="Daftar rapat selesai">
               <thead><tr>
-                <th scope="col">Rapat</th>
-                <th scope="col">Waktu (WIB)</th>
-                <th scope="col">Host</th>
-                <th scope="col">Peserta</th>
-                <th scope="col">Durasi</th>
-                <th scope="col">Status</th>
+                <th scope="col">Rapat</th><th scope="col">Waktu (WIB)</th>
+                <th scope="col">Peserta tercatat</th><th scope="col">Durasi</th>
               </tr></thead>
               <tbody>{data.meetings.map(meeting => <tr key={meeting.id}>
                 <td><strong>{meeting.title}</strong></td>
@@ -895,10 +657,8 @@ function AdminMeetingHistory() {
                     : '—'}
                   {meeting.startedAt && <small>Mulai <time dateTime={meeting.startedAt}>{adminWibDate.format(new Date(meeting.startedAt))}</time></small>}
                 </td>
-                <td>{meeting.hostName ?? 'Belum tercatat'}</td>
-                <td>{meeting.participantCount == null ? '—' : numberFormat.format(meeting.participantCount)}</td>
+                <td>{numberFormat.format(meeting.participantCount)}</td>
                 <td>{durationLabel(meeting.durationSeconds)}</td>
-                <td>{meetingStatuses[meeting.status] || 'Selesai'}</td>
               </tr>)}</tbody>
             </table>
           </div>
@@ -4033,7 +3793,7 @@ export default function AdminDashboard({ section, onEnterObserverMode }: {
 }) {
   const { data, loading, error, reload } = useAdminData<{ employeeId: string; permissions: string[] }>('/admin/access');
   return (
-    <div className={section === 'overview' ? 'dashboard-content admin-page admin-page--overview' : 'dashboard-content admin-page'}>
+    <div className="dashboard-content admin-page">
       <h1>Admin Dashboard</h1>
       {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
         {section === 'overview' && <AdminOverview />}

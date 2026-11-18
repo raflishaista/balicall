@@ -3,8 +3,9 @@ import { AlertCircle, ChevronLeft, ChevronRight, FileVideo, Loader2, RefreshCw, 
 import { featureError } from './api';
 import {
   MAX_UPLOAD_MB, deleteUpload, formatDuration, formatSize, getUpload, isActive, listUploads,
-  resummarizeUpload, statusLabel, SttLabels, getOptions,DiarizerLabels, uploadRecording, type RecordingUpload,
+  resummarizeUpload, statusLabel, SttLabels, getOptions,DiarizerLabels, uploadRecording, uploadMediaUrl, type RecordingUpload,
 } from './recordingUploads';
+import { SyncedAudioPlayer, type SyncedAudioPlayerRef } from './SyncedAudioPlayer';
 import './SummaryHistory.css';
 import './RecordingUpload.css';
 
@@ -40,6 +41,16 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
   const [retryModel, setRetryModel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const playerRef = useRef<SyncedAudioPlayerRef>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const activeSegmentRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (autoScroll && activeSegmentRef.current) {
+      activeSegmentRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [currentTime, autoScroll]);
 
   const load = useCallback(async () => {
     try { setUpload((await getUpload(id)).upload); setError(null); }
@@ -163,6 +174,27 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
             </div>
           )}
 
+          {upload.hasMedia && (
+            <section className="summary-section" style={{ marginTop: '20px' }}>
+              <div className="transcript-heading">
+                <div>
+                  <h2>Putar Rekaman Suara</h2>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '2px 0 0' }}>
+                    Klik pada ucapan di transkrip untuk langsung melompat ke detik yang dipilih.
+                  </p>
+                </div>
+              </div>
+              <SyncedAudioPlayer
+                ref={playerRef}
+                src={uploadMediaUrl(upload.id)}
+                duration={upload.durationSeconds}
+                onTimeUpdate={setCurrentTime}
+                autoScroll={autoScroll}
+                onToggleAutoScroll={setAutoScroll}
+              />
+            </section>
+          )}
+
           {transcript?.text && (
             <section className="summary-section" style={{ marginTop: '20px' }}>
               <div className="transcript-heading"><div><h2>Transkrip</h2></div></div>
@@ -173,13 +205,26 @@ function RecordingDetail({ id, llmModels, onBack, onDeleted }: { id: string; llm
                 <div className="recap-transcript-list">
                   {transcript.segments.map((seg, i) => {
                     const speaker = normalizeSpeaker(seg.speaker);
+                    const isPlayingActive = Boolean(upload.hasMedia) && currentTime >= seg.start && currentTime <= seg.end;
                     return (
-                      <article className="recap-transcript-entry diarized" data-speaker={speaker} key={i}>
+                      <article
+                        ref={isPlayingActive ? (el => { activeSegmentRef.current = el; }) : undefined}
+                        className={`recap-transcript-entry diarized ${upload.hasMedia ? 'is-clickable' : ''} ${isPlayingActive ? 'is-playing-active' : ''}`}
+                        data-speaker={speaker}
+                        key={i}
+                        onClick={() => {
+                          if (upload.hasMedia) {
+                            playerRef.current?.seekTo(seg.start, true);
+                          }
+                        }}
+                        title={upload.hasMedia ? 'Klik untuk memutar rekaman dari bagian ini' : undefined}
+                      >
                         <time>{formatTimestamp(seg.start)}</time>
                         <div>
                           <div className="transcript-diarized-row">
                             <span className="transcript-diarized-speaker" data-speaker={speaker}>{speaker}</span>
                             <span className="segment-time-pill">{seg.start.toFixed(1)}s–{seg.end.toFixed(1)}s</span>
+                            {isPlayingActive && <span style={{ fontSize: '11px', color: '#0284c7', fontWeight: 600 }}>▶ Memutar</span>}
                           </div>
                           <p>{seg.text}</p>
                         </div>
