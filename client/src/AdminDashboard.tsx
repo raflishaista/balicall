@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -30,6 +30,7 @@ import {
   Target,
   Users,
   User,
+  Video,
   X,
   Zap,
 } from 'lucide-react';
@@ -762,6 +763,34 @@ interface LiveMonitorApiResponse {
   checkedAt: string;
 }
 
+function LiveMonitorDialog({ titleId, onClose, wide = false, busy = false, children }: {
+  titleId: string;
+  onClose: () => void;
+  wide?: boolean;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className={`admin-dialog${wide ? ' admin-dialog--wide' : ''}`}
+      aria-labelledby={titleId}
+      onCancel={event => {
+        event.preventDefault();
+        if (!busy) onClose();
+      }}
+    >
+      {children}
+    </dialog>
+  );
+}
+
 function LiveMeetingDetailsModal({ meetingId, onClose, onObserve }: {
   meetingId: string;
   onClose: () => void;
@@ -770,8 +799,7 @@ function LiveMeetingDetailsModal({ meetingId, onClose, onObserve }: {
   const { data, loading, error, reload } = useAdminData<LiveMeetingDetails>(`/admin/live-monitor/meetings/${encodeURIComponent(meetingId)}`);
 
   return (
-    <div className="admin-dialog-backdrop" role="presentation" onClick={onClose}>
-      <div className="admin-dialog admin-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="live-details-heading" onClick={e => e.stopPropagation()}>
+    <LiveMonitorDialog titleId="live-details-heading" onClose={onClose} wide>
         <div className="admin-dialog-header">
           <h2 id="live-details-heading">Detail Rapat Aktif</h2>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Tutup detail rapat">
@@ -803,7 +831,7 @@ function LiveMeetingDetailsModal({ meetingId, onClose, onObserve }: {
               </div>
               <div>
                 <span className="admin-details-label">Status Kepatuhan</span>
-                <span>{data.meeting.isMonitored ? '🛡️ Sedang Dipantau' : 'Standar'}</span>
+                <span>{data.meeting.isMonitored ? 'Sedang dipantau' : 'Tidak dipantau'}</span>
               </div>
             </div>
 
@@ -864,12 +892,11 @@ function LiveMeetingDetailsModal({ meetingId, onClose, onObserve }: {
 
         <div className="admin-dialog-footer">
           <button type="button" className="button-secondary" onClick={onClose}>Tutup</button>
-          <button type="button" className="button-primary" onClick={onObserve}>
-            <Eye size={16} aria-hidden="true" /> Minta Akses Pemantau
+          <button type="button" className="button-primary" onClick={onObserve} disabled={!data || loading || Boolean(error)}>
+            <Eye size={16} aria-hidden="true" /> Pantau rapat
           </button>
         </div>
-      </div>
-    </div>
+    </LiveMonitorDialog>
   );
 }
 
@@ -938,12 +965,11 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
   };
 
   return (
-    <div className="admin-dialog-backdrop" role="presentation" onClick={onClose}>
-      <div className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="observer-request-heading" onClick={e => e.stopPropagation()}>
+    <LiveMonitorDialog titleId="observer-request-heading" onClose={onClose} busy={submitting}>
         <form onSubmit={handleSubmit}>
           <div className="admin-dialog-header">
-            <h2 id="observer-request-heading">Minta Akses Pemantau Pribadi</h2>
-            <button type="button" className="icon-button" onClick={onClose} aria-label="Tutup dialog">
+            <h2 id="observer-request-heading">Mulai pemantauan</h2>
+            <button type="button" className="icon-button" onClick={onClose} disabled={submitting} aria-label="Tutup dialog">
               <X size={18} aria-hidden="true" />
             </button>
           </div>
@@ -952,7 +978,7 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
             <div className="admin-compliance-notice" role="note">
               <ShieldCheck size={18} aria-hidden="true" />
               <div>
-                <strong>Kebijakan Kepatuhan Enterprise:</strong> Akses pemantau pribadi hanya untuk pengawasan kepatuhan dan investigasi resmi. Seluruh peserta akan menerima pemberitahuan keterbukaan pemantauan organisasi di antarmuka mereka.
+                Mode pantau hanya untuk pengawasan kepatuhan dan investigasi resmi. Peserta akan melihat pemberitahuan saat pemantauan aktif.
               </div>
             </div>
 
@@ -975,12 +1001,13 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
                 id="observer-reason-input"
                 className="input-text"
                 rows={3}
-                placeholder="Contoh: Pemeriksaan kepatuhan SLA layanan audio atau investigasi kendala teknis..."
+                placeholder="Contoh: Pemeriksaan kualitas audio"
+                aria-describedby="observer-reason-hint"
                 value={accessReason}
                 onChange={e => setAccessReason(e.target.value)}
                 required
               />
-              <small className="admin-field-hint">Minimal 5 karakter. Alasan ini akan tercatat permanen dalam audit log.</small>
+              <small id="observer-reason-hint" className="admin-field-hint">Minimal 5 karakter. Alasan dicatat di log audit.</small>
             </div>
 
             <div className="admin-checkbox-group">
@@ -1014,8 +1041,7 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </LiveMonitorDialog>
   );
 }
 
@@ -1047,28 +1073,24 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
 
   const filteredMeetings = useMemo(() => {
     if (!data?.meetings) return [];
-    if (!searchTerm.trim()) return data.meetings;
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return data.meetings;
+    const roomCodeTerm = term.replace(/^#/, '');
     return data.meetings.filter(m =>
       m.title.toLowerCase().includes(term) ||
-      (m.roomCode && m.roomCode.toLowerCase().includes(term)) ||
+      (roomCodeTerm && m.roomCode?.toLowerCase().includes(roomCodeTerm)) ||
       m.hostName.toLowerCase().includes(term)
     );
   }, [data?.meetings, searchTerm]);
+  const livekitHealthy = data?.summary.connectionHealth === 'healthy';
 
   return (
-    <section className="surface-card admin-section" aria-labelledby="live-monitor-heading">
+    <section className="surface-card admin-section admin-live-monitor" aria-labelledby="live-monitor-heading">
       <div className="admin-section-heading">
         <div>
-          <h2 id="live-monitor-heading" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Radio size={20} className="pulse-indicator" aria-hidden="true" />
-            Live Meeting Monitor
-          </h2>
-          <p className="admin-section-sub">Pemantauan sesi rapat aktif secara waktu nyata untuk Super Admin.</p>
+          <h2 id="live-monitor-heading">Live Monitor</h2>
+          <p className="admin-section-sub">Pantau rapat aktif dan kelola sesi pemantauan.</p>
         </div>
-        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
-          <RefreshCw size={16} aria-hidden="true" /> Perbarui
-        </button>
       </div>
 
       {actionNotice && (
@@ -1086,92 +1108,85 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
         <AdminLoadState error={error} reload={reload} />
       ) : (
         <>
+          {error && (
+            <p className="admin-error-text" role="alert">Gagal memperbarui data. Angka berikut berasal dari pengecekan terakhir.</p>
+          )}
           {/* KPI Summary Cards */}
-          <div className="admin-overview-grid" style={{ marginBottom: '24px' }}>
+          {!livekitHealthy && (
+            <p role="status">Jumlah rapat dan peserta belum bisa diverifikasi karena LiveKit tidak dapat dijangkau.</p>
+          )}
+          <div className="admin-overview-grid">
             <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Active Meetings</span>
-              <strong className="admin-kpi-value">{data.summary.activeMeetings}</strong>
-              <small className="admin-kpi-sub">Rapat sedang berlangsung</small>
+              <span className="admin-kpi-label"><Video size={16} aria-hidden="true" /> Rapat aktif</span>
+              <strong className="admin-kpi-value">{livekitHealthy ? numberFormat.format(data.summary.activeMeetings) : '—'}</strong>
             </div>
             <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Total Participants</span>
-              <strong className="admin-kpi-value">{data.summary.totalParticipants}</strong>
-              <small className="admin-kpi-sub">Peserta terhubung di semua ruang</small>
+              <span className="admin-kpi-label"><Users size={16} aria-hidden="true" /> Peserta terhubung</span>
+              <strong className="admin-kpi-value">{livekitHealthy ? numberFormat.format(data.summary.totalParticipants) : '—'}</strong>
             </div>
             <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Active Hosts</span>
-              <strong className="admin-kpi-value">{data.summary.activeHosts}</strong>
-              <small className="admin-kpi-sub">Penyelenggara aktif</small>
+              <span className="admin-kpi-label"><User size={16} aria-hidden="true" /> Host aktif</span>
+              <strong className="admin-kpi-value">{livekitHealthy ? numberFormat.format(data.summary.activeHosts) : '—'}</strong>
             </div>
             <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Meeting Duration (Avg)</span>
-              <strong className="admin-kpi-value">{durationLabel(data.summary.averageDurationSeconds)}</strong>
-              <small className="admin-kpi-sub">Rata-rata durasi sesi aktif</small>
-            </div>
-            <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Meeting Status</span>
-              <strong className="admin-kpi-value" style={{ color: data.summary.activeMeetings > 0 ? '#34d399' : '#94a3b8' }}>
-                {data.summary.meetingStatus || (data.summary.activeMeetings > 0 ? 'Aktif' : 'Standby')}
-              </strong>
-              <small className="admin-kpi-sub">Status operasional ruang rapat</small>
-            </div>
-            <div className="admin-kpi-card">
-              <span className="admin-kpi-label">Connection Health</span>
-              <strong className="admin-kpi-value" style={{ color: data.summary.connectionHealth === 'healthy' ? '#34d399' : '#fbbf24' }}>
-                {data.summary.connectionHealth === 'healthy' ? 'Sehat' : 'Terkendala'}
-              </strong>
-              <small className="admin-kpi-sub">Konektivitas SFU LiveKit</small>
+              <span className="admin-kpi-label"><Clock size={16} aria-hidden="true" /> Rata-rata durasi</span>
+              <strong className="admin-kpi-value">{livekitHealthy && data.summary.activeMeetings > 0 ? durationLabel(data.summary.averageDurationSeconds) : '—'}</strong>
             </div>
           </div>
 
           {/* Search bar */}
-          <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <div style={{ flex: 1, position: 'relative' }}>
+          <div className="admin-live-toolbar">
+            <div className="admin-live-search">
+              <Search size={16} aria-hidden="true" />
               <input
                 type="search"
                 className="input-text"
-                placeholder="Cari berdasarkan judul rapat, kode, atau nama host..."
+                placeholder="Cari nama rapat, kode, atau host"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 aria-label="Cari rapat aktif"
               />
+            </div>
+            <div className="admin-live-toolbar-actions">
+              <span className={`admin-live-health ${livekitHealthy ? 'is-healthy' : ''}`}>
+                <Radio size={15} aria-hidden="true" /> LiveKit {livekitHealthy ? 'sehat' : 'terkendala'}
+              </span>
+              <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+                <RefreshCw size={16} aria-hidden="true" /> Perbarui
+              </button>
             </div>
           </div>
 
           {/* Meetings Table */}
           {filteredMeetings.length === 0 ? (
             <p role="status" style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8' }}>
-              {searchTerm ? 'Tidak ada rapat yang sesuai dengan pencarian.' : 'Tidak ada rapat yang sedang berlangsung saat ini.'}
+              {data.summary.connectionHealth !== 'healthy' ? 'Daftar rapat aktif belum tersedia.' : searchTerm ? 'Tidak ada rapat yang sesuai dengan pencarian.' : 'Tidak ada rapat yang sedang berlangsung saat ini.'}
             </p>
           ) : (
             <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel rapat aktif">
               <table className="admin-table" aria-label="Daftar rapat langsung">
                 <thead>
                   <tr>
-                    <th scope="col">Meeting Name</th>
+                    <th scope="col">Nama rapat</th>
                     <th scope="col">Host</th>
-                    <th scope="col">Participant Count</th>
-                    <th scope="col">Start Time</th>
-                    <th scope="col">Duration</th>
+                    <th scope="col">Peserta</th>
+                    <th scope="col">Mulai</th>
+                    <th scope="col">Durasi</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Action</th>
+                    <th scope="col">Aksi</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredMeetings.map((meeting: LiveMonitorMeetingItem) => (
                     <tr key={meeting.id}>
                       <td>
-                        <strong>{meeting.title}</strong>
-                        {meeting.roomCode && (
-                          <span style={{ marginLeft: '6px', fontSize: '0.78rem', background: '#1e293b', padding: '2px 6px', borderRadius: '4px' }}>
-                            #{meeting.roomCode}
-                          </span>
-                        )}
-                        {meeting.isMonitored && (
-                          <span style={{ marginLeft: '6px', fontSize: '0.75rem', color: '#34d399', background: 'rgba(16,185,129,0.15)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(16,185,129,0.3)' }}>
-                            🛡️ Dipantau
-                          </span>
-                        )}
+                        <div className="admin-live-meeting-name">
+                          <strong>{meeting.title}</strong>
+                          <div className="admin-live-meeting-meta">
+                            {meeting.roomCode && <span className="admin-live-room-code">#{meeting.roomCode}</span>}
+                            {meeting.isMonitored && <span className="admin-live-health is-healthy">Dipantau</span>}
+                          </div>
+                        </div>
                       </td>
                       <td>{meeting.hostName || '—'}</td>
                       <td>{meeting.participantCount} peserta</td>
@@ -1183,14 +1198,14 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
                         </span>
                       </td>
                       <td>
-                        <div style={{ display: 'inline-flex', gap: '8px' }}>
+                        <div className="admin-live-actions">
                           <button
                             type="button"
                             className="button-secondary"
                             onClick={() => setDetailsMeetingId(meeting.id)}
                             title="Lihat detail peserta rapat"
                           >
-                            <Eye size={14} aria-hidden="true" /> View Details
+                            <Eye size={14} aria-hidden="true" /> Detail
                           </button>
                           <button
                             type="button"
@@ -1198,17 +1213,16 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
                             onClick={() => setRequestMeeting(meeting)}
                             title="Minta akses pemantau pribadi"
                           >
-                            <ShieldCheck size={14} aria-hidden="true" /> Request Observer Access
+                            <ShieldCheck size={14} aria-hidden="true" /> Pantau
                           </button>
                           {meeting.observerSessions && meeting.observerSessions.length > 0 && (
                             <button
                               type="button"
-                              className="button-secondary"
-                              style={{ borderColor: '#ef4444', color: '#fca5a5' }}
+                              className="button-secondary admin-live-end"
                               onClick={() => handleEndObserverSession(meeting.observerSessions![0].observerId)}
                               title="Akhiri sesi pengamatan ini"
                             >
-                              End Observer Session
+                              Akhiri pemantauan
                             </button>
                           )}
                         </div>
