@@ -1252,11 +1252,12 @@ async function syncActionItemsToItProject(
       if(req.auth)employeeName=req.auth.user.name;
     }
 
+    const allowNameLookup = intent !== 'create' && !targetCode;
     let active = [...store.meetings.values()].find(meeting => {
       if (meeting.status !== 'active' || meeting.attendanceFinalization) return false;
       if (targetCode && meeting.roomCode && meeting.roomCode.toUpperCase() === targetCode) return true;
-      if (roomName && meeting.roomName === roomName.trim()) return true;
-      if (roomName && meeting.roomCode && meeting.roomCode.toUpperCase() === roomName.trim().toUpperCase()) return true;
+      if (allowNameLookup && roomName && meeting.roomName === roomName.trim()) return true;
+      if (intent !== 'create' && roomName && meeting.roomCode && meeting.roomCode.toUpperCase() === roomName.trim().toUpperCase()) return true;
       return false;
     });
 
@@ -1272,8 +1273,8 @@ async function syncActionItemsToItProject(
       scheduled = schedules.find(item => {
         if (item.status === 'cancelled' || Date.parse(item.scheduledEnd) <= now) return false;
         if (targetCode && item.roomCode && item.roomCode.toUpperCase() === targetCode) return true;
-        if (upperRoom && item.roomCode && item.roomCode.toUpperCase() === upperRoom) return true;
-        if (cleanRoom && item.roomName && item.roomName.toLowerCase() === cleanRoom.toLowerCase()) return true;
+        if (intent !== 'create' && upperRoom && item.roomCode && item.roomCode.toUpperCase() === upperRoom) return true;
+        if (allowNameLookup && cleanRoom && item.roomName && item.roomName.toLowerCase() === cleanRoom.toLowerCase()) return true;
         return false;
       }) || null;
 

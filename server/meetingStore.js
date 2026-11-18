@@ -117,11 +117,12 @@ export class MeetingStore {
   join(roomName, participant, { requireExisting = participant.intent === 'join' } = {}) {
     return this.transact(() => {
       const roomCode = participant.roomCode ? String(participant.roomCode).trim().toUpperCase() : null;
+      const allowNameLookup = participant.intent !== 'create' && !roomCode;
       let meeting = [...this.meetings.values()].find(value => {
         if (value.status !== 'active' || value.attendanceFinalization) return false;
         if (roomCode && value.roomCode && value.roomCode.toUpperCase() === roomCode) return true;
-        if (value.roomName === roomName) return true;
-        if (value.roomCode && value.roomCode.toUpperCase() === String(roomName).trim().toUpperCase()) return true;
+        if (allowNameLookup && value.roomName === roomName) return true;
+        if (participant.intent !== 'create' && value.roomCode && value.roomCode.toUpperCase() === String(roomName).trim().toUpperCase()) return true;
         return false;
       });
       if (meeting && meeting.participants.size > 0 && [...meeting.participants.values()].every(person => person.leftAt || Date.now() - Date.parse(person.lastSeen) >= 45000)) {

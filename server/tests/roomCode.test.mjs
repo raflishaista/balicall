@@ -171,3 +171,48 @@ test('scheduled meeting generates 5-digit roomCode, pre-creates room, and allows
   assert.equal(activeMeeting.participants.get('BT-10492').role, 'host');
   assert.equal(activeMeeting.participants.get('BT-10214').role, 'participant');
 });
+
+test('creating a new room with a new roomCode does not join an existing room with the same roomName', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'balicall-create-code-'));
+  const config = {
+    ...loadConfig({ AUTH_ENABLED: 'false', LLM_PROVIDER: 'demo', VERIFY_EMPLOYEE_ID: 'false' }),
+    dataFile: join(directory, 'meetings.json'),
+  };
+  const context = createApp(config, { livekitProbe: async () => [] });
+  const server = context.app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const port = server.address().port;
+  t.after(async () => {
+    context.close();
+    await new Promise(resolve => server.close(resolve));
+    try { rmSync(directory, { recursive: true, force: true }); } catch {}
+  });
+
+  const first = await (await fetch(`http://127.0.0.1:${port}/api/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      roomName: 'Rapat Tim NOC & Core Network',
+      roomCode: 'AAA11',
+      employeeId: 'BT-10492',
+      employeeName: 'Host One',
+      intent: 'create',
+    }),
+  })).json();
+
+  const second = await (await fetch(`http://127.0.0.1:${port}/api/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      roomName: 'Rapat Tim NOC & Core Network',
+      roomCode: 'BBB22',
+      employeeId: 'BT-10214',
+      employeeName: 'Host Two',
+      intent: 'create',
+    }),
+  })).json();
+
+  assert.notEqual(second.meetingId, first.meetingId);
+  assert.equal(first.roomCode, 'AAA11');
+  assert.equal(second.roomCode, 'BBB22');
+});

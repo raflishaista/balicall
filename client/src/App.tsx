@@ -369,9 +369,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setRecordingId(sanitized.recordingId || null);
     }
     if (sanitized.view === 'lobby') {
-      setMeetingIntent(sanitized.intent || (isGuest ? 'join' : 'create'));
+      const nextIntent = sanitized.intent || (isGuest ? 'join' : 'create');
+      setMeetingIntent(nextIntent);
       setLobbyInviteCode(sanitized.roomCode);
       if (sanitized.roomCode) setRoomCode(sanitized.roomCode);
+      else if (nextIntent === 'create') setRoomCode(generateRoomCode());
     }
   }, [isGuest, preJoinMedia]);
 
