@@ -2449,3 +2449,197 @@ input::placeholder { color: #a1b1c6; }
   background: #f1f5f9;
   color: #0f172a;
 }
+
+.breakout-return-pill {
+  padding: 4px 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #0865ed;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.breakout-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.breakout-modal {
+  width: min(100%, 420px);
+  padding: 22px;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.28);
+  display: grid;
+  gap: 14px;
+}
+
+.breakout-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.breakout-modal-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #0f172a;
+}
+
+.breakout-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.breakout-modal-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.breakout-setup-form,
+.breakout-active-list {
+  display: grid;
+  gap: 14px;
+}
+
+.breakout-spin-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.breakout-spin-controls {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.breakout-spin-controls input {
+  width: 48px;
+  padding: 6px 4px;
+  border: 0;
+  text-align: center;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.breakout-spin-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: #f8fafc;
+  color: #1e293b;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.breakout-spin-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.breakout-spin-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.breakout-mode-radios {
+  display: grid;
+  gap: 8px;
+}
+
+.breakout-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d5e1ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.breakout-mode-option input {
+  width: auto;
+  margin: 0;
+  accent-color: #0865ed;
+}
+
+.breakout-mode-option.selected {
+  border-color: #0865ed;
+  background: #eff6ff;
+  color: #0865ed;
+  font-weight: 600;
+}
+
+.breakout-rooms-grid {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.breakout-room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid #dfe8f3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.breakout-room-row.current {
+  border-color: #0865ed;
+  background: #eff6ff;
+}
+
+.breakout-current-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.breakout-active-subtitle {
+  margin: 0;
+  font-size: 12.5px;
+  color: #496482;
+}
+
+.breakout-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}

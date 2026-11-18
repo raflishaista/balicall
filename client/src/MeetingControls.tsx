@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Check, ChevronUp, Circle, Hand, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
+import { AudioLines, Check, ChevronUp, Circle, Hand, LayoutGrid, Square, Loader2, LogOut, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Settings2, Users, Video, VideoOff, MoreHorizontal, MessageSquareText, Sparkles } from 'lucide-react';
 
-export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, handRaised = false, onToggleRaiseHand, isHost = false, screenSharePolicy = 'all', chatDisabled = false, onChangeScreenSharePolicy, onToggleChatDisabled }: {
+export function MeetingControls({ busy, connected, devicePending, isMuted, microphonePending, isCameraEnabled, cameraPending, isScreenShareEnabled, screenSharePending, screenShareSupported, speechEnabled, speechError, isListening, saveBlocked, finishLabel, recording, recordingPending, onToggleRecording, onToggleMute, onToggleCamera, onToggleScreenShare, onToggleTranscription, onOpenDevices, onParticipants, transcriptOpen, onTranscript, onFinish, isCameraBlur = false, cameraBlurPending = false, cameraBlurSupported = true, onToggleCameraBlur, onOpenBackgrounds, canManageMeeting = true, microphoneRestricted, speakRequestPending, onRequestToSpeak, handRaised = false, onToggleRaiseHand, isHost = false, screenSharePolicy = 'all', chatDisabled = false, onChangeScreenSharePolicy, onToggleChatDisabled, breakoutActive = false, onOpenBreakout }: {
   onOpenBackgrounds?: () => void; canManageMeeting?: boolean;
   handRaised?: boolean; onToggleRaiseHand?: () => void;
   isHost?: boolean;
@@ -9,6 +9,8 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
   chatDisabled?: boolean;
   onChangeScreenSharePolicy?: (policy: 'all' | 'co-hosts' | 'host') => void;
   onToggleChatDisabled?: (disabled: boolean) => void;
+  breakoutActive?: boolean;
+  onOpenBreakout?: () => void;
   busy: boolean; connected: boolean; devicePending: boolean; isMuted: boolean; microphonePending: boolean;
   microphoneRestricted: boolean; speakRequestPending: boolean; onRequestToSpeak: () => Promise<void>;
   isCameraEnabled: boolean; cameraPending: boolean; isScreenShareEnabled: boolean; screenSharePending: boolean; screenShareSupported: boolean;
@@ -172,6 +174,18 @@ export function MeetingControls({ busy, connected, devicePending, isMuted, micro
         </button>
       )}
       <button type="button" className="call-control" aria-label="Peserta" onClick={onParticipants}><Users size={22} /><span>Peserta</span></button>
+      {(isHost || breakoutActive) && onOpenBreakout && (
+        <button
+          type="button"
+          className={`call-control ${breakoutActive ? 'control-active' : ''}`}
+          aria-label="Breakout Rooms"
+          disabled={busy || !connected}
+          onClick={onOpenBreakout}
+        >
+          <LayoutGrid size={22} />
+          <span>Breakout</span>
+        </button>
+      )}
       <button id="toggle-meeting-transcript" type="button" className={`call-control ${transcriptOpen ? 'control-active' : ''}`} aria-label="Chat/Transkrip" aria-pressed={transcriptOpen} onClick={onTranscript}><MessageSquareText size={22} /><span>Chat/Transkrip</span></button>
       <div className="meeting-more" ref={more}
         onBlur={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false); }}

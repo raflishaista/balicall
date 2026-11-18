@@ -194,6 +194,15 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [meetingCoHostIds, setMeetingCoHostIds] = useState<string[]>([]);
   const [screenSharePolicy, setScreenSharePolicy] = useState<'all' | 'co-hosts' | 'host'>('all');
   const [chatDisabled, setChatDisabled] = useState(false);
+  const [breakoutState, setBreakoutState] = useState<{
+    active: boolean;
+    mode: 'auto' | 'choice';
+    rooms: Array<{ id: number; name: string; livekitRoom: string }>;
+    assignments: Record<string, number>;
+    createdAt: string;
+  } | null>(null);
+  const [activeBreakoutRoomId, setActiveBreakoutRoomId] = useState<number | null>(null);
+  const [breakoutToken, setBreakoutToken] = useState<string | null>(null);
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
   const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
@@ -248,6 +257,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           coHostIds?: string[];
           screenSharePolicy?: 'all' | 'co-hosts' | 'host';
           chatDisabled?: boolean;
+          breakout?: {
+            active: boolean;
+            mode: 'auto' | 'choice';
+            rooms: Array<{ id: number; name: string; livekitRoom: string }>;
+            assignments: Record<string, number>;
+            createdAt: string;
+          } | null;
           microphoneRestricted?: boolean;
           speakRequestAt?: string | null;
           pendingSpeakRequests?: Array<{
@@ -282,6 +298,23 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         setMeetingCoHostIds(data.coHostIds || []);
         if (data.screenSharePolicy) setScreenSharePolicy(data.screenSharePolicy);
         if (typeof data.chatDisabled === 'boolean') setChatDisabled(data.chatDisabled);
+        const nextBreakout = data.breakout || null;
+        setBreakoutState(nextBreakout);
+        if (!nextBreakout?.active) {
+          setActiveBreakoutRoomId(null);
+          setBreakoutToken(null);
+        } else if (nextBreakout.mode === 'auto' && nextBreakout.assignments?.[employeeId] && activeBreakoutRoomId === null) {
+          const assignedId = nextBreakout.assignments[employeeId];
+          void apiRequest<{ token: string }>(meetingPath(meetingId, `breakout-rooms/${assignedId}/token`), {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(res => {
+            if (res?.token) {
+              setActiveBreakoutRoomId(assignedId);
+              setBreakoutToken(res.token);
+            }
+          }).catch(() => {});
+        }
         setMicrophoneRestricted(Boolean(data.microphoneRestricted));
         setSpeakRequestAt(data.speakRequestAt || null);
         setPendingSpeakRequests(data.pendingSpeakRequests || []);
@@ -1449,6 +1482,53 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setChatDisabled(res.chatDisabled);
   }, [meetingId, token]);
 
+  const createBreakoutRooms = useCallback(async (roomCount: number, mode: 'auto' | 'choice') => {
+    if (!meetingId || !token) return;
+    const res = await apiRequest<{ breakout: NonNullable<typeof breakoutState> }>(
+      meetingPath(meetingId, 'breakout-rooms'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ roomCount, mode }),
+      }
+    );
+    setBreakoutState(res.breakout);
+  }, [meetingId, token]);
+
+  const joinBreakoutRoom = useCallback(async (roomId: number) => {
+    if (!meetingId || !token) return;
+    const res = await apiRequest<{ token: string }>(
+      meetingPath(meetingId, `breakout-rooms/${roomId}/token`),
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    if (res?.token) {
+      setActiveBreakoutRoomId(roomId);
+      setBreakoutToken(res.token);
+    }
+  }, [meetingId, token]);
+
+  const leaveBreakoutRoom = useCallback(() => {
+    setActiveBreakoutRoomId(null);
+    setBreakoutToken(null);
+  }, []);
+
+  const closeBreakoutRooms = useCallback(async () => {
+    if (!meetingId || !token) return;
+    await apiRequest(meetingPath(meetingId, 'breakout-rooms/close'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setBreakoutState(null);
+    setActiveBreakoutRoomId(null);
+    setBreakoutToken(null);
+  }, [meetingId, token]);
+
   const handleKickedFromMeeting = useCallback(() => {
     setToken(null);
     setMeetingId(null);
@@ -1958,6 +2038,13 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             screenSharePolicy={screenSharePolicy}
             chatDisabled={chatDisabled}
             onUpdatePermissions={updateMeetingPermissions}
+            breakoutState={breakoutState}
+            activeBreakoutRoomId={activeBreakoutRoomId}
+            breakoutToken={breakoutToken}
+            onCreateBreakoutRooms={createBreakoutRooms}
+            onJoinBreakoutRoom={joinBreakoutRoom}
+            onLeaveBreakoutRoom={leaveBreakoutRoom}
+            onCloseBreakoutRooms={closeBreakoutRooms}
             onKicked={handleKickedFromMeeting}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
