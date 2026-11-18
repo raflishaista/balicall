@@ -218,6 +218,12 @@ function OverviewActivityChart({ activity, meetingsLabel, weekly, periodEnd }: {
 }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [keyboardIndex, setKeyboardIndex] = useState(0);
+
+  useEffect(() => {
+    setSelectedIndex(null);
+    setKeyboardIndex(0);
+  }, [activity]);
+
   const interval = weekly ? 7 : 1;
   const points = activity.filter((_, index) => index % interval === 0).map((day, index) => {
     const days = activity.slice(index * interval, (index + 1) * interval);
@@ -231,16 +237,19 @@ function OverviewActivityChart({ activity, meetingsLabel, weekly, periodEnd }: {
   const tickCount = Math.min(points.length, 5);
   const tickIndices = Array.from({ length: tickCount }, (_, index) =>
     Math.round(index * (points.length - 1) / Math.max(1, tickCount - 1)));
-  const active = selectedIndex === null ? undefined : points[selectedIndex];
+  const active = selectedIndex !== null && selectedIndex < points.length ? points[selectedIndex] : undefined;
   const lastIndex = points.length - 1;
   const x = (index: number) => lastIndex === 0 ? 50 : index / lastIndex * 100;
-  const labelFor = (point: (typeof points)[number]) => {
+  const labelFor = (point: (typeof points)[number] | undefined) => {
+    if (!point) return '—';
     const first = overviewDateLabel(point.date, overviewDay) ?? 'Tanggal belum tersedia';
     if (point.date === point.end) return first;
     return first + ' – ' + (overviewDateLabel(point.end, overviewDay) ?? '—');
   };
   const labels = { meetings: meetingsLabel, attendances: 'Kehadiran tercatat' };
   const partial = Boolean(periodEnd && points.at(-1)?.end === periodEnd.slice(0, 10));
+  const safeKeyboardIndex = Math.min(keyboardIndex, Math.max(0, points.length - 1));
+  const currentKeyPoint = points[safeKeyboardIndex];
 
   return (
     <section className="surface-card admin-section admin-trend" aria-labelledby="admin-activity-heading">
@@ -257,7 +266,7 @@ function OverviewActivityChart({ activity, meetingsLabel, weekly, periodEnd }: {
           </> : <span>Pilih titik untuk melihat angkanya.</span>}
         </div>
         <span className="admin-trend-announcement" role="status" aria-atomic="true">
-          {labelFor(points[keyboardIndex])}: {meetingsLabel} {numberFormat.format(points[keyboardIndex].meetings)}, Kehadiran tercatat {numberFormat.format(points[keyboardIndex].attendances)}
+          {currentKeyPoint ? `${labelFor(currentKeyPoint)}: ${meetingsLabel} ${numberFormat.format(currentKeyPoint.meetings)}, Kehadiran tercatat ${numberFormat.format(currentKeyPoint.attendances)}` : 'Data aktivitas'}
         </span>
         {overviewSeries.map(({ key, color }) => {
           const peak = Math.max(1, ...points.map(day => day[key]));
@@ -344,6 +353,14 @@ function OverviewActivityChart({ activity, meetingsLabel, weekly, periodEnd }: {
 }
 
 
+function AdminRefreshingBadge({ loading }: { loading: boolean }) {
+  return (
+    <span className="admin-refreshing-badge" role="status" aria-live="polite">
+      {loading && <><RefreshCw size={13} className="admin-spin" aria-hidden="true" /> Memperbarui data…</>}
+    </span>
+  );
+}
+
 function AdminOverview() {
   const [days, setDays] = useState('30');
   const { data, loading, error, reload } = useAdminData<OverviewData>(`/admin/overview?days=${days}`);
@@ -352,7 +369,10 @@ function AdminOverview() {
   const daily = data?.dailyActivity;
   const hasAttendedCounts = Boolean(daily?.length && daily.every(day => Number.isFinite(day.meetingsWithParticipants)));
   const meetingsLabel = hasAttendedCounts ? 'Rapat dengan peserta' : 'Rapat tercatat';
-  const activity = daily?.map(day => ({ ...day, meetings: hasAttendedCounts ? day.meetingsWithParticipants! : day.meetings }));
+  const activity = useMemo(() => daily?.map(day => ({
+    ...day,
+    meetings: hasAttendedCounts ? day.meetingsWithParticipants! : day.meetings,
+  })), [daily, hasAttendedCounts]);
   const periodCards = data ? [
     { label: meetingsLabel, value: numberFormat.format(activity?.length ? activity.reduce((sum, day) => sum + day.meetings, 0) : data.totalMeetings), icon: CalendarDays },
     { label: 'Kehadiran tercatat', value: activity?.length ? numberFormat.format(activity.reduce((sum, day) => sum + day.attendances, 0)) : '—', icon: Users },
@@ -363,61 +383,81 @@ function AdminOverview() {
     <section className="admin-section admin-overview" aria-labelledby="admin-overview-heading">
       <div className="admin-section-heading">
         <h2 id="admin-overview-heading">Ringkasan penggunaan</h2>
-        <label className="admin-field admin-overview-period">Periode aktivitas
-          <select value={days} onChange={event => setDays(event.target.value)}>
-            {[7, 30, 90].map(value => <option key={value} value={value}>{value} hari terakhir</option>)}
-          </select>
-        </label>
+        <div className="admin-overview-header-actions">
+          <AdminRefreshingBadge loading={loading} />
+          <label className="admin-field admin-overview-period">Periode aktivitas
+            <select value={days} onChange={event => setDays(event.target.value)}>
+              {[7, 30, 90].map(value => <option key={value} value={value}>{value} hari terakhir</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={loading}
+            onClick={reload}
+            title="Perbarui ringkasan"
+            aria-label="Perbarui ringkasan"
+          >
+            <RefreshCw size={16} aria-hidden="true" className={loading ? 'admin-spin' : ''} /> Perbarui
+          </button>
+        </div>
       </div>
-      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
-        {periodStart && periodEnd ? <p className="admin-check-time">
-          <time dateTime={data.periodStart}>{periodStart}</time>
-          {' sampai '}
-          <time dateTime={data.periodEnd}>{periodEnd}</time> WIB
-        </p> : <p className="admin-monitor-notice" role="status">Rentang tanggal belum tersedia.</p>}
-        <dl className="admin-kpis admin-overview-kpis" aria-label="Ringkasan periode aktivitas">
-          {periodCards.map(({ label, value, detail, icon: Icon }) => (
-            <div className="surface-card admin-kpi" key={label}>
-              <Icon size={20} aria-hidden="true" />
-              <div><dt>{label}</dt><dd>{value}{detail && <small>{detail}</small>}</dd></div>
+      {!data ? <AdminLoadState error={error} reload={reload} /> : <>
+        {error && (
+          <p className="admin-error-text" role="alert">
+            Gagal memperbarui data. Angka berikut berasal dari pengecekan terakhir.
+          </p>
+        )}
+        <div className={`admin-overview-content ${loading ? 'is-updating' : ''}`}>
+          {periodStart && periodEnd ? <p className="admin-check-time">
+            <time dateTime={data.periodStart}>{periodStart}</time>
+            {' sampai '}
+            <time dateTime={data.periodEnd}>{periodEnd}</time> WIB
+          </p> : <p className="admin-monitor-notice" role="status">Rentang tanggal belum tersedia.</p>}
+          <dl className="admin-kpis admin-overview-kpis" aria-label="Ringkasan periode aktivitas">
+            {periodCards.map(({ label, value, detail, icon: Icon }) => (
+              <div className="surface-card admin-kpi" key={label}>
+                <Icon size={20} aria-hidden="true" />
+                <div><dt>{label}</dt><dd>{value}{detail && <small>{detail}</small>}</dd></div>
+              </div>
+            ))}
+          </dl>
+          <div className="admin-overview-panels">
+            <OverviewActivityChart activity={activity ?? []} meetingsLabel={meetingsLabel} weekly={(activity?.length ?? 0) > 31} periodEnd={data.periodEnd} />
+            <section className="surface-card admin-section" aria-labelledby="admin-recent-activity-heading">
+              <h2 id="admin-recent-activity-heading">Aktivitas terbaru</h2>
+              {!Array.isArray(data.recentActivity) ? <p>Data aktivitas terbaru belum tersedia.</p> :
+                data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
+                <ul className="admin-overview-events">{data.recentActivity.slice(0, 5).map(event => {
+                  const occurredAt = overviewDateLabel(event.occurredAt, adminWibDate);
+                  return <li key={`${event.kind}:${event.id}`}>
+                    <a href={event.kind === 'meeting_created' ? '#/admin/meetings' : '#/admin/recordings'}>
+                      <span className="admin-overview-event-text">
+                        <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
+                        <span>{event.title || 'Tanpa judul'}</span>
+                        {occurredAt ? <time dateTime={event.occurredAt}>{occurredAt} WIB</time> : <span>Waktu belum tercatat</span>}
+                      </span>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </a>
+                  </li>;
+                })}</ul>}
+            </section>
+          </div>
+          <section className="surface-card admin-section" aria-labelledby="admin-accounts-overview-heading">
+            <div className="admin-section-heading">
+              <h2 id="admin-accounts-overview-heading">Akun saat ini</h2>
+              <a className="admin-overview-accounts-link" href="#/admin/employees">Buka Karyawan <ChevronRight size={16} aria-hidden="true" /></a>
             </div>
-          ))}
-        </dl>
-        <div className="admin-overview-panels">
-          <OverviewActivityChart key={days} activity={activity ?? []} meetingsLabel={meetingsLabel} weekly={days === '90'} periodEnd={data.periodEnd} />
-          <section className="surface-card admin-section" aria-labelledby="admin-recent-activity-heading">
-            <h2 id="admin-recent-activity-heading">Aktivitas terbaru</h2>
-            {!Array.isArray(data.recentActivity) ? <p>Data aktivitas terbaru belum tersedia.</p> :
-              data.recentActivity.length === 0 ? <p>Belum ada aktivitas pada periode ini.</p> :
-              <ul className="admin-overview-events">{data.recentActivity.slice(0, 5).map(event => {
-                const occurredAt = overviewDateLabel(event.occurredAt, adminWibDate);
-                return <li key={`${event.kind}:${event.id}`}>
-                  <a href={event.kind === 'meeting_created' ? '#/admin/meetings' : '#/admin/recordings'}>
-                    <span className="admin-overview-event-text">
-                      <strong>{event.kind === 'meeting_created' ? 'Rapat dibuat' : 'Rekaman selesai diproses'}</strong>
-                      <span>{event.title || 'Tanpa judul'}</span>
-                      {occurredAt ? <time dateTime={event.occurredAt}>{occurredAt} WIB</time> : <span>Waktu belum tercatat</span>}
-                    </span>
-                    <ChevronRight size={16} aria-hidden="true" />
-                  </a>
-                </li>;
-              })}</ul>}
+            <dl className="admin-kpis">
+              <div className="admin-kpi"><Users size={20} aria-hidden="true" />
+                <div><dt>Total karyawan</dt><dd>{numberFormat.format(data.totalEmployees)}</dd></div>
+              </div>
+              <div className="admin-kpi"><ShieldCheck size={20} aria-hidden="true" />
+                <div><dt>Akun sudah diaktivasi</dt><dd>{numberFormat.format(data.activatedAccounts)}</dd></div>
+              </div>
+            </dl>
           </section>
         </div>
-        <section className="surface-card admin-section" aria-labelledby="admin-accounts-overview-heading">
-          <div className="admin-section-heading">
-            <h2 id="admin-accounts-overview-heading">Akun saat ini</h2>
-            <a className="admin-overview-accounts-link" href="#/admin/employees">Buka Karyawan <ChevronRight size={16} aria-hidden="true" /></a>
-          </div>
-          <dl className="admin-kpis">
-            <div className="admin-kpi"><Users size={20} aria-hidden="true" />
-              <div><dt>Total karyawan</dt><dd>{numberFormat.format(data.totalEmployees)}</dd></div>
-            </div>
-            <div className="admin-kpi"><ShieldCheck size={20} aria-hidden="true" />
-              <div><dt>Akun sudah diaktivasi</dt><dd>{numberFormat.format(data.activatedAccounts)}</dd></div>
-            </div>
-          </dl>
-        </section>
       </>}
     </section>
   );
@@ -1252,91 +1292,101 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
               />
             </div>
             <div className="admin-live-toolbar-actions">
+              <AdminRefreshingBadge loading={loading} />
               <span className={`admin-live-health ${livekitHealthy ? 'is-healthy' : ''}`}>
                 <Radio size={15} aria-hidden="true" /> LiveKit {livekitHealthy ? 'sehat' : 'terkendala'}
               </span>
-              <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
-                <RefreshCw size={16} aria-hidden="true" /> Perbarui
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={loading}
+                onClick={reload}
+                title="Perbarui rapat langsung"
+                aria-label="Perbarui rapat langsung"
+              >
+                <RefreshCw size={16} aria-hidden="true" className={loading ? 'admin-spin' : ''} /> Perbarui
               </button>
             </div>
           </div>
 
           {/* Meetings Table */}
-          {filteredMeetings.length === 0 ? (
-            <p role="status" style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8' }}>
-              {data.summary.connectionHealth !== 'healthy' ? 'Daftar rapat aktif belum tersedia.' : searchTerm ? 'Tidak ada rapat yang sesuai dengan pencarian.' : 'Tidak ada rapat yang sedang berlangsung saat ini.'}
-            </p>
-          ) : (
-            <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel rapat aktif">
-              <table className="admin-table" aria-label="Daftar rapat langsung">
-                <thead>
-                  <tr>
-                    <th scope="col">Nama rapat</th>
-                    <th scope="col">Host</th>
-                    <th scope="col">Peserta</th>
-                    <th scope="col">Mulai</th>
-                    <th scope="col">Durasi</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMeetings.map((meeting: LiveMonitorMeetingItem) => (
-                    <tr key={meeting.id}>
-                      <td>
-                        <div className="admin-live-meeting-name">
-                          <strong>{meeting.title}</strong>
-                          <div className="admin-live-meeting-meta">
-                            {meeting.roomCode && <span className="admin-live-room-code">#{meeting.roomCode}</span>}
-                            {meeting.isMonitored && <span className="admin-live-health is-healthy">Dipantau</span>}
+          <div className={`admin-live-table-wrapper ${loading ? 'is-updating' : ''}`}>
+            {filteredMeetings.length === 0 ? (
+              <p role="status" style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8' }}>
+                {data.summary.connectionHealth !== 'healthy' ? 'Daftar rapat aktif belum tersedia.' : searchTerm ? 'Tidak ada rapat yang sesuai dengan pencarian.' : 'Tidak ada rapat yang sedang berlangsung saat ini.'}
+              </p>
+            ) : (
+              <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel rapat aktif">
+                <table className="admin-table" aria-label="Daftar rapat langsung">
+                  <thead>
+                    <tr>
+                      <th scope="col">Nama rapat</th>
+                      <th scope="col">Host</th>
+                      <th scope="col">Peserta</th>
+                      <th scope="col">Mulai</th>
+                      <th scope="col">Durasi</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMeetings.map((meeting: LiveMonitorMeetingItem) => (
+                      <tr key={meeting.id}>
+                        <td>
+                          <div className="admin-live-meeting-name">
+                            <strong>{meeting.title}</strong>
+                            <div className="admin-live-meeting-meta">
+                              {meeting.roomCode && <span className="admin-live-room-code">#{meeting.roomCode}</span>}
+                              {meeting.isMonitored && <span className="admin-live-health is-healthy">Dipantau</span>}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td>{meeting.hostName || '—'}</td>
-                      <td>{meeting.participantCount} peserta</td>
-                      <td><time dateTime={meeting.startedAt}>{adminDate.format(new Date(meeting.startedAt))}</time></td>
-                      <td>{durationLabel(meeting.durationSeconds)}</td>
-                      <td>
-                        <span className="status-badge status-badge--active" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#34d399' }} /> Aktif
-                        </span>
-                      </td>
-                      <td>
-                        <div className="admin-live-actions">
-                          <button
-                            type="button"
-                            className="button-secondary"
-                            onClick={() => setDetailsMeetingId(meeting.id)}
-                            title="Lihat detail peserta rapat"
-                          >
-                            <Eye size={14} aria-hidden="true" /> Detail
-                          </button>
-                          <button
-                            type="button"
-                            className="button-primary"
-                            onClick={() => setRequestMeeting(meeting)}
-                            title="Minta akses pemantau pribadi"
-                          >
-                            <ShieldCheck size={14} aria-hidden="true" /> Pantau
-                          </button>
-                          {meeting.observerSessions && meeting.observerSessions.length > 0 && (
+                        </td>
+                        <td>{meeting.hostName || '—'}</td>
+                        <td>{meeting.participantCount} peserta</td>
+                        <td><time dateTime={meeting.startedAt}>{adminDate.format(new Date(meeting.startedAt))}</time></td>
+                        <td>{durationLabel(meeting.durationSeconds)}</td>
+                        <td>
+                          <span className="status-badge status-badge--active" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#34d399' }} /> Aktif
+                          </span>
+                        </td>
+                        <td>
+                          <div className="admin-live-actions">
                             <button
                               type="button"
-                              className="button-secondary admin-live-end"
-                              onClick={() => handleEndObserverSession(meeting.observerSessions![0].observerId)}
-                              title="Akhiri sesi pengamatan ini"
+                              className="button-secondary"
+                              onClick={() => setDetailsMeetingId(meeting.id)}
+                              title="Lihat detail peserta rapat"
                             >
-                              Akhiri pemantauan
+                              <Eye size={14} aria-hidden="true" /> Detail
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                            <button
+                              type="button"
+                              className="button-primary"
+                              onClick={() => setRequestMeeting(meeting)}
+                              title="Minta akses pemantau pribadi"
+                            >
+                              <ShieldCheck size={14} aria-hidden="true" /> Pantau
+                            </button>
+                            {meeting.observerSessions && meeting.observerSessions.length > 0 && (
+                              <button
+                                type="button"
+                                className="button-secondary admin-live-end"
+                                onClick={() => handleEndObserverSession(meeting.observerSessions![0].observerId)}
+                                title="Akhiri sesi pengamatan ini"
+                              >
+                                Akhiri pemantauan
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -1993,7 +2043,7 @@ function ProcessingOverviewCard({
         )}
       </div>
 
-      <div className="admin-queue-metrics-container">
+      <div className={`admin-queue-metrics-container ${refreshing ? 'is-updating' : ''}`}>
         <div className="admin-queue-metric-group">
           <h4 className="admin-queue-group-title">Status Antrean Saat Ini (Real-Time)</h4>
           <dl className="admin-kpis admin-queue-kpis">
@@ -2490,9 +2540,19 @@ function UploadProcessingHistory({ onSelectJob }: { onSelectJob: (id: string) =>
           <h3 id="admin-jobs-heading">Riwayat & Investigasi Pemrosesan Antrean</h3>
           <span className="admin-check-time">Pencarian, pemfilteran, klasifikasi kegagalan, dan investigasi pekerjaan unggahan</span>
         </div>
-        <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
-          <RefreshCw size={16} aria-hidden="true" /> Perbarui
-        </button>
+        <div className="admin-jobs-header-actions">
+          <AdminRefreshingBadge loading={loading} />
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={loading}
+            onClick={reload}
+            title="Perbarui riwayat pekerjaan"
+            aria-label="Perbarui riwayat pekerjaan"
+          >
+            <RefreshCw size={16} aria-hidden="true" className={loading ? 'admin-spin' : ''} /> Perbarui
+          </button>
+        </div>
       </div>
 
       <form className="admin-filters admin-jobs-filter-form" onSubmit={applyFilters} onReset={resetFilters} aria-label="Filter Riwayat Pekerjaan">
@@ -2543,9 +2603,14 @@ function UploadProcessingHistory({ onSelectJob }: { onSelectJob: (id: string) =>
       </form>
 
       {loading && !data && <p role="status">Memuat riwayat pekerjaan pemrosesan…</p>}
-      {error && <AdminLoadState error={error} reload={reload} />}
+      {error && !data && <AdminLoadState error={error} reload={reload} />}
+      {error && data && (
+        <p className="admin-error-text" role="alert">
+          Gagal memperbarui data pekerjaan. Menampilkan data dari pengecekan terakhir.
+        </p>
+      )}
 
-      {data && !error && (
+      {data && (
         <>
           <div className="admin-table-top-bar">
             <span className="admin-table-total-count" role="status">
@@ -2560,7 +2625,7 @@ function UploadProcessingHistory({ onSelectJob }: { onSelectJob: (id: string) =>
                 : 'Belum ada rekaman yang pernah diproses dalam sistem.'}
             </p>
           ) : (
-            <div className="admin-table-scroll" tabIndex={0} role="region" aria-label="Tabel Riwayat Pekerjaan">
+            <div className={`admin-table-scroll ${loading ? 'is-updating' : ''}`} tabIndex={0} role="region" aria-label="Tabel Riwayat Pekerjaan">
               <table className="admin-table admin-jobs-table">
                 <thead>
                   <tr>
@@ -2702,8 +2767,16 @@ function AdminSystem() {
           </p>
         </div>
         <div className="admin-monitor-header-actions">
+          <AdminRefreshingBadge loading={loading} />
           {data?.checkedAt && <FreshnessPill checkedAt={data.checkedAt} refreshing={loading} hasError={Boolean(error)} />}
-          <button type="button" className="button-secondary" disabled={loading} onClick={reload}>
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={loading}
+            onClick={reload}
+            title="Perbarui monitor layanan"
+            aria-label="Perbarui monitor layanan"
+          >
             <RefreshCw size={16} aria-hidden="true" className={loading ? 'admin-spin' : ''} /> Perbarui
           </button>
         </div>
@@ -2757,7 +2830,7 @@ function AdminSystem() {
             </button>
           </div>
 
-          <div className="admin-monitor-kpi-summary">
+          <div className={`admin-monitor-kpi-summary ${loading ? 'is-updating' : ''}`}>
             <dl className="admin-kpis admin-health-kpis">
               <div className="admin-kpi">
                 <CheckCircle2 size={22} className="admin-kpi-icon is-success" aria-hidden="true" />
@@ -2805,7 +2878,7 @@ function AdminSystem() {
           </div>
 
           {activeTab === 'health' ? (
-            <div id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health" className="admin-tab-panel">
+            <div key="health" id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health" className={`admin-tab-panel ${loading ? 'is-updating' : ''}`}>
               <CoreInfrastructureSection system={data} />
               <SummaryModelSection services={data.services} />
               <ProcessingOverviewCard
@@ -2820,7 +2893,7 @@ function AdminSystem() {
               <SpeakerDiarizationSection services={data.services} />
             </div>
           ) : (
-            <div id="admin-panel-jobs" role="tabpanel" aria-labelledby="admin-tab-jobs" className="admin-tab-panel">
+            <div key="jobs" id="admin-panel-jobs" role="tabpanel" aria-labelledby="admin-tab-jobs" className={`admin-tab-panel ${loading ? 'is-updating' : ''}`}>
               <ProcessingOverviewCard
                 metrics={data.recordingQueue}
                 stats={data.queueStats}
