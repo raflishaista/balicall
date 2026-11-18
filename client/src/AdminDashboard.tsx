@@ -1149,8 +1149,9 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
         expiresAt: string;
       }>('/admin/observer/sessions', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          meetingId: meeting.id,
+          meetingId: meeting.id || meeting.roomCode || meeting.title,
           accessReason: accessReason.trim(),
         }),
       });
@@ -1274,6 +1275,7 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
     try {
       await apiRequest(`/admin/observer/sessions/${encodeURIComponent(observerId)}/end`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Diakhiri dari dashboard Live Monitor' }),
       });
       setActionNotice('Sesi pemantauan berhasil diakhiri.');

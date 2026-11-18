@@ -73,6 +73,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
     try {
       await apiRequest(`/admin/observer/sessions/${encodeURIComponent(session.observerId)}/end`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Observer keluar dari ruang pantau' }),
       });
     } catch (err) {

@@ -2751,6 +2751,48 @@
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+.admin-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.admin-form-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.admin-form-group .input-text,
+.admin-form-group textarea.input-text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.admin-form-group textarea.input-text {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.admin-form-group .input-text:focus,
+.admin-form-group textarea.input-text:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
 @keyframes pulse-ring {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }

@@ -30,6 +30,9 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tim
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
     const headers = new Headers(options.headers);
+    if (options.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
     if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes((options.method || 'GET').toUpperCase())) headers.set('X-CSRF-Token', csrfToken);
     response = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', signal });
   } catch {
