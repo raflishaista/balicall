@@ -354,7 +354,14 @@ function RoomContent({
     try {
       const isLastUser = participants.length <= 1 || participants.filter((p: any) => !p.isLocal).length === 0;
       const shouldGenerate = (generate || isLastUser) && !employeeId.startsWith('GUEST-');
-      await finishTranscription();
+      try {
+        await finishTranscription();
+      } catch (transcriptionErr) {
+        console.warn('Transcription flush failed while leaving meeting:', transcriptionErr);
+        if (sttProvider === 'server') {
+          setSttProvider('browser');
+        }
+      }
       await onEndMeeting(shouldGenerate);
     }
     catch (error) { setFinishError(featureError('Menyelesaikan rapat',error)); }

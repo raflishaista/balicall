@@ -119,6 +119,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [recordingId, setRecordingId] = useState<string | null>(initialRoute.recordingId || null);
   const [meetingIntent, setMeetingIntent] = useState<'create' | 'join'>(initialRoute.intent || (isGuest ? 'join' : 'create'));
   const [createWaitingRoom, setCreateWaitingRoom] = useState(false);
+  const [createPostMeetingBatch, setCreatePostMeetingBatch] = useState(false);
   const [waitingRoomState, setWaitingRoomState] = useState<{
     meetingId: string;
     roomName: string;
@@ -368,9 +369,11 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       setRecordingId(sanitized.recordingId || null);
     }
     if (sanitized.view === 'lobby') {
-      setMeetingIntent(sanitized.intent || (isGuest ? 'join' : 'create'));
+      const nextIntent = sanitized.intent || (isGuest ? 'join' : 'create');
+      setMeetingIntent(nextIntent);
       setLobbyInviteCode(sanitized.roomCode);
       if (sanitized.roomCode) setRoomCode(sanitized.roomCode);
+      else if (nextIntent === 'create') setRoomCode(generateRoomCode());
     }
   }, [isGuest, preJoinMedia]);
 
@@ -922,6 +925,27 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       if (typeof setParticipantPanelRequest === 'function') setParticipantPanelRequest(0);
       setSummary(null); setSummaryError(null); setSummaryMeetingId(null); setSummaryToken(null); setSummaryRoomName('');
       navigateTo({ view: 'in-call', meetingId: data.meetingId });
+      if (currentIntent === 'create' && createPostMeetingBatch && backendHealth?.qwenBatchConfigured) {
+        void apiRequest<{ success: boolean; recording?: { status: string } }>(
+          meetingPath(data.meetingId, 'recording/start'),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${tokenStr}`,
+            },
+            body: JSON.stringify({
+              audioOnly: true,
+              postMeetingBatch: true,
+              language: userPreferences.preferences.speechLanguage === 'en-US' ? 'en' : 'id',
+            }),
+          }
+        ).then(recRes => {
+          if (recRes?.recording?.status === 'active') setIsRecording(true);
+        }).catch(err => {
+          setRecordingError(err instanceof Error ? err.message : 'Gagal memulai rekaman batch Qwen otomatis.');
+        });
+      }
     } catch (error) { if (generation === joinGeneration.current) setJoinError(error instanceof Error ? error.message : 'Gagal bergabung'); }
     finally { if (generation === joinGeneration.current) { joinPending.current = false; setIsJoining(false); } }
   };
@@ -1865,6 +1889,9 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             intent={meetingIntent}
             waitingRoom={createWaitingRoom}
             setWaitingRoom={setCreateWaitingRoom}
+            qwenBatchConfigured={Boolean(backendHealth?.qwenBatchConfigured)}
+            postMeetingBatch={createPostMeetingBatch}
+            setPostMeetingBatch={setCreatePostMeetingBatch}
             onIntentChange={nextIntent => {
               setMeetingIntent(nextIntent);
               if (nextIntent === 'create') {

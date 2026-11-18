@@ -182,11 +182,13 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
   }));
 
   router.post('/observer/sessions', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
-    const { meetingId, accessReason } = req.body || {};
-    if (!meetingId || typeof meetingId !== 'string') {
+    const rawMeetingId = req.body?.meetingId || req.query?.meetingId;
+    const meetingId = typeof rawMeetingId === 'string' ? rawMeetingId.trim() : '';
+    if (!meetingId) {
       return res.status(400).json({ error: 'ID rapat (meetingId) diperlukan.' });
     }
-    const cleanReason = typeof accessReason === 'string' ? accessReason.trim() : '';
+    const rawReason = req.body?.accessReason || req.query?.accessReason;
+    const cleanReason = typeof rawReason === 'string' ? rawReason.trim() : '';
     if (cleanReason.length < 5) {
       await store.recordAudit({
         actorId: req.admin.employeeId,
@@ -201,7 +203,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     }
 
     const meeting = meetingStore.meetings.get(meetingId)
-      || [...meetingStore.meetings.values()].find(m => m.id === meetingId || m.roomCode === meetingId);
+      || [...meetingStore.meetings.values()].find(m => m.id === meetingId || m.roomCode === meetingId || m.roomName === meetingId || m.livekitRoom === meetingId);
     if (!meeting || meeting.status !== 'active') {
       await store.recordAudit({
         actorId: req.admin.employeeId,

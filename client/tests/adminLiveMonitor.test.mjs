@@ -48,6 +48,8 @@ test('AdminLiveMeetingMonitor displays KPI metrics, meeting table, and handles o
   };
 
   let observerRequestMade = null;
+  let observerContentType = null;
+  let dialogOpened = false;
   let enteredObserverMode = null;
 
   const apiRequest = async (path, options = {}) => {
@@ -63,6 +65,7 @@ test('AdminLiveMeetingMonitor displays KPI metrics, meeting table, and handles o
     }
     if (path === '/admin/observer/sessions' && options.method === 'POST') {
       observerRequestMade = JSON.parse(options.body);
+      observerContentType = new Headers(options.headers).get('Content-Type');
       return {
         success: true,
         observerId: 'obs-uuid-1234',
@@ -102,36 +105,50 @@ test('AdminLiveMeetingMonitor displays KPI metrics, meeting table, and handles o
         onEnterObserverMode: session => {
           enteredObserverMode = session;
         },
-      })
+      }),
+      {
+        createNodeMock: element => element.type === 'dialog' ? {
+          open: false,
+          showModal() {
+            this.open = true;
+            dialogOpened = true;
+          },
+        } : null,
+      },
     );
   });
 
   const jsonString = () => JSON.stringify(root.toJSON());
 
   // 1. Check KPI cards
-  assert.match(jsonString(), /Active Meetings/);
-  assert.match(jsonString(), /Total Participants/);
-  assert.match(jsonString(), /Active Hosts/);
-  assert.match(jsonString(), /Meeting Duration \(Avg\)/);
-  assert.match(jsonString(), /Meeting Status/);
-  assert.match(jsonString(), /Connection Health/);
+  const kpiCards = root.root.findAllByProps({ className: 'admin-kpi-card' });
+  assert.deepEqual(kpiCards.map(card => [
+    card.findByProps({ className: 'admin-kpi-label' }).children.filter(child => typeof child === 'string').join('').trim(),
+    card.findByProps({ className: 'admin-kpi-value' }).children.join(''),
+  ]), [
+    ['Rapat aktif', '1'],
+    ['Peserta terhubung', '4'],
+    ['Host aktif', '1'],
+    ['Rata-rata durasi', '30 mnt'],
+  ]);
+  assert.equal(root.root.findByProps({ className: 'admin-live-health is-healthy' })
+    .children.filter(child => typeof child === 'string').join('').trim(), 'LiveKit sehat');
 
   // 2. Check Table contents
   assert.match(jsonString(), /Executive Board Strategy/);
   assert.match(jsonString(), /Director Utama/);
-  assert.match(jsonString(), /Request Observer Access/);
-
-  // 3. Find and click "Request Observer Access" button
+  // 3. Open the observer access dialog.
   const buttons = root.root.findAllByType('button');
   const monitorBtn = buttons.find(b => b.props.title === 'Minta akses pemantau pribadi');
-  assert.ok(monitorBtn, 'Must find "Request Observer Access" action button');
+  assert.ok(monitorBtn, 'Must find the Pantau action button');
 
   await act(async () => {
     monitorBtn.props.onClick();
   });
 
   // Modal should now be open
-  assert.match(jsonString(), /Minta Akses Pemantau Pribadi/);
+  assert.ok(dialogOpened, 'The observer dialog must open as a modal');
+  assert.match(jsonString(), /Mulai pemantauan/);
   assert.match(jsonString(), /Alasan Akses Pemantauan/);
 
   // Find form, textarea, checkbox, and submit
@@ -160,6 +177,7 @@ test('AdminLiveMeetingMonitor displays KPI metrics, meeting table, and handles o
   // Assert observer session was created via API and onEnterObserverMode was invoked
   assert.ok(observerRequestMade, 'API request to create observer session must be sent');
   assert.equal(observerRequestMade.meetingId, 'm-live-001');
+  assert.equal(observerContentType, 'application/json');
   assert.equal(observerRequestMade.accessReason, 'Audit Kepatuhan ISO 27001 Tahunan dan Pemeriksaan SLA');
 
   assert.ok(enteredObserverMode, 'onEnterObserverMode callback must be invoked');
