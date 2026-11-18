@@ -11,7 +11,7 @@ async function getRnnoiseBinary(): Promise<ArrayBuffer> {
       simdUrl: '/rnnoise/rnnoise_simd.wasm',
     });
   }
-  return cachedWasmBinary;
+  return await cachedWasmBinary;
 }
 
 export class RnnoiseAudioProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
