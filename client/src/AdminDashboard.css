@@ -2680,6 +2680,180 @@
 }
 
 /* Live Monitor & Observer Dialog Styles */
+.admin-live-monitor .admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 12px;
+  margin-block: 16px 24px;
+}
+
+.admin-live-monitor .admin-kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid #dce6f1;
+  border-radius: 10px;
+  background: #f6f9fd;
+}
+
+.admin-live-monitor .admin-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: .85rem;
+}
+
+.admin-live-monitor .admin-kpi-value {
+  font-size: 1.4rem;
+}
+
+.admin-live-monitor .admin-kpi-label svg {
+  flex: none;
+  color: #345d8d;
+}
+
+.admin-live-toolbar,
+.admin-live-toolbar-actions,
+.admin-live-meeting-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-live-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-end: 16px;
+}
+
+.admin-live-search {
+  position: relative;
+  flex: 1 1 240px;
+  max-width: 440px;
+}
+
+.admin-live-search svg {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #526981;
+  pointer-events: none;
+}
+
+.admin-live-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px 10px 36px;
+  border: 1px solid #bacce0;
+  border-radius: 8px;
+  font: inherit;
+  color: inherit;
+}
+
+.admin-live-room-code {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e8eff8;
+  color: #27496c;
+  font-size: .78rem;
+  white-space: nowrap;
+}
+
+.admin-live-meeting-name {
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.admin-live-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #8a4b13;
+  background: #fff4df;
+  font-size: .78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-live-health.is-healthy {
+  color: #17674d;
+  background: #e6f5ed;
+}
+
+.admin-live-monitor .admin-table {
+  min-width: 760px;
+}
+
+.admin-live-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-live-actions button {
+  white-space: nowrap;
+}
+
+.admin-live-actions .admin-live-end {
+  color: #9c2529;
+  border-color: #e6a3a5;
+}
+
+.admin-dialog {
+  width: min(540px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  border: 1px solid #dce6f1;
+  border-radius: 12px;
+  background: #fff;
+  color: #162e49;
+  overflow: auto;
+  box-shadow: 0 16px 48px rgb(16 42 72 / 22%);
+}
+
+.admin-dialog--wide {
+  width: min(820px, calc(100% - 24px));
+}
+
+.admin-dialog::backdrop {
+  background: rgb(12 29 48 / 54%);
+}
+
+.admin-dialog-header,
+.admin-dialog-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.admin-dialog-header {
+  justify-content: space-between;
+  border-bottom: 1px solid #dce6f1;
+}
+
+.admin-dialog-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.admin-dialog-body {
+  padding: 16px 18px;
+}
+
+.admin-dialog-footer {
+  justify-content: flex-end;
+  border-top: 1px solid #dce6f1;
+}
 .admin-details-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -2751,7 +2925,402 @@
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+.admin-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.admin-form-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.admin-form-group .input-text,
+.admin-form-group textarea.input-text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.admin-form-group textarea.input-text {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.admin-form-group .input-text:focus,
+.admin-form-group textarea.input-text:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
 @keyframes pulse-ring {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* ==========================================================================
+   Admin Dashboard Animations & Microinteractions
+   (Overview, Live Monitor, Layanan / System Monitor)
+   ========================================================================== */
+
+/* 1. KPI Cards Entrance Animation & Hover Microinteractions */
+@keyframes admin-kpi-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.admin-overview-kpis .admin-kpi,
+.admin-live-monitor .admin-kpi-card,
+.admin-health-kpis .admin-kpi,
+.admin-queue-kpis .admin-kpi,
+.admin-directory-summary .admin-kpi {
+  animation: admin-kpi-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s ease;
+}
+
+.admin-overview-kpis .admin-kpi:nth-child(1),
+.admin-live-monitor .admin-kpi-card:nth-child(1),
+.admin-health-kpis .admin-kpi:nth-child(1),
+.admin-queue-kpis .admin-kpi:nth-child(1),
+.admin-directory-summary .admin-kpi:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.admin-overview-kpis .admin-kpi:nth-child(2),
+.admin-live-monitor .admin-kpi-card:nth-child(2),
+.admin-health-kpis .admin-kpi:nth-child(2),
+.admin-queue-kpis .admin-kpi:nth-child(2),
+.admin-directory-summary .admin-kpi:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.admin-overview-kpis .admin-kpi:nth-child(3),
+.admin-live-monitor .admin-kpi-card:nth-child(3),
+.admin-health-kpis .admin-kpi:nth-child(3),
+.admin-queue-kpis .admin-kpi:nth-child(3),
+.admin-directory-summary .admin-kpi:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.admin-overview-kpis .admin-kpi:nth-child(4),
+.admin-live-monitor .admin-kpi-card:nth-child(4),
+.admin-health-kpis .admin-kpi:nth-child(4),
+.admin-queue-kpis .admin-kpi:nth-child(4),
+.admin-directory-summary .admin-kpi:nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.admin-overview-kpis .admin-kpi:nth-child(5),
+.admin-live-monitor .admin-kpi-card:nth-child(5),
+.admin-health-kpis .admin-kpi:nth-child(5),
+.admin-queue-kpis .admin-kpi:nth-child(5),
+.admin-directory-summary .admin-kpi:nth-child(5) {
+  animation-delay: 160ms;
+}
+
+.admin-overview-kpis .admin-kpi:hover,
+.admin-live-monitor .admin-kpi-card:hover,
+.admin-health-kpis .admin-kpi:hover,
+.admin-queue-kpis .admin-kpi:hover,
+.admin-directory-summary .admin-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(15, 76, 129, 0.08);
+}
+
+/* 2. Tactile Button Hover, Press, and Accessible Focus-Visible */
+.admin-page button,
+.admin-page .button-primary,
+.admin-page .button-secondary,
+.admin-section button,
+.admin-section .button-primary,
+.admin-section .button-secondary,
+.admin-subnav-btn,
+.admin-live-actions button {
+  position: relative;
+  transition: background-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.admin-page button:hover:not(:disabled),
+.admin-page .button-primary:hover:not(:disabled),
+.admin-page .button-secondary:hover:not(:disabled),
+.admin-section button:hover:not(:disabled),
+.admin-section .button-primary:hover:not(:disabled),
+.admin-section .button-secondary:hover:not(:disabled),
+.admin-live-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.admin-page .button-primary:hover:not(:disabled),
+.admin-section .button-primary:hover:not(:disabled) {
+  background-color: #0054d1;
+  box-shadow: 0 4px 12px rgba(8, 101, 237, 0.28);
+}
+
+.admin-page .button-secondary:hover:not(:disabled),
+.admin-section .button-secondary:hover:not(:disabled) {
+  background-color: #eaf2ff;
+  border-color: #bad3f5;
+  color: #16487e;
+  box-shadow: 0 3px 8px rgba(15, 76, 129, 0.08);
+}
+
+.admin-page button:active:not(:disabled),
+.admin-page .button-primary:active:not(:disabled),
+.admin-page .button-secondary:active:not(:disabled),
+.admin-section button:active:not(:disabled),
+.admin-section .button-primary:active:not(:disabled),
+.admin-section .button-secondary:active:not(:disabled),
+.admin-live-actions button:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+  box-shadow: none;
+}
+
+.admin-page button:disabled,
+.admin-page .button-primary:disabled,
+.admin-page .button-secondary:disabled,
+.admin-section button:disabled,
+.admin-section .button-primary:disabled,
+.admin-section .button-secondary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Accessible high-contrast keyboard navigation rings */
+.admin-page button:focus-visible,
+.admin-page .button-primary:focus-visible,
+.admin-page .button-secondary:focus-visible,
+.admin-section button:focus-visible,
+.admin-section .button-primary:focus-visible,
+.admin-section .button-secondary:focus-visible,
+.admin-subnav-btn:focus-visible,
+.admin-live-actions button:focus-visible,
+.admin-page a:focus-visible,
+.admin-section a:focus-visible {
+  outline: 2px solid #0865ed;
+  outline-offset: 2px;
+}
+
+.admin-page button:focus:not(:focus-visible),
+.admin-section button:focus:not(:focus-visible),
+.admin-subnav-btn:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* 3. Subnav Tabs Hover & Transitions */
+.admin-subnav-btn {
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, transform 0.15s ease;
+}
+
+.admin-subnav-btn:hover:not(.is-active) {
+  color: #0f4c81;
+  background: #f1f5f9;
+  transform: translateY(-1px);
+}
+
+.admin-subnav-btn:active {
+  transform: translateY(0);
+}
+
+/* 4. Tab Panel Transition (Layanan / Health & Jobs) */
+@keyframes admin-tab-pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.admin-tab-panel,
+.admin-tab-panel-container {
+  animation: admin-tab-pane-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 5. Smooth Content Transitions During Filter Changes & Refresh */
+.admin-overview-content {
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.admin-live-table-wrapper {
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.admin-overview-content.is-updating,
+.admin-live-table-wrapper.is-updating,
+.admin-table-scroll.is-updating,
+.admin-monitor-kpi-summary.is-updating,
+.admin-tab-panel.is-updating,
+.admin-queue-metrics-container.is-updating {
+  opacity: 0.85;
+}
+
+/* Input & Select Filter Hover and Focus States */
+.admin-overview-period select,
+.admin-filters select,
+.admin-filters input,
+.admin-jobs-filter-form select,
+.admin-jobs-filter-form input,
+.admin-live-search input {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.admin-overview-period select:hover,
+.admin-filters select:hover,
+.admin-filters input:hover,
+.admin-jobs-filter-form select:hover,
+.admin-jobs-filter-form input:hover,
+.admin-live-search input:hover {
+  border-color: #658dbf;
+}
+
+.admin-overview-period select:focus-visible,
+.admin-filters select:focus-visible,
+.admin-filters input:focus-visible,
+.admin-jobs-filter-form select:focus-visible,
+.admin-jobs-filter-form input:focus-visible,
+.admin-live-search input:focus-visible {
+  border-color: #0865ed;
+  outline: 2px solid #0865ed;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px rgba(8, 101, 237, 0.12);
+}
+
+/* 6. Updating Data Indicators (Header badges & spinners) */
+@keyframes admin-badge-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.admin-refreshing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-inline-size: 144px;
+  min-block-size: 24px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  animation: admin-badge-pop 180ms ease-out both;
+  box-shadow: 0 1px 3px rgba(3, 105, 161, 0.1);
+  white-space: nowrap;
+}
+
+.admin-refreshing-badge:empty {
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
+.admin-overview-header-actions,
+.admin-jobs-header-actions,
+.admin-monitor-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* 7. Auto-refresh Layout Stability (Prevents flickering or shifting) */
+.admin-live-table-wrapper {
+  min-height: 120px;
+}
+
+.admin-overview-content {
+  min-height: 200px;
+}
+
+/* 8. Responsive Adjustments for Mobile & Tablet */
+@media (max-width: 640px) {
+  .admin-overview-header-actions,
+  .admin-live-toolbar-actions,
+  .admin-monitor-header-actions,
+  .admin-jobs-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-refreshing-badge {
+    order: -1;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* 9. Respect "Kurangi Gerakan" / Reduced Motion Preferences */
+@media (prefers-reduced-motion: reduce) {
+  .admin-page *,
+  .admin-page *::before,
+  .admin-page *::after,
+  .admin-section *,
+  .admin-section *::before,
+  .admin-section *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  :is(.admin-page, .admin-section) :is(button, .admin-kpi, .admin-kpi-card, .admin-tab-panel, .admin-tab-panel-container, .admin-overview-events a svg, .admin-overview-accounts-link svg) {
+    transform: none !important;
+  }
+}
+
+.reduce-motion .admin-page *,
+.reduce-motion .admin-page *::before,
+.reduce-motion .admin-page *::after,
+.app-root.reduce-motion .admin-page *,
+.app-root.reduce-motion .admin-page *::before,
+.app-root.reduce-motion .admin-page *::after,
+.reduce-motion .admin-section *,
+.reduce-motion .admin-section *::before,
+.reduce-motion .admin-section *::after,
+.app-root.reduce-motion .admin-section *,
+.app-root.reduce-motion .admin-section *::before,
+.app-root.reduce-motion .admin-section *::after {
+  animation: none !important;
+  transition-duration: 0.01ms !important;
+}
+
+.reduce-motion :is(.admin-page, .admin-section) :is(button, .admin-kpi, .admin-kpi-card, .admin-tab-panel, .admin-tab-panel-container, .admin-overview-events a svg, .admin-overview-accounts-link svg) {
+  transform: none !important;
 }

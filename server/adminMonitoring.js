@@ -102,8 +102,9 @@ export function compileLiveMeetingMonitor({ snapshots = [], rooms, activeSession
 
   for (const snapshot of snapshots) {
     if (snapshot.status !== 'active') continue;
+    const liveCount = connectedRooms.get(snapshot.livekitRoom ?? `meeting-${snapshot.id}`) ?? 0;
+    if (liveCount <= 0) continue;
     const attendees = [...snapshot.participants.values()].filter(p => !p.leftAt);
-    const liveCount = rooms ? connectedRooms.get(snapshot.livekitRoom ?? `meeting-${snapshot.id}`) ?? attendees.length : attendees.length;
     
     const startedAt = snapshot.createdAt || (attendees.length ? attendees[0].joinedAt : null) || now.toISOString();
     const durationSeconds = durationBetween(startedAt, now) ?? 0;

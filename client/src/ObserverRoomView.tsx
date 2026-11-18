@@ -73,6 +73,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
     try {
       await apiRequest(`/admin/observer/sessions/${encodeURIComponent(session.observerId)}/end`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Observer keluar dari ruang pantau' }),
       });
     } catch (err) {
@@ -107,11 +108,11 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
           <div className="observer-badge-group">
             <span className="observer-badge observer-badge--primary" title="Sesi Pemantau Resmi Super Admin">
               <Eye size={15} aria-hidden="true" />
-              <span>SUPER ADMIN OBSERVER</span>
+              <span>Mode Pemantau</span>
             </span>
             <span className="observer-badge observer-badge--lock" title="Akses Receive-Only">
               <ShieldCheck size={15} aria-hidden="true" />
-              <span>HANYA BACA (READ-ONLY)</span>
+              <span>Hanya pantau</span>
             </span>
           </div>
           <div className="observer-meeting-meta">
@@ -120,7 +121,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
               {session.roomCode && <span className="observer-room-code">#{session.roomCode}</span>}
             </h1>
             <p className="observer-meeting-sub">
-              Host: <strong>{session.hostName || '—'}</strong> • ID Rapat: <code>{session.meetingId}</code>
+              Host: <strong>{session.hostName || '—'}</strong>
             </p>
           </div>
         </div>
@@ -136,7 +137,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
             title="Waktu Sesi Observer Tersisa"
           >
             <ShieldAlert size={16} aria-hidden="true" />
-            <span>Kedaluwarsa: <strong>{formatDuration(remainingSeconds)}</strong></span>
+            <span>Sisa waktu: <strong>{formatDuration(remainingSeconds)}</strong></span>
           </div>
 
           <div className="observer-stat-item" title="Kualitas Sambungan Media">
@@ -163,9 +164,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
       <div className="observer-compliance-banner" role="status">
         <ShieldCheck size={18} aria-hidden="true" />
         <div className="observer-compliance-text">
-          <strong>Mode Pemantau Kepatuhan Aktif:</strong> Anda memantau sebagai Super Admin terotorisasi.
-          Akses mikrofon, kamera, chat, dan kontrol rapat dinonaktifkan di level server & SFU.
-          Pemberitahuan pemantauan organisasi telah didisclose ke peserta.
+          <strong>Pemantauan aktif.</strong> Peserta diberi pemberitahuan. Mikrofon dan kamera Anda nonaktif.
         </div>
       </div>
 
@@ -233,9 +232,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
                 <p>Menunggu peserta masuk ke ruang panggilan...</p>
               </div>
             ) : (
-              <div className="observer-video-grid" style={{
-                gridTemplateColumns: remoteParticipants.length <= 1 ? '1fr' : remoteParticipants.length <= 4 ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(280px, 1fr))'
-              }}>
+              <div className={`observer-video-grid${remoteParticipants.length === 1 ? ' observer-video-grid--single' : ''}`}>
                 {remoteParticipants.map(participant => {
                   const cameraTrack = cameraTracks.find(t => t.participant.identity === participant.identity);
                   if (cameraTrack) {
@@ -273,7 +270,7 @@ function ObserverContent({ session, onExit }: { session: ObserverSessionData; on
       <footer className="observer-footer">
         <div className="observer-footer-status">
           <ShieldCheck size={14} aria-hidden="true" />
-          <span>Pengawasan kepatuhan terverifikasi. Tidak ada data audio atau video lokal yang dikirim ke SFU.</span>
+          <span>Mode pantau</span>
         </div>
         <div className="observer-footer-counts">
           <span>{remoteParticipants.length} Peserta Terhubung</span> • 

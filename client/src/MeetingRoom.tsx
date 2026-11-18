@@ -91,6 +91,7 @@ type ParticipantAction =
   | 'approve-speak';
 
 interface MeetingRoomProps {
+  transcriptionNotice: string | null;
   callDuration?: string;
   isRecording?: boolean;
   backgroundControl?: BackgroundBlurControl;
@@ -230,6 +231,7 @@ export function MeetingRoom({
   onChangeSttModel,
   modelPending,
   modelError,
+  transcriptionNotice,
   speechLanguage,
   setSpeechLanguage,
   activeTab,
@@ -1110,6 +1112,7 @@ export function MeetingRoom({
           </div>
         )}
 
+        {transcriptionNotice && <div className="meeting-transcription-notice" role="status">{transcriptionNotice}</div>}
         {microphoneError && <div className="call-error" role="alert">{microphoneError}</div>}
 
         {cameraError && (

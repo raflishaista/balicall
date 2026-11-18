@@ -1626,6 +1626,23 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
     ? `${window.location.origin}${window.location.pathname}${routeToHash({ view: 'lobby', intent: 'join', roomCode: shareCode })}`
     : undefined;
 
+  if (view === 'observer' && observerSession) {
+    return (
+      <div className={userPreferences.preferences.reduceMotion ? 'reduce-motion' : undefined}>
+        <a className="skip-link" href="#main-content">Lewati navigasi ke konten</a>
+        <Suspense fallback={<BalitowerLoading variant="meeting" reduceMotion={userPreferences.preferences.reduceMotion} />}>
+          <ObserverRoomView
+            session={observerSession}
+            onExit={() => {
+              setObserverSession(null);
+              navigateTo({ view: 'admin', adminSection: 'live-monitor' });
+            }}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <div className={`app-root ${view === 'in-call' ? 'in-call-layout' : ''} ${userPreferences.preferences.reduceMotion ? 'reduce-motion' : ''}`}>
       <a className="skip-link" href="#main-content">Lewati navigasi ke konten</a>
@@ -1677,11 +1694,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
           <div className="page-identity">
             <span>Admin / {ADMIN_SECTIONS[adminSection]}</span>
             <strong>Administrasi BaliCall</strong>
-          </div>
-        ) : view === 'observer' ? (
-          <div className="page-identity">
-            <span>Kepatuhan / Pemantau Pribadi</span>
-            <strong>Super Admin Observer Mode</strong>
           </div>
         ) : (
           <div className="page-identity">
@@ -1741,17 +1753,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               onEnterObserverMode={session => {
                 setObserverSession(session);
                 navigateTo({ view: 'observer', meetingId: session.meetingId });
-              }}
-            />
-          </Suspense>
-        )}
-        {view === 'observer' && observerSession && (
-          <Suspense fallback={<BalitowerLoading variant="workspace" reduceMotion={userPreferences.preferences.reduceMotion} />}>
-            <ObserverRoomView
-              session={observerSession}
-              onExit={() => {
-                setObserverSession(null);
-                navigateTo({ view: 'admin', adminSection: 'live-monitor' });
               }}
             />
           </Suspense>

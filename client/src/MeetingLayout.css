@@ -4,6 +4,18 @@
 .meeting-layout.call-room { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 0; flex: 1; height: 100%; min-height: 0; overflow: hidden; }
 .meeting-layout .call-stage { display: flex; flex-direction: column; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; overflow: auto; }
 .meeting-layout .call-info-bar { padding: 10px 20px; }
+.meeting-transcription-notice {
+  flex: none;
+  margin: 0 clamp(10px, 2vw, 20px) 10px;
+  padding: 8px 12px;
+  border: 1px solid #8d6335;
+  border-radius: 8px;
+  background: #382a1e;
+  color: #ffe5bc;
+  font-size: .85rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .meeting-view-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 20px 12px; }
 .meeting-view-toggle { display: flex; gap: 4px; padding: 3px; border: 1px solid #29465c; border-radius: 9px; background: #071b2c; }
 .meeting-view-toggle button { display: flex; align-items: center; gap: 7px; padding: 8px 13px; min-height: 36px; border: 0; border-radius: 6px; background: transparent; color: #abc6db; cursor: pointer; }

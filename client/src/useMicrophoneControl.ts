@@ -2,6 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Track } from 'livekit-client';
 import type { AudioCaptureOptions, LocalParticipant, LocalTrack } from 'livekit-client';
 
+export function microphoneErrorMessage(error: unknown): string {
+  const name = error instanceof Error || error instanceof DOMException ? error.name : '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+    case 'SecurityError':
+      return 'Akses mikrofon ditolak. Periksa izin mikrofon untuk BaliCall di browser dan pengaturan privasi perangkat.';
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return 'Mikrofon yang dipilih tidak tersedia atau tidak cocok. Pilih mikrofon lain di pengaturan perangkat rapat.';
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return 'Mikrofon ditemukan tetapi tidak dapat dibuka. Periksa koneksi perangkat dan tutup aplikasi lain yang mungkin memakainya.';
+    default:
+      return 'Mikrofon belum dapat diubah. Periksa perangkat dan izin browser, lalu coba lagi.';
+  }
+}
+
 export function useMicrophoneControl(
   participant: LocalParticipant,
   connected: boolean,
@@ -42,9 +62,9 @@ export function useMicrophoneControl(
       if (enable && !isCurrent() && publication?.track) {
         publication.track.stop(); await participant.unpublishTrack(publication.track);
       }
-    } catch {
+    } catch (cause) {
       captured.current.forEach(track => track.stop());
-      if (isCurrent()) setError('Mikrofon belum dapat diubah. Periksa perangkat dan izin browser, lalu coba lagi.');
+      if (isCurrent()) setError(microphoneErrorMessage(cause));
     } finally {
       captured.current = []; inFlight.current = false;
       if (mounted.current) setPending(false);
