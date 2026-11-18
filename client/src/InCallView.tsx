@@ -20,7 +20,7 @@ import { supportsSharedMicrophone } from './preferences';
 import { SEA_LIVE_MODEL, MING_LIVE_MODEL, QWEN_GGUF_LIVE_MODEL, isLiveTranscriptionModel } from './modelSelection';
 import { shouldMirrorCamera } from './backgroundEffects';
 import { useSpeakerSpotlight } from './useSpeakerSpotlight';
-import { useMicrophoneControl } from './useMicrophoneControl';
+import { microphoneErrorMessage, useMicrophoneControl } from './useMicrophoneControl';
 import { Track, ConnectionState, DisconnectReason, MediaDeviceFailure, ScreenSharePresets } from 'livekit-client';
 import { LiveKitRoom, RoomAudioRenderer, useParticipants, useLocalParticipant, useConnectionState, useTracks, useRoomContext, isTrackReference } from '@livekit/components-react';
 
@@ -275,7 +275,7 @@ function RoomContent({
   const screenShareSupported = window.isSecureContext && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   const screenShare = useScreenShareControl(localParticipant, connected, screenShareSupported, screenShareRes, onScreenShareResChange);
   const cameraError = isCameraEnabled ? null : camera.error || (lastCameraError ? cameraErrorMessage(lastCameraError) : null);
-  const microphoneError = microphone.error || (!isMicrophoneEnabled && lastMicrophoneError ? 'Mikrofon tidak tersedia. Periksa perangkat dan izin browser.' : null);
+  const microphoneError = microphone.error || (!isMicrophoneEnabled && lastMicrophoneError ? microphoneErrorMessage(lastMicrophoneError) : null);
   const isMuted = !isMicrophoneEnabled;
   const [finishing, setFinishing] = useState(false);
   const finishRequest = useRef(false);
@@ -363,13 +363,8 @@ function RoomContent({
 
   return (
     <>
-      {transcriptionNotice && (
-        <div className="settings-notice" role="status">
-          {transcriptionNotice}
-        </div>
-      )}
-
       <MeetingRoom
+        transcriptionNotice={transcriptionNotice}
         qwenDiarizationReady={qwenDiarizationReady}
         callDuration={callDuration}
         meetingRole={meetingRole}
