@@ -177,6 +177,8 @@
 .prejoin-shared-mic-toggle div { display: flex; flex-direction: column; gap: 2px; }
 .prejoin-shared-mic-toggle strong { font-size: 11px; color: #e9f4ff; font-weight: 600; }
 .prejoin-shared-mic-toggle small { font-size: 10px; color: #9bb7d0; line-height: 1.4; }
+.prejoin-batch-toggle { margin-top: 10px; }
+.prejoin-batch-toggle.selected { border-color: #3b82f6; background: #143b5e; }
 .prejoin-refresh { margin: 12px 0; background: transparent; }
 .prejoin-error { color: #ffd3c8; font-size: 11px; line-height: 1.6; margin: 10px 0; }
 .prejoin-panel button:disabled,.prejoin-panel select:disabled { cursor: wait; opacity: .6; }

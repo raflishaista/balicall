@@ -11,7 +11,11 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
   onToggleLiveDiarization, onToggleBatchDiarization,
   transcriptionProvider, onChangeTranscriptionProvider,
   transcriptionModel, onChangeTranscriptionModel,
-  sttConfigured, sttModels = [], qwenDiarizationReady = false
+  sttConfigured, sttModels = [], qwenDiarizationReady = false,
+  isCreateMeeting = false,
+  qwenBatchConfigured = false,
+  postMeetingBatch = false,
+  onTogglePostMeetingBatch
 }: {
   media: ReturnType<typeof usePreJoinMedia>; employeeName: string; blocked: boolean;
   mirror?: boolean;
@@ -25,6 +29,10 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
   sttConfigured?: boolean;
   sttModels?: string[];
   qwenDiarizationReady?: boolean;
+  isCreateMeeting?: boolean;
+  qwenBatchConfigured?: boolean;
+  postMeetingBatch?: boolean;
+  onTogglePostMeetingBatch?: (enabled: boolean) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const sharedMicSupported = supportsSharedMicrophone(transcriptionModel, qwenDiarizationReady)
@@ -121,7 +129,7 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           />
           <div>
             <strong>Diarisasi Langsung (Live / Normal)</strong>
-            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Label pembicara mengikuti teks final selama panggilan; label dapat menunggu giliran bicara selesai.</p>
+            <p style={{ margin: '2px 0 0', color: '#9bb7d0', fontSize: '11px' }}>Label pembicara mengikuti teks final selama panggilan; label dapat menunggu giliran bicara selesai.</p>
           </div>
         </label>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
@@ -136,10 +144,26 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           />
           <div>
             <strong>Diarisasi Batch Pasca-Rapat (Post-Meeting)</strong>
-            <p style={{ margin: '2px 0 0', color: '#64748b', fontSize: '12px' }}>Analisis rekaman lengkap di akhir rapat untuk notulen dengan identifikasi pembicara yang konsisten secara global.</p>
+            <p style={{ margin: '2px 0 0', color: '#9bb7d0', fontSize: '11px' }}>Analisis rekaman lengkap di akhir rapat untuk notulen dengan identifikasi pembicara yang konsisten secara global.</p>
           </div>
         </label>
       </div>
+    )}
+    {isCreateMeeting && qwenBatchConfigured && (
+      <label className={`prejoin-shared-mic-toggle prejoin-batch-toggle ${postMeetingBatch ? 'selected' : ''}`}>
+        <input
+          type="checkbox"
+          checked={postMeetingBatch}
+          disabled={blocked}
+          onChange={event => onTogglePostMeetingBatch?.(event.target.checked)}
+        />
+        <div>
+          <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
+          <small>
+            Rekam audio seluruh peserta otomatis sejak awal (tanpa kamera). Setelah semua peserta keluar, Qwen + Nemotron memproses ulang transkrip, diarisasi, dan notulen dengan akurasi lebih tinggi.
+          </small>
+        </div>
+      </label>
     )}
     {media.deviceError && <p className="prejoin-error" role="alert">{media.deviceError}</p>}
     <button type="button" className="prejoin-refresh" disabled={blocked} onClick={() => void media.refresh()}>Perbarui daftar perangkat</button>

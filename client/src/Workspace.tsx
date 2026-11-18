@@ -182,7 +182,6 @@ export function LobbyView({
   mediaPreview, personas,
   identityLocked = false, isGuest = false,
   waitingRoom = false, setWaitingRoom,
-  qwenBatchConfigured = false, postMeetingBatch = false, setPostMeetingBatch,
 }: {
   intent: 'create' | 'join'; onIntentChange: (intent: 'create' | 'join') => void;
   employeeId: string; setEmployeeId: (value: string) => void; employeeName: string; setEmployeeName: (value: string) => void;
@@ -191,7 +190,6 @@ export function LobbyView({
   isJoining: boolean; joinError: string | null; onJoin: () => void; mediaPreview: ReactNode;
   identityLocked?: boolean; isGuest?: boolean;
   waitingRoom?: boolean; setWaitingRoom?: (value: boolean) => void;
-  qwenBatchConfigured?: boolean; postMeetingBatch?: boolean; setPostMeetingBatch?: (value: boolean) => void;
   personas: {id: string; name: string; dept: string}[];
 }) {
   return <div className="lobby-page"><div className="lobby-page-heading"><span className="page-kicker">LET'S CONNECT</span><h1>{intent === 'create' ? 'Mulai percakapan baru.' : 'Tim kamu sudah menunggu.'}</h1><p>Siapkan identitas, periksa kamera dan mikrofon, lalu masuk ke ruang rapat.</p></div>
@@ -228,23 +226,6 @@ export function LobbyView({
                   </label>
                 </div>
               </div>
-              {qwenBatchConfigured && (
-                <div className="form-field room-batch-field">
-                  <label className={`room-batch-toggle ${postMeetingBatch ? 'selected' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={postMeetingBatch}
-                      onChange={event => setPostMeetingBatch?.(event.target.checked)}
-                    />
-                    <div>
-                      <strong>Batch pasca-rapat · Qwen + Nemotron</strong>
-                      <small>
-                        Rekam audio seluruh peserta otomatis sejak awal (tanpa kamera). Setelah semua peserta keluar, Qwen + Nemotron memproses ulang transkrip, diarisasi, dan notulen dengan akurasi lebih tinggi.
-                      </small>
-                    </div>
-                  </label>
-                </div>
-              )}
               <div className="form-field room-code-field">
                 <label htmlFor="create-room-code">Kode Ruang Rapat (5 Digit Alfanumerik)</label>
                 <div className="room-code-display-wrap">

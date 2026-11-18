@@ -1889,9 +1889,6 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             intent={meetingIntent}
             waitingRoom={createWaitingRoom}
             setWaitingRoom={setCreateWaitingRoom}
-            qwenBatchConfigured={Boolean(backendHealth?.qwenBatchConfigured)}
-            postMeetingBatch={createPostMeetingBatch}
-            setPostMeetingBatch={setCreatePostMeetingBatch}
             onIntentChange={nextIntent => {
               setMeetingIntent(nextIntent);
               if (nextIntent === 'create') {
@@ -1929,6 +1926,10 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               sttConfigured={backendHealth?.sttConfigured ?? false}
               qwenDiarizationReady={qwenDiarizationForModel(userPreferences.preferences.transcriptionModel, backendHealth)}
               sttModels={backendHealth?.sttModels ?? []}
+              isCreateMeeting={meetingIntent === 'create'}
+              qwenBatchConfigured={Boolean(backendHealth?.qwenBatchConfigured)}
+              postMeetingBatch={createPostMeetingBatch}
+              onTogglePostMeetingBatch={setCreatePostMeetingBatch}
             />}
             // DISABLED IDENTITY LOCK (saved for future re-enabling):
             // identityLocked={Boolean(authUser)}

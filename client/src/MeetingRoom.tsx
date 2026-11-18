@@ -1023,12 +1023,7 @@ export function MeetingRoom({
             </span>
           )}
 
-          {isEnterpriseMonitored && (
-            <div className="enterprise-monitoring-badge" role="status" aria-live="polite" title="Sesi ini dipantau oleh Administrator Kepatuhan Perusahaan sesuai kebijakan organisasi.">
-              <ShieldCheck size={14} aria-hidden="true" />
-              <span>Pemantauan Kepatuhan Aktif</span>
-            </div>
-          )}
+          {isEnterpriseMonitored}
 
           <span className="participant-count">
             <Users size={16} />
