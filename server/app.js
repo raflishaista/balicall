@@ -1792,13 +1792,13 @@ async function syncActionItemsToItProject(
   app.post('/api/meetings/:id/breakout-rooms', (req, res) => {
     const access = requireMeetingManager(req, res, ['host']);
     if (!access) return;
-    const { roomCount, mode } = req.body || {};
+    const { roomCount, mode, assignments: rawAssignments } = req.body || {};
     const count = Number(roomCount);
     if (!Number.isInteger(count) || count < 2 || count > 10) {
       return res.status(400).json({ error: 'Jumlah breakout room harus antara 2 hingga 10.' });
     }
-    if (!['auto', 'choice'].includes(mode)) {
-      return res.status(400).json({ error: 'Mode pembagian harus auto atau choice.' });
+    if (!['auto', 'choice', 'manual'].includes(mode)) {
+      return res.status(400).json({ error: 'Mode pembagian harus auto, choice, atau manual.' });
     }
     const rooms = Array.from({ length: count }, (_, idx) => ({
       id: idx + 1,
@@ -1813,6 +1813,14 @@ async function syncActionItemsToItProject(
       candidates.forEach((p, idx) => {
         assignments[p.employeeId] = rooms[idx % rooms.length].id;
       });
+    } else if (mode === 'manual' && rawAssignments && typeof rawAssignments === 'object' && !Array.isArray(rawAssignments)) {
+      const validRoomIds = new Set(rooms.map(r => r.id));
+      for (const [empId, rId] of Object.entries(rawAssignments)) {
+        const roomIdNum = Number(rId);
+        if (typeof empId === 'string' && empId.trim() && validRoomIds.has(roomIdNum)) {
+          assignments[empId.trim()] = roomIdNum;
+        }
+      }
     }
     const breakout = {
       active: true,

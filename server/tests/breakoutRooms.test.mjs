@@ -110,4 +110,56 @@ test('host can create auto/choice breakout rooms, participants get breakout toke
   });
   assert.equal(closeRes.status, 200);
   assert.equal((await closeRes.json()).breakout, null);
+
+  // Guest logs in, joins meeting, host assigns guest manually to Room 2, and guest fetches breakout token
+  const guestLoginRes = await fetch(`${base}/auth/guest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Guest Breakout', inviteCode: roomCode }),
+  });
+  assert.equal(guestLoginRes.status, 200);
+  const guestCookie = (guestLoginRes.headers.getSetCookie?.() || [])
+    .map(c => c.split(';')[0])
+    .find(c => c.startsWith('balicall_guest=')) || '';
+  const { user: guestUser, csrfToken: guestCsrf } = await guestLoginRes.json();
+  const guestHeaders = bearer => ({
+    'Content-Type': 'application/json',
+    Cookie: guestCookie,
+    'X-CSRF-Token': guestCsrf,
+    ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+  });
+
+  const guestJoinRes = await fetch(`${base}/token`, {
+    method: 'POST',
+    headers: guestHeaders(),
+    body: JSON.stringify({ roomName: roomCode, roomCode, intent: 'join' }),
+  });
+  assert.equal(guestJoinRes.status, 200);
+  const guestLk = (await guestJoinRes.json()).token;
+
+  const manualCreate = await fetch(`${base}/meetings/${meetingId}/breakout-rooms`, {
+    method: 'POST',
+    headers: headersFor(hostToken, hostLk),
+    body: JSON.stringify({
+      roomCount: 2,
+      mode: 'manual',
+      assignments: { [guestUser.employeeId]: 2, 'BT-40002': 1 },
+    }),
+  });
+  assert.equal(manualCreate.status, 201);
+  const manualBody = await manualCreate.json();
+  assert.equal(manualBody.breakout.mode, 'manual');
+  assert.equal(manualBody.breakout.assignments[guestUser.employeeId], 2);
+  assert.equal(manualBody.breakout.assignments['BT-40002'], 1);
+
+  const guestBreakoutTokRes = await fetch(`${base}/meetings/${meetingId}/breakout-rooms/2/token`, {
+    method: 'POST',
+    headers: guestHeaders(guestLk),
+    body: JSON.stringify({}),
+  });
+  assert.equal(guestBreakoutTokRes.status, 200);
+  const guestBreakoutBody = await guestBreakoutTokRes.json();
+  assert.ok(guestBreakoutBody.token);
+  assert.equal(guestBreakoutBody.room.id, 2);
+  assert.equal(guestBreakoutBody.room.livekitRoom, `breakout-${meetingId}-2`);
 });
