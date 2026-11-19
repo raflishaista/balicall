@@ -61,6 +61,7 @@ export function InCallView({ callDuration,
   breakoutState,
   activeBreakoutRoomId,
   breakoutToken,
+  meetingParticipantNames,
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
@@ -159,6 +160,7 @@ export function InCallView({ callDuration,
         onUpdatePermissions={onUpdatePermissions}
         breakoutState={breakoutState}
         activeBreakoutRoomId={activeBreakoutRoomId}
+        meetingParticipantNames={meetingParticipantNames}
         onCreateBreakoutRooms={onCreateBreakoutRooms}
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
@@ -213,6 +215,7 @@ function RoomContent({
   onUpdatePermissions,
   breakoutState,
   activeBreakoutRoomId,
+  meetingParticipantNames,
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
@@ -404,6 +407,7 @@ function RoomContent({
         onUpdatePermissions={onUpdatePermissions}
         breakoutState={breakoutState}
         activeBreakoutRoomId={activeBreakoutRoomId}
+        meetingParticipantNames={meetingParticipantNames}
         onCreateBreakoutRooms={onCreateBreakoutRooms}
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}

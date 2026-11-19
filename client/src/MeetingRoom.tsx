@@ -111,6 +111,7 @@ interface MeetingRoomProps {
     createdAt: string;
   } | null;
   activeBreakoutRoomId?: number | null;
+  meetingParticipantNames?: Record<string, string>;
   onCreateBreakoutRooms?: (roomCount: number, mode: 'auto' | 'choice' | 'manual', assignments?: Record<string, number>) => Promise<void>;
   onJoinBreakoutRoom?: (roomId: number) => Promise<void>;
   onLeaveBreakoutRoom?: () => void;
@@ -306,6 +307,7 @@ export function MeetingRoom({
   onUpdatePermissions,
   breakoutState = null,
   activeBreakoutRoomId = null,
+  meetingParticipantNames = {},
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
@@ -2271,9 +2273,17 @@ export function MeetingRoom({
                 <div className="breakout-rooms-grid">
                   {breakoutState.rooms.map(r => {
                     const isCurrent = activeBreakoutRoomId === r.id;
+                    const roomParticipantNames = Object.entries(breakoutState.assignments || {})
+                      .filter(([, assignedRoomId]) => assignedRoomId === r.id)
+                      .map(([empId]) => meetingParticipantNames[empId] || participants.find(p => p.identity === empId)?.name || empId);
                     return (
                       <div className={`breakout-room-row ${isCurrent ? 'current' : ''}`} key={r.id}>
-                        <strong>{r.name}</strong>
+                        <div className="breakout-room-info">
+                          <strong>{r.name}</strong>
+                          <span className="breakout-room-participants">
+                            {roomParticipantNames.length > 0 ? roomParticipantNames.join(', ') : 'Belum ada peserta'}
+                          </span>
+                        </div>
                         {isCurrent ? (
                           <span className="breakout-current-badge">Aktif</span>
                         ) : (

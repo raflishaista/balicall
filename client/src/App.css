@@ -2777,3 +2777,20 @@ input::placeholder { color: #a1b1c6; }
     grid-template-columns: 1fr;
   }
 }
+
+.breakout-room-row {
+  gap: 12px;
+}
+
+.breakout-room-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.breakout-room-participants {
+  font-size: 11.5px;
+  color: #64748b;
+  line-height: 1.35;
+  word-break: break-word;
+}

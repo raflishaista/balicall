@@ -203,6 +203,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   } | null>(null);
   const [activeBreakoutRoomId, setActiveBreakoutRoomId] = useState<number | null>(null);
   const [breakoutToken, setBreakoutToken] = useState<string | null>(null);
+  const [meetingParticipantNames, setMeetingParticipantNames] = useState<Record<string, string>>({});
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
   const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
@@ -290,6 +291,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
+        if (Array.isArray(data.participants)) {
+          const nextNames: Record<string, string> = {};
+          for (const person of data.participants) {
+            if (person.employeeId) nextNames[person.employeeId] = person.employeeName || person.employeeId;
+          }
+          setMeetingParticipantNames(nextNames);
+        }
         const hostName = data.participants?.find(person => person.employeeId === data.hostId)?.employeeName;
         setMeetingHost(current => current?.meetingId === meetingId && current.name === hostName
           ? current : { meetingId, name: hostName });
@@ -2041,6 +2049,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             breakoutState={breakoutState}
             activeBreakoutRoomId={activeBreakoutRoomId}
             breakoutToken={breakoutToken}
+            meetingParticipantNames={meetingParticipantNames}
             onCreateBreakoutRooms={createBreakoutRooms}
             onJoinBreakoutRoom={joinBreakoutRoom}
             onLeaveBreakoutRoom={leaveBreakoutRoom}
