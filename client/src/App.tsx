@@ -196,7 +196,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   const [chatDisabled, setChatDisabled] = useState(false);
   const [breakoutState, setBreakoutState] = useState<{
     active: boolean;
-    mode: 'auto' | 'choice';
+    mode: 'auto' | 'choice' | 'manual';
     rooms: Array<{ id: number; name: string; livekitRoom: string }>;
     assignments: Record<string, number>;
     createdAt: string;
@@ -259,7 +259,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           chatDisabled?: boolean;
           breakout?: {
             active: boolean;
-            mode: 'auto' | 'choice';
+            mode: 'auto' | 'choice' | 'manual';
             rooms: Array<{ id: number; name: string; livekitRoom: string }>;
             assignments: Record<string, number>;
             createdAt: string;
@@ -303,7 +303,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         if (!nextBreakout?.active) {
           setActiveBreakoutRoomId(null);
           setBreakoutToken(null);
-        } else if (nextBreakout.mode === 'auto' && nextBreakout.assignments?.[employeeId] && activeBreakoutRoomId === null) {
+        } else if ((nextBreakout.mode === 'auto' || nextBreakout.mode === 'manual') && nextBreakout.assignments?.[employeeId] && activeBreakoutRoomId === null) {
           const assignedId = nextBreakout.assignments[employeeId];
           void apiRequest<{ token: string }>(meetingPath(meetingId, `breakout-rooms/${assignedId}/token`), {
             method: 'POST',
@@ -1482,7 +1482,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setChatDisabled(res.chatDisabled);
   }, [meetingId, token]);
 
-  const createBreakoutRooms = useCallback(async (roomCount: number, mode: 'auto' | 'choice') => {
+  const createBreakoutRooms = useCallback(async (roomCount: number, mode: 'auto' | 'choice' | 'manual', assignments?: Record<string, number>) => {
     if (!meetingId || !token) return;
     const res = await apiRequest<{ breakout: NonNullable<typeof breakoutState> }>(
       meetingPath(meetingId, 'breakout-rooms'),
@@ -1492,7 +1492,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ roomCount, mode }),
+        body: JSON.stringify({ roomCount, mode, ...(assignments ? { assignments } : {}) }),
       }
     );
     setBreakoutState(res.breakout);

@@ -103,6 +103,7 @@ export function InCallView({ callDuration,
     <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
     {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
     <LiveKitRoom
+      key={breakoutToken ? `breakout-${activeBreakoutRoomId ?? 'room'}` : 'main'}
       serverUrl={serverUrl}
       token={breakoutToken || token}
       connect={true}

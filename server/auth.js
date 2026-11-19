@@ -187,9 +187,10 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
     if(guest) {
       const endpoint=req.path.match(/^\/meetings\/([^/]+)\/(transcript|presence|leave|audio|live-session|waiting-status|waiting-events|files)$/);
       const fileDownload=req.path.match(/^\/meetings\/([^/]+)\/files\/[^/]+\/download$/);
-      const targetMeetingId=endpoint?.[1]||fileDownload?.[1];
+      const breakoutToken=req.path.match(/^\/meetings\/([^/]+)\/breakout-rooms\/[^/]+\/token$/);
+      const targetMeetingId=endpoint?.[1]||fileDownload?.[1]||breakoutToken?.[1];
       const allowed=(req.method==='POST'&&req.path==='/token')||(targetMeetingId===guest.guestMeetingId&&(
-        fileDownload?req.method==='GET':(
+        fileDownload?req.method==='GET':breakoutToken?req.method==='POST':(
           req.method==='POST'&&(endpoint[2]!=='waiting-status'&&endpoint[2]!=='waiting-events')
           ||(req.method==='GET'&&['transcript','waiting-status','waiting-events','files'].includes(endpoint[2]))
         )

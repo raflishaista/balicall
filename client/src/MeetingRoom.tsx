@@ -105,13 +105,13 @@ interface MeetingRoomProps {
   onUpdatePermissions?: (patch: { screenSharePolicy?: 'all' | 'co-hosts' | 'host'; chatDisabled?: boolean }) => Promise<void>;
   breakoutState?: {
     active: boolean;
-    mode: 'auto' | 'choice';
+    mode: 'auto' | 'choice' | 'manual';
     rooms: Array<{ id: number; name: string; livekitRoom: string }>;
     assignments: Record<string, number>;
     createdAt: string;
   } | null;
   activeBreakoutRoomId?: number | null;
-  onCreateBreakoutRooms?: (roomCount: number, mode: 'auto' | 'choice') => Promise<void>;
+  onCreateBreakoutRooms?: (roomCount: number, mode: 'auto' | 'choice' | 'manual', assignments?: Record<string, number>) => Promise<void>;
   onJoinBreakoutRoom?: (roomId: number) => Promise<void>;
   onLeaveBreakoutRoom?: () => void;
   onCloseBreakoutRooms?: () => Promise<void>;
@@ -496,7 +496,10 @@ export function MeetingRoom({
   const [policyNotice, setPolicyNotice] = useState<string | null>(null);
   const [breakoutOpen, setBreakoutOpen] = useState(false);
   const [breakoutCount, setBreakoutCount] = useState(2);
-  const [breakoutMode, setBreakoutMode] = useState<'auto' | 'choice'>('auto');
+  const [breakoutMode, setBreakoutMode] = useState<'auto' | 'choice' | 'manual'>('auto');
+  const [manualAssignments, setManualAssignments] = useState<Record<string, number>>({});
+  const [draggedParticipantId, setDraggedParticipantId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<number | 'unassigned' | null>(null);
   const [breakoutBusy, setBreakoutBusy] = useState(false);
   const [breakoutError, setBreakoutError] = useState<string | null>(null);
   const prevScreenSharePolicyRef = useRef(effectiveScreenSharePolicy);
@@ -2011,7 +2014,7 @@ export function MeetingRoom({
 
       {breakoutOpen && (
         <div className="breakout-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="breakout-modal-title">
-          <div className="breakout-modal">
+          <div className={`breakout-modal ${!breakoutState?.active && breakoutMode === 'manual' ? 'breakout-modal--wide' : ''}`}>
             <div className="breakout-modal-header">
               <h2 id="breakout-modal-title">Breakout Rooms</h2>
               <button
@@ -2035,7 +2038,12 @@ export function MeetingRoom({
                   setBreakoutBusy(true);
                   setBreakoutError(null);
                   try {
-                    await onCreateBreakoutRooms(breakoutCount, breakoutMode);
+                    const filteredAssignments = breakoutMode === 'manual'
+                      ? Object.fromEntries(
+                          Object.entries(manualAssignments).filter(([, roomId]) => roomId >= 1 && roomId <= breakoutCount)
+                        )
+                      : undefined;
+                    await onCreateBreakoutRooms(breakoutCount, breakoutMode, filteredAssignments);
                     setBreakoutOpen(false);
                   } catch (error) {
                     setBreakoutError(error instanceof Error ? error.message : 'Gagal membuat breakout room.');
@@ -2101,7 +2109,151 @@ export function MeetingRoom({
                     />
                     <span>Let participants choose room</span>
                   </label>
+                  <label className={`breakout-mode-option ${breakoutMode === 'manual' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="breakoutMode"
+                    value="manual"
+                    checked={breakoutMode === 'manual'}
+                    disabled={breakoutBusy}
+                    onChange={() => setBreakoutMode('manual')}
+                  />
+                  <span>Assign manually</span>
+                </label>
                 </div>
+                {breakoutMode === 'manual' && (
+                  <div className="breakout-manual-board">
+                    <div className="breakout-manual-rooms">
+                      {Array.from({ length: breakoutCount }, (_, idx) => idx + 1).map(roomId => {
+                        const assignedParticipants = participants.filter(
+                          p => p.identity !== meetingHostId && manualAssignments[p.identity] === roomId
+                        );
+                        return (
+                          <div
+                            key={roomId}
+                            className={`breakout-manual-room-card ${dragOverTarget === roomId ? 'drag-over' : ''}`}
+                            onDragOver={event => {
+                              event.preventDefault();
+                              if (dragOverTarget !== roomId) setDragOverTarget(roomId);
+                            }}
+                            onDragLeave={() => {
+                              setDragOverTarget(prev => (prev === roomId ? null : prev));
+                            }}
+                            onDrop={event => {
+                              event.preventDefault();
+                              const participantId = event.dataTransfer.getData('text/plain') || draggedParticipantId;
+                              if (participantId) {
+                                setManualAssignments(prev => ({ ...prev, [participantId]: roomId }));
+                              }
+                              setDraggedParticipantId(null);
+                              setDragOverTarget(null);
+                            }}
+                          >
+                            <div className="breakout-manual-room-header">
+                              <strong>Room {roomId}</strong>
+                              <span className="breakout-manual-count">{assignedParticipants.length}</span>
+                            </div>
+                            <div className="breakout-manual-room-list">
+                              {assignedParticipants.length === 0 ? (
+                                <span className="breakout-manual-empty">Tarik peserta ke sini</span>
+                              ) : (
+                                assignedParticipants.map(p => (
+                                  <div
+                                    key={p.identity}
+                                    className="breakout-manual-chip"
+                                    draggable={!breakoutBusy}
+                                    onDragStart={event => {
+                                      event.dataTransfer.setData('text/plain', p.identity);
+                                      setDraggedParticipantId(p.identity);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedParticipantId(null);
+                                      setDragOverTarget(null);
+                                    }}
+                                  >
+                                    <span>{p.name || p.identity}</span>
+                                    <button
+                                      type="button"
+                                      className="breakout-manual-unassign"
+                                      aria-label={`Keluarkan ${p.name || p.identity} dari Room ${roomId}`}
+                                      disabled={breakoutBusy}
+                                      onClick={() => {
+                                        setManualAssignments(prev => {
+                                          const next = { ...prev };
+                                          delete next[p.identity];
+                                          return next;
+                                        });
+                                      }}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div
+                      className={`breakout-manual-users ${dragOverTarget === 'unassigned' ? 'drag-over' : ''}`}
+                      onDragOver={event => {
+                        event.preventDefault();
+                        if (dragOverTarget !== 'unassigned') setDragOverTarget('unassigned');
+                      }}
+                      onDragLeave={() => {
+                        setDragOverTarget(prev => (prev === 'unassigned' ? null : prev));
+                      }}
+                      onDrop={event => {
+                        event.preventDefault();
+                        const participantId = event.dataTransfer.getData('text/plain') || draggedParticipantId;
+                        if (participantId) {
+                          setManualAssignments(prev => {
+                            const next = { ...prev };
+                            delete next[participantId];
+                            return next;
+                          });
+                        }
+                        setDraggedParticipantId(null);
+                        setDragOverTarget(null);
+                      }}
+                    >
+                      <div className="breakout-manual-users-header">
+                        <strong>Peserta</strong>
+                        <span className="breakout-manual-hint">Tarik ke ruangan</span>
+                      </div>
+                      <div className="breakout-manual-users-list">
+                        {(() => {
+                          const unassigned = participants.filter(p => {
+                            if (p.identity === meetingHostId) return false;
+                            const assignedRoom = manualAssignments[p.identity];
+                            return !(assignedRoom >= 1 && assignedRoom <= breakoutCount);
+                          });
+                          if (unassigned.length === 0) {
+                            return <span className="breakout-manual-empty">Semua peserta sudah ditempatkan.</span>;
+                          }
+                          return unassigned.map(p => (
+                            <div
+                              key={p.identity}
+                              className="breakout-manual-user-item"
+                              draggable={!breakoutBusy}
+                              onDragStart={event => {
+                                event.dataTransfer.setData('text/plain', p.identity);
+                                setDraggedParticipantId(p.identity);
+                              }}
+                              onDragEnd={() => {
+                                setDraggedParticipantId(null);
+                                setDragOverTarget(null);
+                              }}
+                            >
+                              {p.name || p.identity}
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="breakout-modal-actions">
                   <button type="button" className="button-secondary" disabled={breakoutBusy} onClick={() => setBreakoutOpen(false)}>
                     Batal
@@ -2114,7 +2266,7 @@ export function MeetingRoom({
             ) : (
               <div className="breakout-active-list">
                 <p className="breakout-active-subtitle">
-                  Mode: <strong>{breakoutState.mode === 'auto' ? 'Assign automatically' : 'Let participants choose room'}</strong>
+                  Mode: <strong>{breakoutState.mode === 'auto' ? 'Assign automatically' : breakoutState.mode === 'manual' ? 'Assign manually' : 'Let participants choose room'}</strong>
                 </p>
                 <div className="breakout-rooms-grid">
                   {breakoutState.rooms.map(r => {
