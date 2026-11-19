@@ -26,7 +26,7 @@ function isAdminDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, roomService }) {
+export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, deleteRecording, roomService }) {
   const router = Router();
   const store = new PgAdminStore();
   const hostNameForMeeting = id => {
@@ -503,6 +503,14 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
       return res.status(400).json({ error: 'Filter rekaman atau nomor halaman tidak valid.' });
     }
     res.json(await store.listRecordingMetadata({ search: q.trim(), status, page: Number(page) }));
+  }));
+
+  router.delete('/recordings/:id', requirePermission(AdminPermission.DELETE_RECORDINGS), asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    if (!/^[a-z0-9_-]{1,64}$/i.test(id)) return res.status(400).json({ error: 'ID rekaman tidak valid.' });
+    const outcome = await deleteRecording(id, { actorId: req.admin.employeeId });
+    if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error });
+    res.json({ success: true, mediaCleanupPending: outcome.mediaCleanupPending });
   }));
 
   const manage = requirePermission(AdminPermission.MANAGE_ACCOUNTS);

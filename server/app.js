@@ -786,8 +786,8 @@ async function syncActionItemsToItProject(
 
   attachAuth(app, config, authStore, createGuestAccess(store, { getSchedules: getUpcomingSchedules }));
   attachWorkspaceApi(app,config,workspace);
-  const { recordingCapabilities, retryUpload } = attachRecordingUploads(app, config, { fetchImpl });
-  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, roomService });
+  const { recordingCapabilities, retryUpload, deleteRecording } = attachRecordingUploads(app, config, { fetchImpl });
+  attachAdminApi(app, config, { meetingStore: store, probe, fetchImpl, recordingCapabilities, postMeetingBatch, retryUpload, deleteRecording, roomService });
   const notifications=config.authEnabled?createNotifications({workspace,meetings:()=>store.meetings,schedules:getUpcomingSchedules,config,sendPush}):null;
 
   app.get('/api/itproject/project-options', asyncRoute(async (_req, res) => {

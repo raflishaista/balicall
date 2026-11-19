@@ -8,6 +8,7 @@ export const AdminPermission = Object.freeze({
   READ_SYSTEM: 'system:read',
   READ_AUDIT: 'audit:read',
   READ_RECORDINGS: 'recordings:read',
+  DELETE_RECORDINGS: 'recordings:delete',
 });
 const superAdminPermissions = Object.freeze(Object.values(AdminPermission));
 const EMPLOYEE_PAGE_SIZE = 20;

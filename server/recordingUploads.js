@@ -1,8 +1,8 @@
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
-import { mkdir, open, rm } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { lstat, mkdir, open, rename, rm } from 'node:fs/promises';
+import { dirname, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchJson, ServiceError, summarize } from './providers.js';
 import { PYANNOTE_JSWOOK, QWEN_GGUF_MODEL, QWEN_STT_MODEL } from './config.js';
@@ -153,6 +153,29 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     return row;
   }
 
+  async function stageMediaRemoval(filePath) {
+    if (!filePath) return null;
+    const directory = resolve(config.recordingUploadDir);
+    const source = resolve(filePath);
+    if (dirname(source) !== directory || !recordingMimeTypes.has(recordingExtension(source))) {
+      throw new ServiceError('Lokasi berkas rekaman berada di luar penyimpanan unggahan.', 409);
+    }
+    const staged = resolve(directory, `.${randomUUID()}.deleted-upload`);
+    try {
+      if (!(await lstat(source)).isFile()) {
+        throw new ServiceError('Berkas rekaman tidak valid untuk dihapus.', 409);
+      }
+      await rename(source, staged);
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+    return { restore: () => rename(staged, source), remove: () => rm(staged, { force: true }) };
+  }
+
+  const deleteRecording = (id, options) => uploads.deleteUpload(id, { ...options, stageMediaRemoval });
+  const changedBeforeProcessing = { ok: false, status: 409, error: 'Status rekaman sudah berubah. Perbarui daftar dan coba lagi.' };
+
   // ---- Processing ----------------------------------------------------------
   function normalizeResult(result, row) {
     if (!result || typeof result.text !== 'string') throw new ServiceError('Worker mengembalikan hasil yang tidak valid.');
@@ -263,13 +286,13 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
       await uploads.updateUpload(id, { transcript, durationSeconds: transcript.durationSeconds });
       await summarizeTranscript(id, row.title, transcript, row.llm_model);
     } catch (error) {
-      await fail(id, error);
       // Clean up uploaded media file only on failure
       const row = await uploads.getUploadRow(id).catch(() => null);
       if (row?.file_path) {
         await rm(row.file_path, { force: true }).catch(() => {});
         await uploads.updateUpload(id, { filePath: null }).catch(() => {});
       }
+      await fail(id, error);
     }
   }
 
@@ -373,18 +396,16 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     if (!row.transcript?.text) return res.status(409).json({ error: 'Belum ada transkrip untuk diringkas.' });
     const llmModel = String(req.body?.llmModel || row.llm_model || config.llmModel).trim();
     if (!config.recordingLlmModels.includes(llmModel)) return res.status(400).json({ error: 'Model ringkasan tidak tersedia.' });
-    const updated = await uploads.updateUpload(row.id, { status: 'processing', stage: 'summarizing', error: null, llmModel });
+    const updated = await uploads.updateUpload(row.id, { status: 'processing', stage: 'summarizing', error: null, llmModel }, ['done', 'failed']);
+    if (!updated) return res.status(changedBeforeProcessing.status).json({ error: changedBeforeProcessing.error });
     enqueue(() => resummarize(row.id));
     res.status(202).json({ success: true, upload: { ...updated, transcript: undefined, summary: undefined } });
   }));
 
   app.delete('/api/recording-uploads/:id', requireActor, asyncRoute(async (req, res) => {
-    const row = await findOwned(req, res);
-    if (!row) return;
-    if (row.status === 'processing' || row.status === 'queued') return res.status(409).json({ error: 'Tunggu hingga pemrosesan selesai sebelum menghapus.' });
-    if (row.file_path) await rm(row.file_path, { force: true }).catch(() => {});
-    await uploads.deleteUpload(row.id);
-    res.json({ success: true });
+    const outcome = await deleteRecording(req.params.id, { ownerId: req.recordingActor.id });
+    if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error });
+    res.json({ success: true, mediaCleanupPending: outcome.mediaCleanupPending });
   }));
   async function retryUpload(id, { actorId } = {}) {
     const row = await uploads.getUploadRow(id);
@@ -422,7 +443,8 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         status: 'processing',
         stage: 'summarizing',
         error: null,
-      });
+      }, ['failed']);
+      if (!updated) return changedBeforeProcessing;
       enqueue(() => resummarize(row.id));
       return {
         ok: true,
@@ -437,7 +459,8 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
         status: 'queued',
         stage: 'queued',
         error: null,
-      });
+      }, ['failed']);
+      if (!updated) return changedBeforeProcessing;
       enqueue(() => processUpload(row.id));
       return {
         ok: true,
@@ -454,7 +477,7 @@ export function attachRecordingUploads(app, config, { fetchImpl = fetch } = {}) 
     };
   }
 
-  return { recordingCapabilities, retryUpload };
+  return { recordingCapabilities, retryUpload, deleteRecording };
 }
 
 export function classifyJobError(error) {

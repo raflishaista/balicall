@@ -70,7 +70,7 @@ export async function listUploads(ownerId, limit = 50) {
   return res.rows.map(row => toApi(row));
 }
 
-export async function updateUpload(id, fields) {
+export async function updateUpload(id, fields, expectedStatuses = null) {
   const sets = [];
   const values = [id];
   for (const [key, value] of Object.entries(fields)) {
@@ -81,13 +81,51 @@ export async function updateUpload(id, fields) {
   }
   if (!sets.length) return null;
   sets.push('updated_at = NOW()');
+  values.push(expectedStatuses);
   const res = await db().query(
-    `UPDATE balicall_recording_uploads SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, values);
+    `UPDATE balicall_recording_uploads SET ${sets.join(', ')}
+      WHERE id = $1 AND ($${values.length}::text[] IS NULL OR status = ANY($${values.length}::text[])) RETURNING *`, values);
   return res.rows[0] ? toApi(res.rows[0], { detail: true }) : null;
 }
 
-export async function deleteUpload(id) {
-  await db().query('DELETE FROM balicall_recording_uploads WHERE id = $1', [id]);
+export async function deleteUpload(id, { ownerId = null, actorId = null, stageMediaRemoval }) {
+  const client = await db().connect();
+  let stagedMedia;
+  try {
+    await client.query('BEGIN');
+    const params = [id, ownerId];
+    const { rows: [row] } = await client.query(
+      `SELECT file_path, status FROM balicall_recording_uploads
+        WHERE id = $1 AND ($2::text IS NULL OR owner_id = $2) FOR UPDATE`, params);
+    if (!row || !['done', 'failed'].includes(row.status)) {
+      await client.query('ROLLBACK');
+      return row
+        ? { ok: false, status: 409, error: 'Tunggu hingga pemrosesan selesai sebelum menghapus.' }
+        : { ok: false, status: 404, error: 'Rekaman tidak ditemukan.' };
+    }
+    await client.query('DELETE FROM balicall_recording_uploads WHERE id = $1', [id]);
+    if (actorId) {
+      await client.query(
+        `INSERT INTO balicall_admin_audit (actor_id, target_id, action, result, previous_value)
+         VALUES ($1, $2, 'recording.delete', 'succeeded', $3)`, [actorId, id, row.status]);
+    }
+    stagedMedia = await stageMediaRemoval(row.file_path);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    await stagedMedia?.restore().catch(restoreError => {
+      console.error('[RECORDING] Failed to restore upload media:', id, restoreError.code);
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+  let mediaCleanupPending = false;
+  await stagedMedia?.remove().catch(error => {
+    mediaCleanupPending = true;
+    console.error('[RECORDING] Failed to remove staged upload media:', id, error.code);
+  });
+  return { ok: true, mediaCleanupPending };
 }
 
 // Jobs run inside this Node process, so anything still queued/processing at startup was interrupted.

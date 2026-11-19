@@ -75,6 +75,7 @@ const permissionLabels: Record<string, string> = {
   'system:read': 'Lihat status sistem',
   'audit:read': 'Baca audit admin',
   'recordings:read': 'Lihat metadata rekaman unggahan',
+  'recordings:delete': 'Hapus rekaman unggahan',
 };
 const actionLabels: Record<string, string> = {
   'admin.bootstrap': 'Tetapkan Super Admin pertama',
@@ -89,6 +90,7 @@ const actionLabels: Record<string, string> = {
   'observer.session.denied': 'Akses pemantauan ditolak',
   'observer.session.revoked': 'Sesi pemantauan dicabut',
   'observer.policy.violation': 'Pelanggaran izin pemantau',
+  'recording.delete': 'Hapus rekaman unggahan',
 };
 const resultLabels: Record<string, string> = {
   succeeded: 'Berhasil',
@@ -1458,9 +1460,33 @@ const recordingStages = new Map([
 ]);
 const initialRecordingFilters = { q: '', status: '', page: '1' };
 
-function AdminRecordings() {
+function AdminRecordings({ canDelete }: { canDelete: boolean }) {
   const [filters, setFilters] = useState(initialRecordingFilters);
+  const [deletionTarget, setDeletionTarget] = useState<RecordingInventoryPage['recordings'][number] | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const { data, loading, error, reload } = useAdminData<RecordingInventoryPage>(`/admin/recordings?${new URLSearchParams(filters)}`);
+  const deleteRecording = async () => {
+    if (!deletionTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await apiRequest<{ mediaCleanupPending: boolean }>(
+        `/admin/recordings/${encodeURIComponent(deletionTarget.id)}`, { method: 'DELETE' },
+      );
+      setDeletionTarget(null);
+      setNotice(result.mediaCleanupPending
+        ? 'Unggahan dihapus dari daftar. Pembersihan berkas di server belum selesai.'
+        : 'Unggahan rekaman berhasil dihapus.');
+      reload();
+    } catch (failure) {
+      setDeleteError(failure instanceof Error ? failure.message : 'Unggahan gagal dihapus.');
+      if (failure instanceof ApiError && (failure.status === 404 || failure.status === 409)) reload();
+    } finally {
+      setDeleting(false);
+    }
+  };
   const applyFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1477,6 +1503,7 @@ function AdminRecordings() {
           <RefreshCw size={16} aria-hidden="true" /> Perbarui
         </button>
       </div>
+      {notice && <p role="status">{notice}</p>}
       {data && !error && <dl className="admin-kpis">
         <div className="admin-kpi"><FileText size={20} aria-hidden="true" />
           <div><dt>Total unggahan</dt><dd>{numberFormat.format(data.totalUploads)}</dd></div>
@@ -1506,6 +1533,7 @@ function AdminRecordings() {
               <thead><tr>
                 <th scope="col">Judul</th><th scope="col">Diunggah (WIB)</th>
                 <th scope="col">Ukuran</th><th scope="col">Status proses</th>
+                {canDelete && <th scope="col">Tindakan</th>}
               </tr></thead>
               <tbody>{data.recordings.map(recording => {
                 const stage = recording.status === 'processing' && recording.stage ? recordingStages.get(recording.stage) : null;
@@ -1514,6 +1542,17 @@ function AdminRecordings() {
                   <td>{recording.createdAt ? <time dateTime={recording.createdAt}>{adminWibDate.format(new Date(recording.createdAt))}</time> : '—'}</td>
                   <td>{recording.fileSize === null ? '—' : formatUploadedBytes(recording.fileSize)}</td>
                   <td>{recordingStatuses.get(recording.status) ?? 'Tidak diketahui'}{stage && <small>{stage}</small>}</td>
+                  {canDelete && <td>
+                    {recording.status === 'done' || recording.status === 'failed' ? (
+                      <button type="button" className="button-secondary button-danger"
+                        aria-label={`Hapus unggahan ${recording.title}`}
+                        onClick={() => {
+                          setNotice(null);
+                          setDeleteError(null);
+                          setDeletionTarget(recording);
+                        }}>Hapus</button>
+                    ) : '—'}
+                  </td>}
                 </tr>;
               })}</tbody>
             </table>
@@ -1528,6 +1567,24 @@ function AdminRecordings() {
             </div>
           </div>
         </>
+      )}
+      {deletionTarget && (
+        <LiveMonitorDialog titleId="admin-delete-recording-heading" busy={deleting} onClose={() => setDeletionTarget(null)}>
+          <div className="admin-dialog-header">
+            <h2 id="admin-delete-recording-heading">Hapus unggahan rekaman?</h2>
+          </div>
+          <div className="admin-dialog-body">
+            <p><strong>{deletionTarget.title}</strong></p>
+            <p>File rekaman, transkrip, dan ringkasan unggahan ini akan dihapus permanen.</p>
+            {deleteError && <p className="admin-error-text" role="alert">{deleteError}</p>}
+          </div>
+          <div className="admin-dialog-footer">
+            <button type="button" className="button-secondary" disabled={deleting}
+              onClick={() => setDeletionTarget(null)}>Batal</button>
+            <button type="button" className="button-primary button-danger" disabled={deleting}
+              onClick={() => void deleteRecording()}>{deleting ? 'Menghapus…' : 'Hapus permanen'}</button>
+          </div>
+        </LiveMonitorDialog>
       )}
     </section>
   );
@@ -3992,7 +4049,7 @@ export default function AdminDashboard({ section, onEnterObserverMode }: {
         {section === 'requests' && <AdminActivationRequests />}
         {section === 'meetings' && <AdminMeetings />}
         {section === 'live-monitor' && <AdminLiveMeetingMonitor onEnterObserverMode={onEnterObserverMode} />}
-        {section === 'recordings' && <AdminRecordings />}
+        {section === 'recordings' && <AdminRecordings canDelete={data.permissions.includes('recordings:delete')} />}
         {section === 'system' && <AdminSystem />}
         {section === 'audit' && <AdminAudit permissions={data.permissions} />}
       </>}
