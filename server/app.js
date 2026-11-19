@@ -1386,6 +1386,7 @@ async function syncActionItemsToItProject(
       waitingRoom: Boolean(meeting.waitingRoom),
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
+      breakout: meeting.breakout || null,
       sttProvider: config.sttProvider,
     });
   }));
@@ -1788,6 +1789,97 @@ async function syncActionItemsToItProject(
     });
   }));
 
+  app.post('/api/meetings/:id/breakout-rooms', (req, res) => {
+    const access = requireMeetingManager(req, res, ['host']);
+    if (!access) return;
+    const { roomCount, mode } = req.body || {};
+    const count = Number(roomCount);
+    if (!Number.isInteger(count) || count < 2 || count > 10) {
+      return res.status(400).json({ error: 'Jumlah breakout room harus antara 2 hingga 10.' });
+    }
+    if (!['auto', 'choice'].includes(mode)) {
+      return res.status(400).json({ error: 'Mode pembagian harus auto atau choice.' });
+    }
+    const rooms = Array.from({ length: count }, (_, idx) => ({
+      id: idx + 1,
+      name: `Room ${idx + 1}`,
+      livekitRoom: `breakout-${access.meeting.id}-${idx + 1}`,
+    }));
+    const assignments = {};
+    if (mode === 'auto') {
+      const candidates = [...access.meeting.participants.values()].filter(
+        p => !p.leftAt && p.employeeId !== access.meeting.hostId
+      );
+      candidates.forEach((p, idx) => {
+        assignments[p.employeeId] = rooms[idx % rooms.length].id;
+      });
+    }
+    const breakout = {
+      active: true,
+      mode,
+      rooms,
+      assignments,
+      createdAt: new Date().toISOString(),
+    };
+    store.transact(() => {
+      access.meeting.breakout = breakout;
+    });
+    res.status(201).json({ breakout });
+  });
+
+  app.post('/api/meetings/:id/breakout-rooms/close', (req, res) => {
+    const access = requireMeetingManager(req, res, ['host']);
+    if (!access) return;
+    store.transact(() => {
+      access.meeting.breakout = null;
+    });
+    res.json({ success: true, breakout: null });
+  });
+
+  app.post('/api/meetings/:id/breakout-rooms/:roomId/token', asyncRoute(async (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (!meeting || meeting.status !== 'active' || !meeting.breakout?.active) {
+      return res.status(409).json({ error: 'Breakout room sedang tidak aktif.' });
+    }
+    const targetRoomId = Number(req.params.roomId);
+    const room = (meeting.breakout.rooms || []).find(r => r.id === targetRoomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Breakout room tidak ditemukan.' });
+    }
+    const participant = meeting.participants.get(req.speakerId);
+    if (!participant || participant.leftAt) {
+      return res.status(403).json({ error: 'Peserta tidak aktif dalam meeting.' });
+    }
+    store.transact(() => {
+      if (!meeting.breakout.assignments) meeting.breakout.assignments = {};
+      meeting.breakout.assignments[req.speakerId] = room.id;
+    });
+    const at = new AccessToken(config.livekitKey, config.livekitSecret, {
+      identity: req.speakerId,
+      name: participant.employeeName,
+      ttl: '12h',
+      metadata: JSON.stringify({
+        meetingId: meeting.id,
+        breakoutRoomId: room.id,
+        employeeId: req.speakerId,
+        isGuest: Boolean(participant.isGuest),
+      }),
+    });
+    const grant = {
+      room: room.livekitRoom,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+      canUpdateOwnMetadata: true,
+    };
+    if (participant.moderatorMuted || !canParticipantScreenShare(meeting, req.speakerId)) {
+      grant.canPublishSources = allowedPublishSources(meeting, req.speakerId);
+    }
+    at.addGrant(grant);
+    res.json({ token: await at.toJwt(), room });
+  }));
+
   app.post(
     '/api/meetings/:id/participants/:participantId/mute',
     asyncRoute(async (req, res) => {
@@ -2143,6 +2235,7 @@ async function syncActionItemsToItProject(
       waitingRoom: Boolean(meeting.waitingRoom),
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
+      breakout: meeting.breakout || null,
       waitingUsers: (currentRole === 'host' || currentRole === 'co-host')
         ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting')
         : [],

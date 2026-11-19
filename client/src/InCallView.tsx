@@ -58,6 +58,13 @@ export function InCallView({ callDuration,
   screenSharePolicy,
   chatDisabled,
   onUpdatePermissions,
+  breakoutState,
+  activeBreakoutRoomId,
+  breakoutToken,
+  onCreateBreakoutRooms,
+  onJoinBreakoutRoom,
+  onLeaveBreakoutRoom,
+  onCloseBreakoutRooms,
   onKicked,
 }: any) {
   const [mediaOptions] = useState(() => ({
@@ -97,7 +104,7 @@ export function InCallView({ callDuration,
     {connectionError && <div role="alert" style={{ padding: '12px', color: '#fca5a5' }}>{connectionError}</div>}
     <LiveKitRoom
       serverUrl={serverUrl}
-      token={token}
+      token={breakoutToken || token}
       connect={true}
       onError={onRoomError}
       onConnected={onConnected}
@@ -149,6 +156,12 @@ export function InCallView({ callDuration,
         screenSharePolicy={screenSharePolicy}
         chatDisabled={chatDisabled}
         onUpdatePermissions={onUpdatePermissions}
+        breakoutState={breakoutState}
+        activeBreakoutRoomId={activeBreakoutRoomId}
+        onCreateBreakoutRooms={onCreateBreakoutRooms}
+        onJoinBreakoutRoom={onJoinBreakoutRoom}
+        onLeaveBreakoutRoom={onLeaveBreakoutRoom}
+        onCloseBreakoutRooms={onCloseBreakoutRooms}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
@@ -197,6 +210,12 @@ function RoomContent({
   screenSharePolicy,
   chatDisabled,
   onUpdatePermissions,
+  breakoutState,
+  activeBreakoutRoomId,
+  onCreateBreakoutRooms,
+  onJoinBreakoutRoom,
+  onLeaveBreakoutRoom,
+  onCloseBreakoutRooms,
   onKicked,
   employeeId,
   transcripts,
@@ -382,6 +401,12 @@ function RoomContent({
         screenSharePolicy={screenSharePolicy}
         chatDisabled={chatDisabled}
         onUpdatePermissions={onUpdatePermissions}
+        breakoutState={breakoutState}
+        activeBreakoutRoomId={activeBreakoutRoomId}
+        onCreateBreakoutRooms={onCreateBreakoutRooms}
+        onJoinBreakoutRoom={onJoinBreakoutRoom}
+        onLeaveBreakoutRoom={onLeaveBreakoutRoom}
+        onCloseBreakoutRooms={onCloseBreakoutRooms}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}

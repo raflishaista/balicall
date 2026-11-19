@@ -103,6 +103,18 @@ interface MeetingRoomProps {
   screenSharePolicy?: 'all' | 'co-hosts' | 'host';
   chatDisabled?: boolean;
   onUpdatePermissions?: (patch: { screenSharePolicy?: 'all' | 'co-hosts' | 'host'; chatDisabled?: boolean }) => Promise<void>;
+  breakoutState?: {
+    active: boolean;
+    mode: 'auto' | 'choice';
+    rooms: Array<{ id: number; name: string; livekitRoom: string }>;
+    assignments: Record<string, number>;
+    createdAt: string;
+  } | null;
+  activeBreakoutRoomId?: number | null;
+  onCreateBreakoutRooms?: (roomCount: number, mode: 'auto' | 'choice') => Promise<void>;
+  onJoinBreakoutRoom?: (roomId: number) => Promise<void>;
+  onLeaveBreakoutRoom?: () => void;
+  onCloseBreakoutRooms?: () => Promise<void>;
   onKicked?: () => void;
   roomName: string;
   roomCode?: string;
@@ -292,6 +304,12 @@ export function MeetingRoom({
   screenSharePolicy = 'all',
   chatDisabled = false,
   onUpdatePermissions,
+  breakoutState = null,
+  activeBreakoutRoomId = null,
+  onCreateBreakoutRooms,
+  onJoinBreakoutRoom,
+  onLeaveBreakoutRoom,
+  onCloseBreakoutRooms,
   onKicked,
 }: MeetingRoomProps) {
   const room = useRoomContext();
@@ -476,6 +494,11 @@ export function MeetingRoom({
     !effectiveChatDisabled || meetingRole === 'host' || meetingRole === 'co-host';
 
   const [policyNotice, setPolicyNotice] = useState<string | null>(null);
+  const [breakoutOpen, setBreakoutOpen] = useState(false);
+  const [breakoutCount, setBreakoutCount] = useState(2);
+  const [breakoutMode, setBreakoutMode] = useState<'auto' | 'choice'>('auto');
+  const [breakoutBusy, setBreakoutBusy] = useState(false);
+  const [breakoutError, setBreakoutError] = useState<string | null>(null);
   const prevScreenSharePolicyRef = useRef(effectiveScreenSharePolicy);
   const toggleScreenShareRef = useRef(onToggleScreenShare);
   toggleScreenShareRef.current = onToggleScreenShare;
@@ -1005,7 +1028,19 @@ export function MeetingRoom({
         )}
         <div className="call-info-bar">
           <div>
-            <span className="room-label">#{roomName}</span>
+            <span className="room-label">
+              #{roomName}
+              {activeBreakoutRoomId ? ` · Breakout Room ${activeBreakoutRoomId}` : ''}
+            </span>
+            {activeBreakoutRoomId && onLeaveBreakoutRoom && (
+              <button
+                type="button"
+                className="breakout-return-pill"
+                onClick={onLeaveBreakoutRoom}
+              >
+                Kembali ke Ruang Utama
+              </button>
+            )}
             {roomCode && (
               <span className="room-code-badge" title="5 digit kode ruang rapat">
                 Kode: <strong>{roomCode}</strong>
@@ -1932,6 +1967,11 @@ export function MeetingRoom({
         chatDisabled={effectiveChatDisabled}
         onChangeScreenSharePolicy={policy => void handleUpdatePermissions({ screenSharePolicy: policy })}
         onToggleChatDisabled={disabled => void handleUpdatePermissions({ chatDisabled: disabled })}
+        breakoutActive={Boolean(breakoutState?.active)}
+        onOpenBreakout={() => {
+          setBreakoutError(null);
+          setBreakoutOpen(true);
+        }}
         speechEnabled={speechEnabled}
         speechError={speechError}
         isListening={isListening}
@@ -1968,6 +2008,185 @@ export function MeetingRoom({
         cameraBlurSupported={cameraBlurSupported}
         onToggleCameraBlur={onToggleCameraBlur}
       />
+
+      {breakoutOpen && (
+        <div className="breakout-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="breakout-modal-title">
+          <div className="breakout-modal">
+            <div className="breakout-modal-header">
+              <h2 id="breakout-modal-title">Breakout Rooms</h2>
+              <button
+                type="button"
+                className="breakout-modal-close"
+                aria-label="Tutup"
+                onClick={() => setBreakoutOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            {breakoutError && (
+              <p className="meeting-chat-file-error" role="alert">{breakoutError}</p>
+            )}
+            {!breakoutState?.active ? (
+              <form
+                className="breakout-setup-form"
+                onSubmit={async event => {
+                  event.preventDefault();
+                  if (!onCreateBreakoutRooms || breakoutBusy) return;
+                  setBreakoutBusy(true);
+                  setBreakoutError(null);
+                  try {
+                    await onCreateBreakoutRooms(breakoutCount, breakoutMode);
+                    setBreakoutOpen(false);
+                  } catch (error) {
+                    setBreakoutError(error instanceof Error ? error.message : 'Gagal membuat breakout room.');
+                  } finally {
+                    setBreakoutBusy(false);
+                  }
+                }}
+              >
+                <label className="breakout-spin-field">
+                  <span>Jumlah ruangan</span>
+                  <div className="breakout-spin-controls">
+                    <button
+                      type="button"
+                      className="breakout-spin-btn"
+                      aria-label="Kurangi ruangan"
+                      disabled={breakoutBusy || breakoutCount <= 2}
+                      onClick={() => setBreakoutCount(c => Math.max(2, c - 1))}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={2}
+                      max={10}
+                      value={breakoutCount}
+                      disabled={breakoutBusy}
+                      onChange={event => {
+                        const val = Number(event.target.value);
+                        if (Number.isFinite(val)) setBreakoutCount(Math.min(10, Math.max(2, Math.round(val))));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="breakout-spin-btn"
+                      aria-label="Tambah ruangan"
+                      disabled={breakoutBusy || breakoutCount >= 10}
+                      onClick={() => setBreakoutCount(c => Math.min(10, c + 1))}
+                    >
+                      +
+                    </button>
+                  </div>
+                </label>
+                <div className="breakout-mode-radios" role="radiogroup" aria-label="Metode pembagian peserta">
+                  <label className={`breakout-mode-option ${breakoutMode === 'auto' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="breakoutMode"
+                      value="auto"
+                      checked={breakoutMode === 'auto'}
+                      disabled={breakoutBusy}
+                      onChange={() => setBreakoutMode('auto')}
+                    />
+                    <span>Assign automatically</span>
+                  </label>
+                  <label className={`breakout-mode-option ${breakoutMode === 'choice' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="breakoutMode"
+                      value="choice"
+                      checked={breakoutMode === 'choice'}
+                      disabled={breakoutBusy}
+                      onChange={() => setBreakoutMode('choice')}
+                    />
+                    <span>Let participants choose room</span>
+                  </label>
+                </div>
+                <div className="breakout-modal-actions">
+                  <button type="button" className="button-secondary" disabled={breakoutBusy} onClick={() => setBreakoutOpen(false)}>
+                    Batal
+                  </button>
+                  <button type="submit" className="button-primary" disabled={breakoutBusy}>
+                    {breakoutBusy ? 'Membuat…' : 'Create Breakout Rooms'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="breakout-active-list">
+                <p className="breakout-active-subtitle">
+                  Mode: <strong>{breakoutState.mode === 'auto' ? 'Assign automatically' : 'Let participants choose room'}</strong>
+                </p>
+                <div className="breakout-rooms-grid">
+                  {breakoutState.rooms.map(r => {
+                    const isCurrent = activeBreakoutRoomId === r.id;
+                    return (
+                      <div className={`breakout-room-row ${isCurrent ? 'current' : ''}`} key={r.id}>
+                        <strong>{r.name}</strong>
+                        {isCurrent ? (
+                          <span className="breakout-current-badge">Aktif</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="button-secondary"
+                            disabled={breakoutBusy || !onJoinBreakoutRoom}
+                            onClick={async () => {
+                              if (!onJoinBreakoutRoom) return;
+                              setBreakoutBusy(true);
+                              setBreakoutError(null);
+                              try {
+                                await onJoinBreakoutRoom(r.id);
+                                setBreakoutOpen(false);
+                              } catch (error) {
+                                setBreakoutError(error instanceof Error ? error.message : 'Gagal masuk ke breakout room.');
+                              } finally {
+                                setBreakoutBusy(false);
+                              }
+                            }}
+                          >
+                            Gabung
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="breakout-modal-actions">
+                  {activeBreakoutRoomId && onLeaveBreakoutRoom && (
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => {
+                        onLeaveBreakoutRoom();
+                        setBreakoutOpen(false);
+                      }}
+                    >
+                      Kembali ke Ruang Utama
+                    </button>
+                  )}
+                  {meetingRole === 'host' && onCloseBreakoutRooms && (
+                    <button
+                      type="button"
+                      className="button-primary"
+                      disabled={breakoutBusy}
+                      onClick={async () => {
+                        setBreakoutBusy(true);
+                        try {
+                          await onCloseBreakoutRooms();
+                          setBreakoutOpen(false);
+                        } finally {
+                          setBreakoutBusy(false);
+                        }
+                      }}
+                    >
+                      Tutup Semua Breakout Room
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {backgroundsOpen && backgroundControl && (
         <BackgroundSettingsDialog
