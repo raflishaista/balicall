@@ -61,10 +61,15 @@ export function InCallView({ callDuration,
   breakoutState,
   activeBreakoutRoomId,
   breakoutToken,
+  meetingParticipantNames,
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
+  pollState,
+  onCreatePoll,
+  onVotePoll,
+  onClosePoll,
   onKicked,
 }: any) {
   const [mediaOptions] = useState(() => ({
@@ -159,10 +164,15 @@ export function InCallView({ callDuration,
         onUpdatePermissions={onUpdatePermissions}
         breakoutState={breakoutState}
         activeBreakoutRoomId={activeBreakoutRoomId}
+        meetingParticipantNames={meetingParticipantNames}
         onCreateBreakoutRooms={onCreateBreakoutRooms}
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
+        pollState={pollState}
+        onCreatePoll={onCreatePoll}
+        onVotePoll={onVotePoll}
+        onClosePoll={onClosePoll}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
@@ -213,10 +223,15 @@ function RoomContent({
   onUpdatePermissions,
   breakoutState,
   activeBreakoutRoomId,
+  meetingParticipantNames,
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
+  pollState,
+  onCreatePoll,
+  onVotePoll,
+  onClosePoll,
   onKicked,
   employeeId,
   transcripts,
@@ -404,10 +419,15 @@ function RoomContent({
         onUpdatePermissions={onUpdatePermissions}
         breakoutState={breakoutState}
         activeBreakoutRoomId={activeBreakoutRoomId}
+        meetingParticipantNames={meetingParticipantNames}
         onCreateBreakoutRooms={onCreateBreakoutRooms}
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
+        pollState={pollState}
+        onCreatePoll={onCreatePoll}
+        onVotePoll={onVotePoll}
+        onClosePoll={onClosePoll}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}

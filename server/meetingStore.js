@@ -157,6 +157,7 @@ export class MeetingStore {
           screenSharePolicy: 'all',
           chatDisabled: false,
           breakout: null,
+          poll: null,
 
           participants: new Map(),
           transcripts: [],

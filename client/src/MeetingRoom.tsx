@@ -16,6 +16,7 @@ import {
   AudioLines,
   Check,
   ChevronDown,
+  ChevronUp,
   Download,
   FileText,
   MessageSquare,
@@ -111,10 +112,26 @@ interface MeetingRoomProps {
     createdAt: string;
   } | null;
   activeBreakoutRoomId?: number | null;
+  meetingParticipantNames?: Record<string, string>;
   onCreateBreakoutRooms?: (roomCount: number, mode: 'auto' | 'choice' | 'manual', assignments?: Record<string, number>) => Promise<void>;
   onJoinBreakoutRoom?: (roomId: number) => Promise<void>;
   onLeaveBreakoutRoom?: () => void;
   onCloseBreakoutRooms?: () => Promise<void>;
+  pollState?: {
+    id: string;
+    active: boolean;
+    title: string;
+    options: string[];
+    counts: number[];
+    totalVotes: number;
+    durationMinutes: number;
+    createdAt: string;
+    endsAt: string;
+    myVote: number | null;
+  } | null;
+  onCreatePoll?: (title: string, options: string[], durationMinutes: number) => Promise<void>;
+  onVotePoll?: (optionIndex: number) => Promise<void>;
+  onClosePoll?: () => Promise<void>;
   onKicked?: () => void;
   roomName: string;
   roomCode?: string;
@@ -306,10 +323,15 @@ export function MeetingRoom({
   onUpdatePermissions,
   breakoutState = null,
   activeBreakoutRoomId = null,
+  meetingParticipantNames = {},
   onCreateBreakoutRooms,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
+  pollState = null,
+  onCreatePoll,
+  onVotePoll,
+  onClosePoll,
   onKicked,
 }: MeetingRoomProps) {
   const room = useRoomContext();
@@ -502,6 +524,26 @@ export function MeetingRoom({
   const [dragOverTarget, setDragOverTarget] = useState<number | 'unassigned' | null>(null);
   const [breakoutBusy, setBreakoutBusy] = useState(false);
   const [breakoutError, setBreakoutError] = useState<string | null>(null);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [pollTitle, setPollTitle] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [pollDuration, setPollDuration] = useState(5);
+  const [pollBusy, setPollBusy] = useState(false);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [pollBannerExpanded, setPollBannerExpanded] = useState(false);
+  const [pollVoteBusy, setPollVoteBusy] = useState(false);
+  const [pollVoteError, setPollVoteError] = useState<string | null>(null);
+  const [pollNowMs, setPollNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!pollState?.active) {
+      setPollBannerExpanded(false);
+      return;
+    }
+    setPollNowMs(Date.now());
+    const timer = window.setInterval(() => setPollNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pollState?.active, pollState?.id]);
   const prevScreenSharePolicyRef = useRef(effectiveScreenSharePolicy);
   const toggleScreenShareRef = useRef(onToggleScreenShare);
   toggleScreenShareRef.current = onToggleScreenShare;
@@ -1975,6 +2017,11 @@ export function MeetingRoom({
           setBreakoutError(null);
           setBreakoutOpen(true);
         }}
+        pollActive={Boolean(pollState?.active && Date.parse(pollState.endsAt) > pollNowMs)}
+        onOpenPoll={() => {
+          setPollError(null);
+          setPollOpen(true);
+        }}
         speechEnabled={speechEnabled}
         speechError={speechError}
         isListening={isListening}
@@ -2011,6 +2058,261 @@ export function MeetingRoom({
         cameraBlurSupported={cameraBlurSupported}
         onToggleCameraBlur={onToggleCameraBlur}
       />
+
+      {pollState?.active && Date.parse(pollState.endsAt) > pollNowMs && (() => {
+        const remainingSec = Math.max(0, Math.ceil((Date.parse(pollState.endsAt) - pollNowMs) / 1000));
+        const mins = Math.floor(remainingSec / 60);
+        const secs = String(remainingSec % 60).padStart(2, '0');
+        return (
+          <div className="poll-floating-wrap" role="region" aria-label="Polling aktif">
+            <button
+              type="button"
+              className="poll-floating-pill"
+              aria-expanded={pollBannerExpanded}
+              onClick={() => {
+                setPollVoteError(null);
+                setPollBannerExpanded(prev => !prev);
+              }}
+            >
+              <span className="poll-floating-dot" aria-hidden="true" />
+              <span className="poll-floating-title">Polling: {pollState.title}</span>
+              <span className="poll-floating-timer">{mins}:{secs}</span>
+              {pollBannerExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            </button>
+            {pollBannerExpanded && (
+              <div className="poll-floating-card">
+                <div className="poll-floating-card-head">
+                  <strong>{pollState.title}</strong>
+                  <span className="poll-floating-meta">
+                    {pollState.totalVotes} suara · Berakhir dalam {mins}:{secs}
+                  </span>
+                </div>
+                {pollVoteError && (
+                  <p className="meeting-chat-file-error" role="alert">{pollVoteError}</p>
+                )}
+                <div className="poll-options-list">
+                  {pollState.options.map((opt, idx) => {
+                    const count = pollState.counts[idx] ?? 0;
+                    const pct = pollState.totalVotes > 0 ? Math.round((count / pollState.totalVotes) * 100) : 0;
+                    const isSelected = pollState.myVote === idx;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        className={`poll-option-btn ${isSelected ? 'selected' : ''}`}
+                        disabled={pollVoteBusy || !onVotePoll}
+                        onClick={async () => {
+                          if (!onVotePoll || pollVoteBusy) return;
+                          setPollVoteBusy(true);
+                          setPollVoteError(null);
+                          try {
+                            await onVotePoll(idx);
+                          } catch (error) {
+                            setPollVoteError(error instanceof Error ? error.message : 'Gagal mengirim suara.');
+                          } finally {
+                            setPollVoteBusy(false);
+                          }
+                        }}
+                      >
+                        <span className="poll-option-bar" style={{ width: `${pct}%` }} aria-hidden="true" />
+                        <span className="poll-option-label">
+                          {isSelected && <Check size={14} />}
+                          <span>{opt}</span>
+                        </span>
+                        <span className="poll-option-stats">{count} ({pct}%)</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {meetingRole === 'host' && onClosePoll && (
+                  <div className="poll-floating-actions">
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={pollVoteBusy}
+                      onClick={async () => {
+                        setPollVoteBusy(true);
+                        try {
+                          await onClosePoll();
+                          setPollBannerExpanded(false);
+                        } finally {
+                          setPollVoteBusy(false);
+                        }
+                      }}
+                    >
+                      Akhiri Polling
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      {pollOpen && meetingRole === 'host' && (
+        <div className="breakout-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="poll-modal-title">
+          <div className="breakout-modal">
+            <div className="breakout-modal-header">
+              <h2 id="poll-modal-title">Polling</h2>
+              <button
+                type="button"
+                className="breakout-modal-close"
+                aria-label="Tutup"
+                onClick={() => setPollOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            {pollError && (
+              <p className="meeting-chat-file-error" role="alert">{pollError}</p>
+            )}
+            <form
+              className="breakout-setup-form"
+              onSubmit={async event => {
+                event.preventDefault();
+                if (!onCreatePoll || pollBusy) return;
+                const cleanTitle = pollTitle.trim();
+                const cleanOptions = pollOptions.map(o => o.trim()).filter(Boolean);
+                if (!cleanTitle) {
+                  setPollError('Judul polling wajib diisi.');
+                  return;
+                }
+                if (cleanOptions.length < 2) {
+                  setPollError('Minimal 2 opsi polling diperlukan.');
+                  return;
+                }
+                setPollBusy(true);
+                setPollError(null);
+                try {
+                  await onCreatePoll(cleanTitle, cleanOptions, pollDuration);
+                  setPollTitle('');
+                  setPollOptions(['', '']);
+                  setPollDuration(5);
+                  setPollOpen(false);
+                } catch (error) {
+                  setPollError(error instanceof Error ? error.message : 'Gagal membuat polling.');
+                } finally {
+                  setPollBusy(false);
+                }
+              }}
+            >
+              <label className="poll-field">
+                <span>Judul polling</span>
+                <input
+                  type="text"
+                  maxLength={200}
+                  placeholder="Contoh: Jadwal rapat berikutnya?"
+                  value={pollTitle}
+                  disabled={pollBusy}
+                  onChange={e => setPollTitle(e.target.value)}
+                />
+              </label>
+              <div className="poll-field">
+                <span>Opsi pilihan</span>
+                <div className="poll-create-options">
+                  {pollOptions.map((opt, idx) => (
+                    <div className="poll-create-option-row" key={idx}>
+                      <input
+                        type="text"
+                        maxLength={120}
+                        placeholder={`Opsi ${idx + 1}`}
+                        value={opt}
+                        disabled={pollBusy}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setPollOptions(prev => prev.map((item, i) => (i === idx ? val : item)));
+                        }}
+                      />
+                      {pollOptions.length > 2 && (
+                        <button
+                          type="button"
+                          className="breakout-modal-close"
+                          aria-label={`Hapus opsi ${idx + 1}`}
+                          disabled={pollBusy}
+                          onClick={() => setPollOptions(prev => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {pollOptions.length < 10 && (
+                  <button
+                    type="button"
+                    className="button-secondary poll-add-option-btn"
+                    disabled={pollBusy}
+                    onClick={() => setPollOptions(prev => [...prev, ''])}
+                  >
+                    + Tambah opsi
+                  </button>
+                )}
+              </div>
+              <label className="breakout-spin-field">
+                <span>Berakhir dalam (menit)</span>
+                <div className="breakout-spin-controls">
+                  <button
+                    type="button"
+                    className="breakout-spin-btn"
+                    aria-label="Kurangi menit"
+                    disabled={pollBusy || pollDuration <= 1}
+                    onClick={() => setPollDuration(d => Math.max(1, d - 1))}
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={pollDuration}
+                    disabled={pollBusy}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      if (Number.isFinite(val)) setPollDuration(Math.min(120, Math.max(1, Math.round(val))));
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="breakout-spin-btn"
+                    aria-label="Tambah menit"
+                    disabled={pollBusy || pollDuration >= 120}
+                    onClick={() => setPollDuration(d => Math.min(120, d + 1))}
+                  >
+                    +
+                  </button>
+                </div>
+              </label>
+              <div className="breakout-modal-actions">
+                {pollState?.active && onClosePoll && (
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={pollBusy}
+                    onClick={async () => {
+                      setPollBusy(true);
+                      try {
+                        await onClosePoll();
+                        setPollOpen(false);
+                      } finally {
+                        setPollBusy(false);
+                      }
+                    }}
+                  >
+                    Akhiri Polling Aktif
+                  </button>
+                )}
+                <button type="button" className="button-secondary" disabled={pollBusy} onClick={() => setPollOpen(false)}>
+                  Batal
+                </button>
+                <button type="submit" className="button-primary" disabled={pollBusy}>
+                  {pollBusy ? 'Membuat…' : 'Buat Polling'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
 
       {breakoutOpen && (
         <div className="breakout-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="breakout-modal-title">
@@ -2271,9 +2573,17 @@ export function MeetingRoom({
                 <div className="breakout-rooms-grid">
                   {breakoutState.rooms.map(r => {
                     const isCurrent = activeBreakoutRoomId === r.id;
+                    const roomParticipantNames = Object.entries(breakoutState.assignments || {})
+                      .filter(([, assignedRoomId]) => assignedRoomId === r.id)
+                      .map(([empId]) => meetingParticipantNames[empId] || participants.find(p => p.identity === empId)?.name || empId);
                     return (
                       <div className={`breakout-room-row ${isCurrent ? 'current' : ''}`} key={r.id}>
-                        <strong>{r.name}</strong>
+                        <div className="breakout-room-info">
+                          <strong>{r.name}</strong>
+                          <span className="breakout-room-participants">
+                            {roomParticipantNames.length > 0 ? roomParticipantNames.join(', ') : 'Belum ada peserta'}
+                          </span>
+                        </div>
                         {isCurrent ? (
                           <span className="breakout-current-badge">Aktif</span>
                         ) : (

@@ -1387,6 +1387,7 @@ async function syncActionItemsToItProject(
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
       breakout: meeting.breakout || null,
+      poll: serializePoll(meeting, req.speakerId),
       sttProvider: config.sttProvider,
     });
   }));
@@ -1835,6 +1836,107 @@ async function syncActionItemsToItProject(
     res.status(201).json({ breakout });
   });
 
+  function serializePoll(meeting, speakerId) {
+    const poll = meeting?.poll;
+    if (!poll) return null;
+    const endsAtMs = Date.parse(poll.endsAt);
+    const isRunning = Boolean(poll.active) && Number.isFinite(endsAtMs) && Date.now() < endsAtMs;
+    const counts = poll.options.map(() => 0);
+    const votes = poll.votes || {};
+    let totalVotes = 0;
+    for (const optionIdx of Object.values(votes)) {
+      if (Number.isInteger(optionIdx) && optionIdx >= 0 && optionIdx < counts.length) {
+        counts[optionIdx] += 1;
+        totalVotes += 1;
+      }
+    }
+    const myVote = speakerId && Number.isInteger(votes[speakerId]) ? votes[speakerId] : null;
+    return {
+      id: poll.id,
+      active: isRunning,
+      title: poll.title,
+      options: poll.options,
+      counts,
+      totalVotes,
+      durationMinutes: poll.durationMinutes,
+      createdAt: poll.createdAt,
+      endsAt: poll.endsAt,
+      myVote,
+    };
+  }
+
+  app.post('/api/meetings/:id/polls', (req, res) => {
+    const access = requireMeetingManager(req, res, ['host']);
+    if (!access) return;
+    const rawTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!rawTitle || rawTitle.length > 200) {
+      return res.status(400).json({ error: 'Judul polling wajib diisi (maksimal 200 karakter).' });
+    }
+    const rawOptions = Array.isArray(req.body?.options) ? req.body.options : [];
+    const options = rawOptions
+      .map(opt => (typeof opt === 'string' ? opt.trim() : ''))
+      .filter(Boolean)
+      .slice(0, 10);
+    if (options.length < 2) {
+      return res.status(400).json({ error: 'Polling harus memiliki minimal 2 opsi.' });
+    }
+    if (options.some(opt => opt.length > 120)) {
+      return res.status(400).json({ error: 'Setiap opsi polling maksimal 120 karakter.' });
+    }
+    const durationMinutes = Number(req.body?.durationMinutes ?? 5);
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 120) {
+      return res.status(400).json({ error: 'Durasi polling harus antara 1 hingga 120 menit.' });
+    }
+    const createdAt = new Date().toISOString();
+    const endsAt = new Date(Date.now() + durationMinutes * 60_000).toISOString();
+    store.transact(() => {
+      access.meeting.poll = {
+        id: `poll-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        active: true,
+        title: rawTitle,
+        options,
+        durationMinutes,
+        createdAt,
+        endsAt,
+        votes: {},
+      };
+    });
+    res.status(201).json({ poll: serializePoll(access.meeting, access.speakerId) });
+  });
+
+  app.post('/api/meetings/:id/polls/vote', (req, res) => {
+    const meeting = store.get(req.meetingId);
+    if (!meeting || meeting.status !== 'active' || !meeting.poll) {
+      return res.status(409).json({ error: 'Tidak ada polling yang sedang berjalan.' });
+    }
+    const endsAtMs = Date.parse(meeting.poll.endsAt);
+    if (!meeting.poll.active || !Number.isFinite(endsAtMs) || Date.now() >= endsAtMs) {
+      return res.status(409).json({ error: 'Polling sudah berakhir.' });
+    }
+    const participant = meeting.participants.get(req.speakerId);
+    if (!participant || participant.leftAt) {
+      return res.status(403).json({ error: 'Peserta tidak aktif dalam meeting.' });
+    }
+    const optionIndex = Number(req.body?.optionIndex);
+    if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= meeting.poll.options.length) {
+      return res.status(400).json({ error: 'Opsi polling tidak valid.' });
+    }
+    store.transact(() => {
+      if (!meeting.poll.votes) meeting.poll.votes = {};
+      meeting.poll.votes[req.speakerId] = optionIndex;
+    });
+    res.json({ poll: serializePoll(meeting, req.speakerId) });
+  });
+
+  app.post('/api/meetings/:id/polls/close', (req, res) => {
+    const access = requireMeetingManager(req, res, ['host']);
+    if (!access) return;
+    store.transact(() => {
+      access.meeting.poll = null;
+    });
+    res.json({ success: true, poll: null });
+  });
+
   app.post('/api/meetings/:id/breakout-rooms/close', (req, res) => {
     const access = requireMeetingManager(req, res, ['host']);
     if (!access) return;
@@ -2244,6 +2346,7 @@ async function syncActionItemsToItProject(
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
       breakout: meeting.breakout || null,
+      poll: serializePoll(meeting, req.speakerId),
       waitingUsers: (currentRole === 'host' || currentRole === 'co-host')
         ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting')
         : [],

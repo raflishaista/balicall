@@ -203,6 +203,19 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
   } | null>(null);
   const [activeBreakoutRoomId, setActiveBreakoutRoomId] = useState<number | null>(null);
   const [breakoutToken, setBreakoutToken] = useState<string | null>(null);
+  const [pollState, setPollState] = useState<{
+    id: string;
+    active: boolean;
+    title: string;
+    options: string[];
+    counts: number[];
+    totalVotes: number;
+    durationMinutes: number;
+    createdAt: string;
+    endsAt: string;
+    myVote: number | null;
+  } | null>(null);
+  const [meetingParticipantNames, setMeetingParticipantNames] = useState<Record<string, string>>({});
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
   const [pendingSpeakRequests, setPendingSpeakRequests] = useState<Array<{ identity: string; name: string; speakRequestAt: string }>>([]);
@@ -264,6 +277,18 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
             assignments: Record<string, number>;
             createdAt: string;
           } | null;
+          poll?: {
+            id: string;
+            active: boolean;
+            title: string;
+            options: string[];
+            counts: number[];
+            totalVotes: number;
+            durationMinutes: number;
+            createdAt: string;
+            endsAt: string;
+            myVote: number | null;
+          } | null;
           microphoneRestricted?: boolean;
           speakRequestAt?: string | null;
           pendingSpeakRequests?: Array<{
@@ -290,6 +315,13 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
         setMeetingRole(data.currentRole || 'participant');
         setMeetingHostId(data.hostId || null);
+        if (Array.isArray(data.participants)) {
+          const nextNames: Record<string, string> = {};
+          for (const person of data.participants) {
+            if (person.employeeId) nextNames[person.employeeId] = person.employeeName || person.employeeId;
+          }
+          setMeetingParticipantNames(nextNames);
+        }
         const hostName = data.participants?.find(person => person.employeeId === data.hostId)?.employeeName;
         setMeetingHost(current => current?.meetingId === meetingId && current.name === hostName
           ? current : { meetingId, name: hostName });
@@ -300,6 +332,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         if (typeof data.chatDisabled === 'boolean') setChatDisabled(data.chatDisabled);
         const nextBreakout = data.breakout || null;
         setBreakoutState(nextBreakout);
+        setPollState(data.poll || null);
         if (!nextBreakout?.active) {
           setActiveBreakoutRoomId(null);
           setBreakoutToken(null);
@@ -1529,6 +1562,47 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     setBreakoutToken(null);
   }, [meetingId, token]);
 
+  const createPoll = useCallback(async (title: string, options: string[], durationMinutes: number) => {
+    if (!meetingId || !token) return;
+    const res = await apiRequest<{ poll: NonNullable<typeof pollState> }>(
+      meetingPath(meetingId, 'polls'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ title, options, durationMinutes }),
+      }
+    );
+    setPollState(res.poll);
+  }, [meetingId, token]);
+
+  const votePoll = useCallback(async (optionIndex: number) => {
+    if (!meetingId || !token) return;
+    const res = await apiRequest<{ poll: NonNullable<typeof pollState> }>(
+      meetingPath(meetingId, 'polls/vote'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ optionIndex }),
+      }
+    );
+    setPollState(res.poll);
+  }, [meetingId, token]);
+
+  const closePoll = useCallback(async () => {
+    if (!meetingId || !token) return;
+    await apiRequest(meetingPath(meetingId, 'polls/close'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setPollState(null);
+  }, [meetingId, token]);
+
   const handleKickedFromMeeting = useCallback(() => {
     setToken(null);
     setMeetingId(null);
@@ -2041,10 +2115,15 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             breakoutState={breakoutState}
             activeBreakoutRoomId={activeBreakoutRoomId}
             breakoutToken={breakoutToken}
+            meetingParticipantNames={meetingParticipantNames}
             onCreateBreakoutRooms={createBreakoutRooms}
             onJoinBreakoutRoom={joinBreakoutRoom}
             onLeaveBreakoutRoom={leaveBreakoutRoom}
             onCloseBreakoutRooms={closeBreakoutRooms}
+            pollState={pollState}
+            onCreatePoll={createPoll}
+            onVotePoll={votePoll}
+            onClosePoll={closePoll}
             onKicked={handleKickedFromMeeting}
             joinMedia={joinMedia}
             recordingPending={recordingPending}
