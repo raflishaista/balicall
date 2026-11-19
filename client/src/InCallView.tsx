@@ -66,6 +66,10 @@ export function InCallView({ callDuration,
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
+  pollState,
+  onCreatePoll,
+  onVotePoll,
+  onClosePoll,
   onKicked,
 }: any) {
   const [mediaOptions] = useState(() => ({
@@ -165,6 +169,10 @@ export function InCallView({ callDuration,
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
+        pollState={pollState}
+        onCreatePoll={onCreatePoll}
+        onVotePoll={onVotePoll}
+        onClosePoll={onClosePoll}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
@@ -220,6 +228,10 @@ function RoomContent({
   onJoinBreakoutRoom,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
+  pollState,
+  onCreatePoll,
+  onVotePoll,
+  onClosePoll,
   onKicked,
   employeeId,
   transcripts,
@@ -412,6 +424,10 @@ function RoomContent({
         onJoinBreakoutRoom={onJoinBreakoutRoom}
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
+        pollState={pollState}
+        onCreatePoll={onCreatePoll}
+        onVotePoll={onVotePoll}
+        onClosePoll={onClosePoll}
         onKicked={onKicked}
         microphoneRestricted={microphoneRestricted}
         speakRequestPending={speakRequestPending}
