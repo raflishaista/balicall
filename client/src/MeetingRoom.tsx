@@ -14,6 +14,7 @@ import { ConnectionState, RoomEvent } from 'livekit-client';
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import {
   AudioLines,
+  BarChart3,
   Check,
   ChevronDown,
   ChevronUp,
@@ -534,6 +535,35 @@ export function MeetingRoom({
   const [pollVoteBusy, setPollVoteBusy] = useState(false);
   const [pollVoteError, setPollVoteError] = useState<string | null>(null);
   const [pollNowMs, setPollNowMs] = useState(() => Date.now());
+  const [pollNotices, setPollNotices] = useState<{ id: string; pollId: string; text: string; timestamp: string }[]>([]);
+  const [pollCreatedAnnouncement, setPollCreatedAnnouncement] = useState<string | null>(null);
+  const seenPollIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!pollState?.active || !pollState.id) return;
+    if (seenPollIdRef.current === pollState.id) return;
+    seenPollIdRef.current = pollState.id;
+    setPollCreatedAnnouncement(`Polling baru dibuat: ${pollState.title}`);
+    setPollNotices(prev => {
+      const noticeId = `poll-${pollState.id}`;
+      if (prev.some(item => item.id === noticeId)) return prev;
+      return [
+        ...prev,
+        {
+          id: noticeId,
+          pollId: pollState.id,
+          text: `Polling baru dibuat: "${pollState.title}" — Klik untuk membuka`,
+          timestamp: pollState.createdAt || new Date().toISOString(),
+        },
+      ];
+    });
+  }, [pollState?.active, pollState?.id, pollState?.title, pollState?.createdAt]);
+
+  useEffect(() => {
+    if (!pollCreatedAnnouncement) return;
+    const timer = window.setTimeout(() => setPollCreatedAnnouncement(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [pollCreatedAnnouncement]);
 
   useEffect(() => {
     if (!pollState?.active) {
@@ -1542,11 +1572,12 @@ export function MeetingRoom({
             aria-relevant="additions"
             tabIndex={0}
           >
-            {transcripts.length || meetingFiles.length || raiseHandNotices.length ? (
+            {transcripts.length || meetingFiles.length || raiseHandNotices.length || pollNotices.length ? (
               [
                 ...transcripts.map(entry => ({ kind: 'transcript' as const, sortAt: Date.parse(entry.timestamp) || 0, entry })),
                 ...meetingFiles.map(file => ({ kind: 'file' as const, sortAt: Date.parse(file.createdAt) || 0, file })),
                 ...raiseHandNotices.map(notice => ({ kind: 'hand' as const, sortAt: Date.parse(notice.timestamp) || 0, notice })),
+                ...pollNotices.map(notice => ({ kind: 'poll' as const, sortAt: Date.parse(notice.timestamp) || 0, notice })),
               ]
                 .sort((a, b) => a.sortAt - b.sortAt)
                 .flatMap(timelineItem => {
@@ -1556,6 +1587,29 @@ export function MeetingRoom({
                         <Hand size={13} aria-hidden="true" />
                         <span>{timelineItem.notice.text}</span>
                       </div>,
+                    ];
+                  }
+                  if (timelineItem.kind === 'poll') {
+                    const isStillActive = Boolean(
+                      pollState?.active &&
+                      pollState.id === timelineItem.notice.pollId &&
+                      Date.parse(pollState.endsAt) > pollNowMs
+                    );
+                    return [
+                      <button
+                        type="button"
+                        className={`chat-system-notice chat-system-notice--poll ${isStillActive ? 'is-clickable' : ''}`}
+                        key={timelineItem.notice.id}
+                        disabled={!isStillActive}
+                        onClick={() => {
+                          if (!isStillActive) return;
+                          setPollVoteError(null);
+                          setPollBannerExpanded(true);
+                        }}
+                      >
+                        <BarChart3 size={13} aria-hidden="true" />
+                        <span>{timelineItem.notice.text}</span>
+                      </button>,
                     ];
                   }
                   if (timelineItem.kind === 'file') {
@@ -2065,6 +2119,19 @@ export function MeetingRoom({
         const secs = String(remainingSec % 60).padStart(2, '0');
         return (
           <div className="poll-floating-wrap" role="region" aria-label="Polling aktif">
+            {pollCreatedAnnouncement && (
+              <div className="poll-created-announcement" role="status" aria-live="polite">
+                <span>{pollCreatedAnnouncement}</span>
+                <button
+                  type="button"
+                  className="poll-created-announcement-close"
+                  aria-label="Tutup pengumuman polling"
+                  onClick={() => setPollCreatedAnnouncement(null)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
             <button
               type="button"
               className="poll-floating-pill"

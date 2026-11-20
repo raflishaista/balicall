@@ -2974,3 +2974,53 @@ input::placeholder { color: #a1b1c6; }
   font-size: 12.5px;
   padding: 6px 10px;
 }
+
+.poll-created-announcement {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.92);
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.22);
+  max-width: min(92vw, 380px);
+}
+
+.poll-created-announcement span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poll-created-announcement-close {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  cursor: pointer;
+}
+
+.chat-system-notice--poll {
+  border: 0;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.chat-system-notice--poll.is-clickable {
+  cursor: pointer;
+}
+
+.chat-system-notice--poll.is-clickable:hover {
+  background: #bfdbfe;
+}
+
+.chat-system-notice--poll:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
