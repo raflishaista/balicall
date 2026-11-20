@@ -13,7 +13,7 @@ class QwenEngine:
         self.model=Qwen3ASRModel.LLM(
             model=os.environ['QWEN_MODEL_PATH'],max_inference_batch_size=1,max_new_tokens=256,
             gpu_memory_utilization=float(os.getenv('QWEN_GPU_MEMORY_UTILIZATION','0.25')),
-            max_model_len=4096,max_num_seqs=2,max_num_batched_tokens=1024,
+            max_model_len=int(os.getenv('QWEN_MAX_MODEL_LEN','2048')),max_num_seqs=2,max_num_batched_tokens=1024,
             limit_mm_per_prompt={'audio':1},dtype='float16',enforce_eager=True,
             enable_prefix_caching=False,disable_log_stats=True)
 

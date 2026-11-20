@@ -15,6 +15,13 @@ function requirePermission(...permissions) {
   };
 }
 
+function requireAnyPermission(...permissions) {
+  return (req, res, next) => {
+    if (permissions.some(permission => req.admin.permissions.includes(permission))) return next();
+    res.status(403).json({ error: 'Izin admin untuk tindakan ini diperlukan.' });
+  };
+}
+
 function sendOutcome(res, outcome, status = 200) {
   if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error, code: outcome.reason });
   res.status(status).json({ success: true, changed: outcome.changed, ...(outcome.invite && { invite: outcome.invite }) });
@@ -39,14 +46,14 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     const user = req.auth?.user;
     if (!user) return res.status(401).json({ error: 'Silakan masuk untuk melanjutkan.' });
     if (user.isGuest) return res.status(403).json({ error: 'Akses Super Admin diperlukan.' });
-    const permissions = await store.permissions(user.employeeId);
+    const { role, permissions } = await store.access(user.employeeId);
     if (!permissions.length) return res.status(403).json({ error: 'Akses Super Admin diperlukan.' });
-    req.admin = { employeeId: user.employeeId, permissions };
+    req.admin = { employeeId: user.employeeId, permissions, role };
     next();
   }));
 
   router.get('/access', (req, res) => res.json({
-    role: 'super_admin', employeeId: req.admin.employeeId, permissions: req.admin.permissions,
+    role: req.admin.role, employeeId: req.admin.employeeId, permissions: req.admin.permissions,
   }));
   const parseAuditQuery = query => {
     const { from = '', to = '', action = '', q = '', result = '', actorId = '', order = 'desc', page = '1', pageSize = '50', format = '' } = query;
@@ -91,25 +98,27 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     };
   };
 
-  router.get('/audit/export', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
+  const readAudit = requireAnyPermission(AdminPermission.READ_AUDIT, AdminPermission.READ_OPERATIONS_AUDIT);
+  router.get('/audit/export', readAudit, asyncRoute(async (req, res) => {
     const parsed = parseAuditQuery({ ...req.query, pageSize: '100' });
     if (parsed.error) return res.status(400).json({ error: parsed.error });
-    const csv = await store.exportAuditCsv(parsed.params);
+    const csv = await store.exportAuditCsv({ ...parsed.params, operationsOnly: req.admin.role === 'operations_admin' });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="audit-admin.csv"');
     res.send(csv);
   }));
 
-  router.get('/audit', requirePermission(AdminPermission.READ_AUDIT), asyncRoute(async (req, res) => {
+  router.get('/audit', readAudit, asyncRoute(async (req, res) => {
     const parsed = parseAuditQuery(req.query);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
-    if (parsed.params.format === 'csv') {
-      const csv = await store.exportAuditCsv(parsed.params);
+    const params = { ...parsed.params, operationsOnly: req.admin.role === 'operations_admin' };
+    if (params.format === 'csv') {
+      const csv = await store.exportAuditCsv(params);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="audit-admin.csv"');
       return res.send(csv);
     }
-    res.json(await store.listAudit(parsed.params));
+    res.json(await store.listAudit(params));
   }));
   router.get('/meetings', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (_req, res) => {
     const [history, schedules, rooms] = await Promise.all([
@@ -133,10 +142,10 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json(data);
   });
 
-  router.get('/live-monitor', requirePermission(AdminPermission.READ_MEETINGS), handleLiveMonitor);
-  router.get('/live-monitor/meetings', requirePermission(AdminPermission.READ_MEETINGS), handleLiveMonitor);
+  router.get('/live-monitor', requirePermission(AdminPermission.MANAGE_ACCOUNTS), handleLiveMonitor);
+  router.get('/live-monitor/meetings', requirePermission(AdminPermission.MANAGE_ACCOUNTS), handleLiveMonitor);
 
-  router.get('/live-monitor/meetings/:id', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+  router.get('/live-monitor/meetings/:id', requirePermission(AdminPermission.MANAGE_ACCOUNTS), asyncRoute(async (req, res) => {
     const { id } = req.params;
     const meeting = meetingStore.meetings.get(id) || [...meetingStore.meetings.values()].find(m => m.id === id || m.roomCode === id);
     if (!meeting) {
@@ -181,7 +190,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     });
   }));
 
-  router.post('/observer/sessions', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+  router.post('/observer/sessions', requirePermission(AdminPermission.MANAGE_ACCOUNTS), asyncRoute(async (req, res) => {
     const rawMeetingId = req.body?.meetingId || req.query?.meetingId;
     const meetingId = typeof rawMeetingId === 'string' ? rawMeetingId.trim() : '';
     if (!meetingId) {
@@ -282,7 +291,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     });
   }));
 
-  router.post('/observer/sessions/:observerId/end', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+  router.post('/observer/sessions/:observerId/end', requirePermission(AdminPermission.MANAGE_ACCOUNTS), asyncRoute(async (req, res) => {
     const { observerId } = req.params;
     if (!observerId || typeof observerId !== 'string') {
       return res.status(400).json({ error: 'ID sesi pemantau tidak valid.' });
@@ -327,7 +336,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json({ success: true, sessionStatus: 'ended', session: endedSession });
   }));
 
-  router.post('/observer/sessions/:observerId/revoke', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+  router.post('/observer/sessions/:observerId/revoke', requirePermission(AdminPermission.MANAGE_ACCOUNTS), asyncRoute(async (req, res) => {
     const { observerId } = req.params;
     const session = await store.getObserverSession(observerId);
     if (!session) {
@@ -365,7 +374,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json({ success: true, sessionStatus: 'revoked', session: revokedSession });
   }));
 
-  router.get('/observer/sessions/active', requirePermission(AdminPermission.READ_MEETINGS), asyncRoute(async (req, res) => {
+  router.get('/observer/sessions/active', requirePermission(AdminPermission.MANAGE_ACCOUNTS), asyncRoute(async (req, res) => {
     const { meetingId } = req.query;
     const sessions = await store.getActiveObserverSessions(meetingId ? String(meetingId).trim() : null);
     res.json({ sessions });
@@ -452,8 +461,9 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json(data);
   });
 
-  router.get('/system/jobs', requirePermission(AdminPermission.READ_SYSTEM), handleListProcessingJobs);
-  router.get('/processing-jobs', requirePermission(AdminPermission.READ_SYSTEM), handleListProcessingJobs);
+  const manageJobs = requirePermission(AdminPermission.READ_SYSTEM, AdminPermission.MANAGE_ACCOUNTS);
+  router.get('/system/jobs', manageJobs, handleListProcessingJobs);
+  router.get('/processing-jobs', manageJobs, handleListProcessingJobs);
 
   const handleGetProcessingJobDetail = asyncRoute(async (req, res) => {
     const { id } = req.params;
@@ -467,8 +477,8 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json({ job });
   });
 
-  router.get('/system/jobs/:id', requirePermission(AdminPermission.READ_SYSTEM), handleGetProcessingJobDetail);
-  router.get('/processing-jobs/:id', requirePermission(AdminPermission.READ_SYSTEM), handleGetProcessingJobDetail);
+  router.get('/system/jobs/:id', manageJobs, handleGetProcessingJobDetail);
+  router.get('/processing-jobs/:id', manageJobs, handleGetProcessingJobDetail);
 
   const handleRetryProcessingJob = asyncRoute(async (req, res) => {
     const { id } = req.params;
@@ -493,8 +503,8 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     res.json({ success: true, message: outcome.message, job: outcome.job });
   });
 
-  router.post('/system/jobs/:id/retry', requirePermission(AdminPermission.READ_SYSTEM), handleRetryProcessingJob);
-  router.post('/processing-jobs/:id/retry', requirePermission(AdminPermission.READ_SYSTEM), handleRetryProcessingJob);
+  router.post('/system/jobs/:id/retry', manageJobs, handleRetryProcessingJob);
+  router.post('/processing-jobs/:id/retry', manageJobs, handleRetryProcessingJob);
   router.get('/recordings', requirePermission(AdminPermission.READ_RECORDINGS), asyncRoute(async (req, res) => {
     const { q = '', status = '', page = '1' } = req.query;
     if (typeof q !== 'string' || q.length > 100 || q.includes('\0')
@@ -514,7 +524,7 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
   }));
 
   const manage = requirePermission(AdminPermission.MANAGE_ACCOUNTS);
-  const readOverview = requirePermission(AdminPermission.MANAGE_ACCOUNTS, AdminPermission.READ_MEETINGS, AdminPermission.READ_SYSTEM);
+  const readOverview = requireAnyPermission(AdminPermission.MANAGE_ACCOUNTS, AdminPermission.READ_OVERVIEW);
   router.get('/overview', readOverview, asyncRoute(async (req, res) => {
     const { days = '30' } = req.query;
     if (!['7', '30', '90'].includes(days)) {
@@ -522,17 +532,18 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
     }
     res.json(await store.overview(Number(days)));
   }));
-  router.get('/employees', manage, asyncRoute(async (req, res) => {
+  router.get('/employees', requireAnyPermission(AdminPermission.MANAGE_ACCOUNTS, AdminPermission.READ_EMPLOYEES), asyncRoute(async (req, res) => {
     const { q = '', department = '', status = '', role = '', page = '1' } = req.query;
+    const includeRoles = req.admin.role === 'super_admin';
     if (typeof q !== 'string' || q.length > 100 || typeof department !== 'string' || department.length > 64
       || typeof status !== 'string' || status.length > 32
-      || typeof role !== 'string' || !['', 'super_admin', 'employee'].includes(role)
+      || typeof role !== 'string' || !(includeRoles ? ['', 'super_admin', 'operations_admin', 'employee'] : ['']).includes(role)
       || typeof page !== 'string' || !/^[1-9]\d*$/.test(page)
       || !Number.isSafeInteger(Number(page))) {
       return res.status(400).json({ error: 'Filter atau nomor halaman tidak valid.' });
     }
     res.json(await store.listEmployees({
-      search: q.trim(), department: department.trim(), status: status.trim(), role: role.trim(), page: Number(page),
+      search: q.trim(), department: department.trim(), status: status.trim(), role: role.trim(), page: Number(page), includeRoles,
     }));
   }));
   router.patch('/accounts/:employeeId/status', manage, asyncRoute(async (req, res) => {
@@ -550,6 +561,14 @@ export function attachAdminApi(app, config, { meetingStore, probe, fetchImpl, re
       return res.status(400).json({ error: 'ID karyawan dan nilai granted berupa boolean diperlukan.' });
     }
     sendOutcome(res, await store.setSuperAdmin(req.admin.employeeId, employeeId, granted));
+  }));
+  router.patch('/accounts/:employeeId/operations-admin', manage, asyncRoute(async (req, res) => {
+    const { employeeId } = req.params;
+    const { granted } = req.body ?? {};
+    if (!validAdminEmployeeId(employeeId) || typeof granted !== 'boolean') {
+      return res.status(400).json({ error: 'ID karyawan dan nilai granted berupa boolean diperlukan.' });
+    }
+    sendOutcome(res, await store.setOperationsAdmin(req.admin.employeeId, employeeId, granted));
   }));
   router.post('/accounts/:employeeId/invite', manage, asyncRoute(async (req, res) => {
     const { employeeId } = req.params;

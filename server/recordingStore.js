@@ -104,10 +104,11 @@ export async function deleteUpload(id, { ownerId = null, actorId = null, stageMe
         : { ok: false, status: 404, error: 'Rekaman tidak ditemukan.' };
     }
     await client.query('DELETE FROM balicall_recording_uploads WHERE id = $1', [id]);
-    if (actorId) {
+    if (actorId || ownerId) {
       await client.query(
         `INSERT INTO balicall_admin_audit (actor_id, target_id, action, result, previous_value)
-         VALUES ($1, $2, 'recording.delete', 'succeeded', $3)`, [actorId, id, row.status]);
+         VALUES ($1, $2, $3, 'succeeded', $4)`,
+        [actorId || ownerId, id, actorId ? 'recording.delete' : 'recording.owner.delete', row.status]);
     }
     stagedMedia = await stageMediaRemoval(row.file_path);
     await client.query('COMMIT');

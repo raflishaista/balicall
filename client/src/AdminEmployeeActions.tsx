@@ -8,11 +8,12 @@ export interface AdminEmployee {
   department: string;
   status: string | null;
   activated: boolean;
-  isSuperAdmin: boolean;
+  isSuperAdmin?: boolean;
+  isOperationsAdmin?: boolean;
   lastLoginAt?: string | null;
 }
 
-type AccountAction = 'activate' | 'deactivate' | 'grant' | 'revoke' | 'invite';
+type AccountAction = 'activate' | 'deactivate' | 'grant' | 'revoke' | 'invite' | 'grant-operations' | 'revoke-operations';
 type UpdateAction = Exclude<AccountAction, 'invite'>;
 interface ActivationInvite { email: string; activationCode: string; expiresIn: string }
 
@@ -22,16 +23,22 @@ const labels: Record<AccountAction, string> = {
   grant: 'Beri akses Super Admin',
   revoke: 'Cabut akses Super Admin',
   invite: 'Buat undangan aktivasi',
+  'grant-operations': 'Beri akses Admin Operasional',
+  'revoke-operations': 'Cabut akses Admin Operasional',
 };
 const confirmations: Partial<Record<AccountAction, string>> = {
   deactivate: 'Sesi login akun ini akan dicabut.',
   revoke: 'Akun ini akan kehilangan akses ke panel Admin.',
+  'grant-operations': 'Sesi login akun ini akan ditutup agar izin baru berlaku pada login berikutnya.',
+  'revoke-operations': 'Akses Admin Operasional dicabut dan akun harus masuk kembali.',
 };
 const successMessages: Record<UpdateAction, string> = {
   activate: 'Akun diaktifkan.',
   deactivate: 'Akun dinonaktifkan dan sesi login dicabut.',
   grant: 'Akses Super Admin diberikan.',
   revoke: 'Akses Super Admin dicabut.',
+  'grant-operations': 'Akses Admin Operasional diberikan.',
+  'revoke-operations': 'Akses Admin Operasional dicabut.',
 };
 
 export function AdminEmployeeActions({ employee, onClose, onUpdated }: {
@@ -63,7 +70,8 @@ export function AdminEmployeeActions({ employee, onClose, onUpdated }: {
   const active = employee.status === 'active';
   const actions: AccountAction[] = [active ? 'deactivate' : 'activate'];
   if (employee.isSuperAdmin) actions.push('revoke');
-  else if (active && employee.activated) actions.push('grant');
+  else if (employee.isOperationsAdmin) actions.push('revoke-operations');
+  else if (active && employee.activated) actions.push('grant', 'grant-operations');
   if (active && !employee.activated) actions.push('invite');
 
   const perform = async (action: AccountAction) => {
@@ -79,13 +87,15 @@ export function AdminEmployeeActions({ employee, onClose, onUpdated }: {
         return;
       }
       const changesStatus = action === 'activate' || action === 'deactivate';
+      const changesOperationsRole = action === 'grant-operations' || action === 'revoke-operations';
+      const endpoint = changesStatus ? 'status' : changesOperationsRole ? 'operations-admin' : 'super-admin';
       const response = await apiRequest<{ changed: boolean }>(
-        `${accountPath}/${changesStatus ? 'status' : 'super-admin'}`, {
+        `${accountPath}/${endpoint}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(changesStatus
             ? { status: action === 'activate' ? 'active' : 'inactive' }
-            : { granted: action === 'grant' }),
+            : { granted: action === 'grant' || action === 'grant-operations' }),
         });
       onUpdated(response.changed ? successMessages[action] : 'Data akun sudah sesuai.',
         response.changed && (action === 'deactivate' || action === 'revoke'));

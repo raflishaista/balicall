@@ -3,8 +3,8 @@ import { getPool } from './db.js';
 import { initWorkspaceDb } from './workspaceStore.js';
 
 export const hashToken = value => createHash('sha256').update(value).digest('hex');
-export const publicUser = row => ({ employeeId: row.employee_id, name: row.display_name||row.name, legalName:row.name, email: row.login_email, department: row.department, position: row.position, photoVersion:row.photo_version||null, ...(row.is_super_admin ? { isSuperAdmin: true } : {}) });
-const superAdminColumn = "EXISTS (SELECT 1 FROM balicall_admin_roles r WHERE r.employee_id=a.employee_id AND r.role='super_admin') AS is_super_admin";
+export const publicUser = row => ({ employeeId: row.employee_id, name: row.display_name||row.name, legalName:row.name, email: row.login_email, department: row.department, position: row.position, photoVersion:row.photo_version||null, ...(row.is_super_admin ? { isSuperAdmin: true } : {}), ...(row.is_operations_admin ? { isOperationsAdmin: true } : {}) });
+const superAdminColumn = "EXISTS (SELECT 1 FROM balicall_admin_roles r WHERE r.employee_id=a.employee_id AND r.role='super_admin') AS is_super_admin, EXISTS (SELECT 1 FROM balicall_operations_admins o WHERE o.employee_id=a.employee_id) AS is_operations_admin";
 
 export async function initAdminDb(client) {
   await client.query(`
@@ -12,6 +12,9 @@ export async function initAdminDb(client) {
     CREATE TABLE IF NOT EXISTS balicall_admin_roles (
       employee_id VARCHAR(32) PRIMARY KEY REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE,
       role TEXT NOT NULL CHECK (role = 'super_admin')
+    );
+    CREATE TABLE IF NOT EXISTS balicall_operations_admins (
+      employee_id VARCHAR(32) PRIMARY KEY REFERENCES balicall_auth_accounts(employee_id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS balicall_admin_audit (
       id BIGSERIAL PRIMARY KEY,
@@ -24,7 +27,34 @@ export async function initAdminDb(client) {
       reason TEXT,
       occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
     );
-    ALTER TABLE balicall_admin_audit ALTER COLUMN target_id TYPE VARCHAR(128);
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+        AND table_name='balicall_admin_audit' AND column_name='target_id' AND character_maximum_length < 128) THEN
+        ALTER TABLE balicall_admin_audit ALTER COLUMN target_id TYPE VARCHAR(128);
+      END IF;
+    END $$;
+    ALTER TABLE balicall_admin_audit ADD COLUMN IF NOT EXISTS actor_role_at_event TEXT;
+    CREATE OR REPLACE FUNCTION balicall_capture_audit_actor_role() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      NEW.actor_role_at_event := CASE
+        WHEN NEW.actor_id IS NULL THEN 'system'
+        WHEN EXISTS (SELECT 1 FROM balicall_admin_roles WHERE employee_id=NEW.actor_id) THEN 'super_admin'
+        WHEN EXISTS (SELECT 1 FROM balicall_operations_admins WHERE employee_id=NEW.actor_id) THEN 'operations_admin'
+        WHEN EXISTS (SELECT 1 FROM balicall_auth_accounts WHERE employee_id=NEW.actor_id) THEN 'employee'
+        ELSE NULL END;
+      RETURN NEW;
+    END;
+    $$;
+    DROP TRIGGER IF EXISTS balicall_audit_actor_role ON balicall_admin_audit;
+    CREATE TRIGGER balicall_audit_actor_role BEFORE INSERT ON balicall_admin_audit
+      FOR EACH ROW EXECUTE FUNCTION balicall_capture_audit_actor_role();
+    CREATE OR REPLACE VIEW balicall_operations_audit AS
+      SELECT ROW_NUMBER() OVER (ORDER BY id) AS id, actor_id, target_id, action, result,
+        previous_value, new_value, reason, occurred_at
+      FROM balicall_admin_audit
+      WHERE actor_role_at_event IN ('employee', 'operations_admin')
+        AND action IN ('recording.owner.delete');
     CREATE TABLE IF NOT EXISTS balicall_activation_requests (
       id BIGSERIAL PRIMARY KEY,
       name VARCHAR(128) NOT NULL,

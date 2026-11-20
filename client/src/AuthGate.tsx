@@ -17,7 +17,7 @@ function WorkspaceLoading() {
   return <BalitowerLoading variant="workspace" reduceMotion={preferences.reduceMotion} />;
 }
 
-export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; isSuperAdmin?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
+export interface AuthUser { employeeId: string; name: string; email: string; department: string; position: string; isGuest?: boolean; isSuperAdmin?: boolean; isOperationsAdmin?: boolean; guestMeetingId?: string; guestRoomName?: string; guestRoomCode?: string; legalName?: string; photoVersion?: string|null }
 interface Session { enabled: boolean; user: AuthUser | null; csrfToken?: string | null }
 export function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);

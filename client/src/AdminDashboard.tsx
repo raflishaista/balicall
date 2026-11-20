@@ -34,9 +34,9 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { API_BASE, ApiError, apiRequest } from './api';
+import { API_BASE, ApiError, apiRequest, setAuthCsrfToken } from './api';
 import { AdminEmployeeActions, type AdminEmployee } from './AdminEmployeeActions';
-import type { AdminSection } from './navigation';
+import { OPERATIONS_ADMIN_SECTIONS, type AdminSection } from './navigation';
 import type { ObserverSessionData } from './ObserverRoomView';
 import './AdminDashboard.css';
 
@@ -70,6 +70,9 @@ interface AuditPage {
 }
 
 const permissionLabels: Record<string, string> = {
+  'overview:read': 'Lihat overview',
+  'employees:read': 'Lihat direktori karyawan',
+  'audit:operations:read': 'Baca audit operasional',
   'accounts:manage': 'Kelola akun dan akses',
   'meetings:read': 'Lihat metadata rapat',
   'system:read': 'Lihat status sistem',
@@ -78,6 +81,9 @@ const permissionLabels: Record<string, string> = {
   'recordings:delete': 'Hapus rekaman unggahan',
 };
 const actionLabels: Record<string, string> = {
+  'operations_admin.grant': 'Beri akses Admin Operasional',
+  'operations_admin.revoke': 'Cabut akses Admin Operasional',
+  'recording.owner.delete': 'Pemilik menghapus unggahan',
   'admin.bootstrap': 'Tetapkan Super Admin pertama',
   'admin.grant': 'Beri akses Super Admin',
   'admin.revoke': 'Cabut akses Super Admin',
@@ -131,7 +137,7 @@ function useAdminData<T>(path: string, refreshIntervalMs?: number) {
     }).catch((failure: unknown) => {
       if (controller.signal.aborted) return;
       const error = failure instanceof ApiError && failure.status === 403
-        ? 'Halaman ini memerlukan akses Super Admin.'
+        ? 'Akun ini tidak memiliki akses ke halaman tersebut.'
         : failure instanceof Error ? failure.message : 'Data admin gagal dimuat.';
       const accessDenied = failure instanceof ApiError && (failure.status === 401 || failure.status === 403);
       setResult(previous => ({ key, data: accessDenied ? null : previous?.data ?? null, error }));
@@ -467,7 +473,7 @@ function AdminOverview() {
 
 interface EmployeeSummary {
   activeAccounts: number;
-  superAdmins: number;
+  superAdmins?: number;
   totalDepartments: number;
 }
 
@@ -486,7 +492,7 @@ interface EmployeePage {
 
 const initialEmployeeFilters = { q: '', department: '', status: '', role: '' };
 
-function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
+function AdminEmployees({ currentEmployeeId, readOnly = false }: { currentEmployeeId: string; readOnly?: boolean }) {
   const [inputFilters, setInputFilters] = useState(initialEmployeeFilters);
   const [appliedFilters, setAppliedFilters] = useState({ ...initialEmployeeFilters, page: '1' });
   const [selected, setSelected] = useState<AdminEmployee | null>(null);
@@ -523,13 +529,13 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
                 <dd>{numberFormat.format(data.summary?.activeAccounts ?? data.activeAccounts ?? 0)}</dd>
               </div>
             </div>
-            <div className="admin-kpi">
+            {!readOnly && <div className="admin-kpi">
               <ShieldCheck size={20} aria-hidden="true" />
               <div>
                 <dt>Super Admin</dt>
                 <dd>{numberFormat.format(data.summary?.superAdmins ?? data.superAdmins ?? 0)}</dd>
               </div>
-            </div>
+            </div>}
             <div className="admin-kpi">
               <Building2 size={20} aria-hidden="true" />
               <div>
@@ -551,7 +557,7 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
             onChange={e => setInputFilters(prev => ({ ...prev, q: e.target.value }))}
           />
         </label>
-        <label className="admin-field">Peran
+        {!readOnly && <label className="admin-field">Peran
           <select
             name="role"
             value={inputFilters.role}
@@ -559,9 +565,10 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
           >
             <option value="">Semua peran</option>
             <option value="super_admin">Super Admin</option>
+            <option value="operations_admin">Admin Operasional</option>
             <option value="employee">Karyawan</option>
           </select>
-        </label>
+        </label>}
         <label className="admin-field">Departemen
           <select
             name="department"
@@ -592,21 +599,22 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
               <thead><tr>
                 <th scope="col">Nama</th><th scope="col">Departemen</th>
                 <th scope="col">Status karyawan</th><th scope="col">Aktivasi akun</th>
-                <th scope="col">Akses</th><th scope="col">Login terakhir</th><th scope="col">Tindakan</th>
+                {!readOnly && <th scope="col">Akses</th>}<th scope="col">Login terakhir</th>
+                {!readOnly && <th scope="col">Tindakan</th>}
               </tr></thead>
               <tbody>{data.employees.map(employee => <tr key={employee.employeeId}>
                 <td><strong>{employee.name}</strong><small>{employee.employeeId}</small></td>
                 <td>{employee.department || '—'}</td>
                 <td>{employee.status ? valueLabels[employee.status] ?? employee.status : 'Belum tercatat'}</td>
                 <td>{employee.activated ? 'Sudah diaktivasi' : 'Belum diaktivasi'}</td>
-                <td>{employee.isSuperAdmin ? 'Super Admin' : 'Karyawan'}</td>
+                {!readOnly && <td>{employee.isSuperAdmin ? 'Super Admin' : employee.isOperationsAdmin ? 'Admin Operasional' : 'Karyawan'}</td>}
                 <td>
                   {employee.lastLoginAt
                     ? <time dateTime={employee.lastLoginAt}>{adminWibDate.format(new Date(employee.lastLoginAt))} WIB</time>
                     : 'Belum tercatat'}
                 </td>
-                <td><button type="button" className="button-secondary" aria-label={`Kelola ${employee.name} (${employee.employeeId})`}
-                  onClick={() => { setNotice(null); setSelected(employee); }}>Kelola</button></td>
+                {!readOnly && <td><button type="button" className="button-secondary" aria-label={`Kelola ${employee.name} (${employee.employeeId})`}
+                  onClick={() => { setNotice(null); setSelected(employee); }}>Kelola</button></td>}
               </tr>)}</tbody>
             </table>
           </div>
@@ -621,7 +629,7 @@ function AdminEmployees({ currentEmployeeId }: { currentEmployeeId: string }) {
           </div>
         </>
       )}
-      {selected && <AdminEmployeeActions employee={selected} onClose={() => setSelected(null)}
+      {selected && !readOnly && <AdminEmployeeActions employee={selected} onClose={() => setSelected(null)}
         onUpdated={(message, losesAdminAccess) => {
           if (losesAdminAccess && selected.employeeId === currentEmployeeId) {
             window.location.reload();
@@ -1046,8 +1054,9 @@ function LiveMeetingDetailsModal({ meetingId, onClose, onObserve }: {
   );
 }
 
-function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
+function RequestObserverModal({ meeting, employeeId, onClose, onEnterObserverMode }: {
   meeting: LiveMonitorMeetingItem;
+  employeeId: string;
   onClose: () => void;
   onEnterObserverMode?: (session: ObserverSessionData) => void;
 }) {
@@ -1070,7 +1079,7 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await apiRequest<{
+      const startObserver = () => apiRequest<{
         success: boolean;
         observerId: string;
         meetingId: string;
@@ -1087,6 +1096,16 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
           meetingId: meeting.id || meeting.roomCode || meeting.title,
           accessReason: accessReason.trim(),
         }),
+      });
+
+      const response = await startObserver().catch(async (failure: unknown) => {
+        if (!(failure instanceof ApiError) || failure.status !== 403 || failure.code !== 'CSRF_INVALID') throw failure;
+        const session = await apiRequest<{ user: { employeeId: string } | null; csrfToken: string | null }>('/auth/session');
+        if (!session.csrfToken || session.user?.employeeId !== employeeId) {
+          throw new Error('Sesi admin berubah. Muat ulang halaman sebelum memulai pemantauan.');
+        }
+        setAuthCsrfToken(session.csrfToken);
+        return startObserver();
       });
 
       if (response.success && onEnterObserverMode) {
@@ -1191,7 +1210,8 @@ function RequestObserverModal({ meeting, onClose, onEnterObserverMode }: {
   );
 }
 
-export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
+export function AdminLiveMeetingMonitor({ employeeId, onEnterObserverMode }: {
+  employeeId: string;
   onEnterObserverMode?: (session: ObserverSessionData) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -1407,6 +1427,7 @@ export function AdminLiveMeetingMonitor({ onEnterObserverMode }: {
       {requestMeeting && (
         <RequestObserverModal
           meeting={requestMeeting}
+          employeeId={employeeId}
           onClose={() => setRequestMeeting(null)}
           onEnterObserverMode={onEnterObserverMode}
         />
@@ -2069,7 +2090,7 @@ function ProcessingOverviewCard({
   checkedAt?: string;
   refreshing?: boolean;
   hasError?: boolean;
-  onNavigateToInvestigation: () => void;
+  onNavigateToInvestigation?: () => void;
 }) {
   const median = metrics?.medianCompletionSeconds;
   const sampleSize = metrics?.completionSampleSize ?? 0;
@@ -2083,9 +2104,9 @@ function ProcessingOverviewCard({
             Definisi: Durasi pemrosesan dihitung sejak berkas diunggah hingga hasil selesai dibuat, mencakup waktu antrean dan percobaan ulang jika ada.
           </p>
         </div>
-        <button type="button" className="button-secondary" onClick={onNavigateToInvestigation}>
+        {onNavigateToInvestigation && <button type="button" className="button-secondary" onClick={onNavigateToInvestigation}>
           <Search size={15} aria-hidden="true" /> Buka Investigasi Antrean
-        </button>
+        </button>}
       </div>
 
       <div className="admin-queue-freshness-bar">
@@ -2802,7 +2823,7 @@ function UploadProcessingHistory({ onSelectJob }: { onSelectJob: (id: string) =>
   );
 }
 
-function AdminSystem() {
+function AdminSystem({ readOnly = false }: { readOnly?: boolean }) {
   const [activeTab, setActiveTab] = useState<'health' | 'jobs'>('health');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
@@ -2854,7 +2875,7 @@ function AdminSystem() {
 
       {data && (
         <>
-          <div className="admin-subnav" role="tablist" aria-label="Navigasi Monitor Layanan">
+          {!readOnly && <div className="admin-subnav" role="tablist" aria-label="Navigasi Monitor Layanan">
             <button
               type="button"
               role="tab"
@@ -2885,7 +2906,7 @@ function AdminSystem() {
                 </span>
               )}
             </button>
-          </div>
+          </div>}
 
           <div className={`admin-monitor-kpi-summary ${loading ? 'is-updating' : ''}`}>
             <dl className="admin-kpis admin-health-kpis">
@@ -2934,8 +2955,8 @@ function AdminSystem() {
             </dl>
           </div>
 
-          {activeTab === 'health' ? (
-            <div key="health" id="admin-panel-health" role="tabpanel" aria-labelledby="admin-tab-health" className={`admin-tab-panel ${loading ? 'is-updating' : ''}`}>
+          {readOnly || activeTab === 'health' ? (
+            <div key="health" id="admin-panel-health" role={readOnly ? undefined : "tabpanel"} aria-labelledby={readOnly ? undefined : "admin-tab-health"} className={`admin-tab-panel ${loading ? 'is-updating' : ''}`}>
               <CoreInfrastructureSection system={data} />
               <SummaryModelSection services={data.services} />
               <ProcessingOverviewCard
@@ -2944,7 +2965,7 @@ function AdminSystem() {
                 checkedAt={data.checkedAt}
                 refreshing={loading}
                 hasError={Boolean(error)}
-                onNavigateToInvestigation={() => setActiveTab('jobs')}
+                onNavigateToInvestigation={readOnly ? undefined : () => setActiveTab('jobs')}
               />
               <TranscriptionEnginesSection services={data.services} />
               <SpeakerDiarizationSection services={data.services} />
@@ -2963,7 +2984,7 @@ function AdminSystem() {
             </div>
           )}
 
-          {selectedJobId && (
+          {selectedJobId && !readOnly && (
             <JobDetailDrawer
               jobId={selectedJobId}
               onClose={() => setSelectedJobId(null)}
@@ -3474,7 +3495,7 @@ function AdminAudit({ permissions }: { permissions: string[] }) {
       </header>
 
       {permissions.length > 0 && (
-        <div className="admin-audit-access-bar" aria-label="Akses Super Admin">
+        <div className="admin-audit-access-bar" aria-label="Izin audit">
           <ShieldCheck size={14} aria-hidden="true" />
           <span>Izin aktif: {permissions.map(p => permissionLabels[p] ?? p).join(', ')}</span>
         </div>
@@ -4039,20 +4060,24 @@ export default function AdminDashboard({ section, onEnterObserverMode }: {
   section: AdminSection;
   onEnterObserverMode?: (session: ObserverSessionData) => void;
 }) {
-  const { data, loading, error, reload } = useAdminData<{ employeeId: string; permissions: string[] }>('/admin/access');
+  const { data, loading, error, reload } = useAdminData<{ role?: string; employeeId: string; permissions: string[] }>('/admin/access');
+  const readOnly = data?.role === 'operations_admin';
   return (
     <div className="dashboard-content admin-page">
-      <h1>Admin Dashboard</h1>
-      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && <>
+      <h1>{readOnly ? 'Admin Operasional' : 'Admin Dashboard'}</h1>
+      {loading || error ? <AdminLoadState error={error} reload={reload} /> : data && (readOnly && !OPERATIONS_ADMIN_SECTIONS.includes(section)
+        ? <p role="alert">Akun ini tidak memiliki akses ke halaman tersebut.</p> : <>
         {section === 'overview' && <AdminOverview />}
-        {section === 'employees' && <AdminEmployees currentEmployeeId={data.employeeId} />}
+        {section === 'employees' && <AdminEmployees currentEmployeeId={data.employeeId} readOnly={readOnly} />}
         {section === 'requests' && <AdminActivationRequests />}
         {section === 'meetings' && <AdminMeetings />}
-        {section === 'live-monitor' && <AdminLiveMeetingMonitor onEnterObserverMode={onEnterObserverMode} />}
+        {section === 'live-monitor' && <AdminLiveMeetingMonitor employeeId={data.employeeId} onEnterObserverMode={onEnterObserverMode} />}
         {section === 'recordings' && <AdminRecordings canDelete={data.permissions.includes('recordings:delete')} />}
-        {section === 'system' && <AdminSystem />}
-        {section === 'audit' && <AdminAudit permissions={data.permissions} />}
-      </>}
+        {section === 'system' && <AdminSystem readOnly={readOnly} />}
+        {section === 'audit' && <>
+          <AdminAudit permissions={data.permissions} />
+        </>}
+      </>)}
     </div>
   );
 }

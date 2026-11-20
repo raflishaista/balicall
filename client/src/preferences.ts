@@ -45,7 +45,7 @@ export const DEFAULT_PREFERENCES: MeetingPreferences = {
   microphoneEnabled: true, cameraEnabled: true,
   microphoneId: 'default', cameraId: 'default', outputId: 'default',
   mirrorLocalVideo: true, autoSpotlight: true, reduceMotion: false, scheduleReminders: true,
-  speechLanguage: 'id-ID', transcriptionProvider: 'auto', transcriptionModel: '',
+  speechLanguage: 'id-ID', transcriptionProvider: 'browser', transcriptionModel: '',
   sharedRoomMic: false,
   liveDiarization: true,
   batchDiarization: true,
@@ -185,7 +185,6 @@ export function isChromiumBrowser(): boolean {
   return isChrome || Boolean((window as any).webkitSpeechRecognition);
 }
 
-export function getRecommendedProvider(configured = false): 'browser' | 'server' {
-  if (isChromiumBrowser()) return 'browser';
-  return configured ? 'server' : 'browser';
+export function getRecommendedProvider(_configured = false): 'browser' | 'server' {
+  return 'browser';
 }

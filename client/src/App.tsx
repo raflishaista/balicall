@@ -2075,7 +2075,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
               onToggleBatchDiarization={enabled => userPreferences.save({ ...userPreferences.preferences, batchDiarization: enabled })}
               transcriptionProvider={userPreferences.preferences.transcriptionProvider}
               onChangeTranscriptionProvider={provider => userPreferences.save({ ...userPreferences.preferences, transcriptionProvider: provider })}
-              transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'server').model}
+              transcriptionModel={resolveTranscriptionPreferences(userPreferences.preferences, Boolean(backendHealth?.sttConfigured), backendHealth?.sttModels || [], backendHealth?.sttModel || '', 'browser').model}
               onChangeTranscriptionModel={model => userPreferences.save({ ...userPreferences.preferences, ...modelPreferencePatch(model) })}
               sttConfigured={backendHealth?.sttConfigured ?? false}
               qwenDiarizationReady={qwenDiarizationForModel(userPreferences.preferences.transcriptionModel, backendHealth)}

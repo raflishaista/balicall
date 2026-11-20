@@ -44,6 +44,9 @@ export const ADMIN_SECTIONS = {
   audit: 'Audit',
 } as const;
 export type AdminSection = keyof typeof ADMIN_SECTIONS;
+export const OPERATIONS_ADMIN_SECTIONS: readonly AdminSection[] = [
+  'overview', 'employees', 'meetings', 'recordings', 'system', 'audit',
+];
 
 export interface RouteState {
   view: AppView;
@@ -228,9 +231,14 @@ export function sanitizeRouteForGuest(route: RouteState, isGuest: boolean): Rout
   return { view: 'lobby', intent: 'join' };
 }
 
-export function sanitizeRouteForUser(route: RouteState, user?: { isGuest?: boolean; isSuperAdmin?: boolean } | null): RouteState {
+export function sanitizeRouteForUser(route: RouteState, user?: { isGuest?: boolean; isSuperAdmin?: boolean; isOperationsAdmin?: boolean } | null): RouteState {
   if (user?.isGuest) {
     return sanitizeRouteForGuest(route, true);
+  }
+  if (user?.isOperationsAdmin && !user.isSuperAdmin && route.view === 'admin') {
+    return OPERATIONS_ADMIN_SECTIONS.includes(route.adminSection ?? 'overview')
+      ? route
+      : { view: 'admin', adminSection: 'overview' };
   }
   if (!user?.isSuperAdmin && (route.view === 'admin' || route.view === 'observer')) {
     return { view: 'home' };

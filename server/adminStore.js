@@ -9,8 +9,16 @@ export const AdminPermission = Object.freeze({
   READ_AUDIT: 'audit:read',
   READ_RECORDINGS: 'recordings:read',
   DELETE_RECORDINGS: 'recordings:delete',
+  READ_OVERVIEW: 'overview:read',
+  READ_EMPLOYEES: 'employees:read',
+  READ_OPERATIONS_AUDIT: 'audit:operations:read',
 });
-const superAdminPermissions = Object.freeze(Object.values(AdminPermission));
+const { READ_OVERVIEW, READ_EMPLOYEES, READ_OPERATIONS_AUDIT, ...superPermissions } = AdminPermission;
+const superAdminPermissions = Object.freeze(Object.values(superPermissions));
+const operationsPermissions = Object.freeze([
+  READ_OVERVIEW, READ_EMPLOYEES, AdminPermission.READ_MEETINGS, AdminPermission.READ_RECORDINGS,
+  AdminPermission.READ_SYSTEM, READ_OPERATIONS_AUDIT,
+]);
 const EMPLOYEE_PAGE_SIZE = 20;
 const AUDIT_PAGE_SIZE = 50;
 const MEETING_HISTORY_PAGE_SIZE = 20;
@@ -32,7 +40,8 @@ async function isActiveSuperAdmin(client, employeeId) {
 
 async function accountForUpdate(client, employeeId) {
   const { rows } = await client.query(`
-    SELECT e.status, e.email, a.login_email, a.password_hash IS NOT NULL AS activated, r.role IS NOT NULL AS is_admin
+    SELECT e.status, e.email, a.login_email, a.password_hash IS NOT NULL AS activated, r.role IS NOT NULL AS is_admin,
+      EXISTS (SELECT 1 FROM balicall_operations_admins o WHERE o.employee_id=e.employee_id) AS is_operations_admin
     FROM balicall_employees e
     LEFT JOIN balicall_auth_accounts a USING (employee_id)
     LEFT JOIN balicall_admin_roles r USING (employee_id)
@@ -200,10 +209,23 @@ export class PgAdminStore {
   }
 
   async permissions(employeeId) {
-    return await isActiveSuperAdmin(this.requirePool(), employeeId) ? superAdminPermissions : [];
+    return (await this.access(employeeId)).permissions;
   }
 
-  async listAudit({ from, to, action, page, search = '', result: resultFilter = '', actorId = '', order = 'desc', pageSize = AUDIT_PAGE_SIZE }) {
+  async access(employeeId) {
+    const pool = this.requirePool();
+    if (await isActiveSuperAdmin(pool, employeeId)) return { role: 'super_admin', permissions: superAdminPermissions };
+    const { rows } = await pool.query(`
+      SELECT 1 FROM balicall_operations_admins
+      JOIN balicall_auth_accounts a USING(employee_id) JOIN balicall_employees e USING(employee_id)
+      WHERE employee_id=$1 AND e.status='active' AND a.password_hash IS NOT NULL
+    `, [employeeId]);
+    if (rows.length) return { role: 'operations_admin', permissions: operationsPermissions };
+    return { role: null, permissions: [] };
+  }
+
+  async listAudit({ from, to, action, page, search = '', result: resultFilter = '', actorId = '', order = 'desc', pageSize = AUDIT_PAGE_SIZE, operationsOnly = false }) {
+    const auditSource = operationsOnly ? 'balicall_operations_audit' : 'balicall_admin_audit';
     const limit = pageSize || AUDIT_PAGE_SIZE;
     const sortDir = order === 'asc' ? 'ASC' : 'DESC';
     const { rows: [result] } = await this.requirePool().query(`
@@ -212,7 +234,7 @@ export class PgAdminStore {
           a.previous_value, a.new_value, a.reason, a.occurred_at,
           actor_emp.name AS actor_name,
           target_emp.name AS target_name
-        FROM balicall_admin_audit a
+        FROM ${auditSource} a
         LEFT JOIN balicall_employees actor_emp ON actor_emp.employee_id = a.actor_id
         LEFT JOIN balicall_employees target_emp ON target_emp.employee_id = a.target_id
         WHERE ($1::date IS NULL OR a.occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
@@ -308,8 +330,8 @@ export class PgAdminStore {
       )
       SELECT page_info.*,
         COALESCE((SELECT JSON_AGG(p ORDER BY p."occurredAt" ${sortDir}, p.id::bigint ${sortDir}) FROM page_rows p), '[]'::json) AS entries,
-        ARRAY(SELECT DISTINCT action FROM balicall_admin_audit ORDER BY action) AS actions,
-        ARRAY(SELECT DISTINCT actor_id FROM balicall_admin_audit WHERE actor_id IS NOT NULL ORDER BY actor_id) AS actors,
+        ARRAY(SELECT DISTINCT action FROM ${auditSource} ORDER BY action) AS actions,
+        ARRAY(SELECT DISTINCT actor_id FROM ${auditSource} WHERE actor_id IS NOT NULL ORDER BY actor_id) AS actors,
         (SELECT ROW_TO_JSON(summary_info.*) FROM summary_info) AS summary
       FROM page_info
     `, [from, to, action, page, limit, search, resultFilter, actorId]);
@@ -321,13 +343,14 @@ export class PgAdminStore {
     };
   }
 
-  async exportAuditCsv({ from, to, action, search = '', result: resultFilter = '', actorId = '', order = 'desc' }) {
+  async exportAuditCsv({ from, to, action, search = '', result: resultFilter = '', actorId = '', order = 'desc', operationsOnly = false }) {
+    const auditSource = operationsOnly ? 'balicall_operations_audit' : 'balicall_admin_audit';
     const sortDir = order === 'asc' ? 'ASC' : 'DESC';
     const { rows } = await this.requirePool().query(`
       SELECT a.id::text AS id, a.actor_id AS "actorId", a.target_id AS "targetId", a.action, a.result,
         a.previous_value AS "previousValue", a.new_value AS "newValue", a.reason, a.occurred_at AS "occurredAt",
         actor_emp.name AS "actorName", target_emp.name AS "targetName"
-      FROM balicall_admin_audit a
+      FROM ${auditSource} a
       LEFT JOIN balicall_employees actor_emp ON actor_emp.employee_id = a.actor_id
       LEFT JOIN balicall_employees target_emp ON target_emp.employee_id = a.target_id
       WHERE ($1::date IS NULL OR a.occurred_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta'))
@@ -837,7 +860,7 @@ export class PgAdminStore {
     return { days, ...totals };
   }
 
-  async listEmployees({ search, department, status, role = '', page }) {
+  async listEmployees({ search, department, status, role = '', page, includeRoles = true }) {
     const { rows: [result] } = await this.requirePool().query(`
       WITH directory_summary AS (
         SELECT
@@ -850,15 +873,18 @@ export class PgAdminStore {
       ), matching AS (
         SELECT e.employee_id AS "employeeId", e.name, BTRIM(e.department) AS department,
           BTRIM(e.status) AS status, a.password_hash IS NOT NULL AS activated,
-          r.role IS NOT NULL AS "isSuperAdmin",
+          r.role IS NOT NULL AS "isSuperAdmin", o.employee_id IS NOT NULL AS "isOperationsAdmin",
           a.last_login_at AS "lastLoginAt"
         FROM balicall_employees e
         LEFT JOIN balicall_auth_accounts a USING (employee_id)
         LEFT JOIN balicall_admin_roles r USING (employee_id)
+        LEFT JOIN balicall_operations_admins o USING (employee_id)
         WHERE ($1 = '' OR STRPOS(LOWER(e.name), LOWER($1)) > 0 OR STRPOS(LOWER(COALESCE(e.email, '')), LOWER($1)) > 0 OR STRPOS(LOWER(COALESCE(a.login_email, '')), LOWER($1)) > 0)
           AND ($2 = '' OR BTRIM(e.department) = $2)
           AND ($3 = '' OR BTRIM(e.status) = $3)
-          AND ($4 = '' OR ($4 = 'super_admin' AND r.role IS NOT NULL) OR ($4 = 'employee' AND r.role IS NULL))
+          AND ($4 = '' OR ($4 = 'super_admin' AND r.role IS NOT NULL)
+            OR ($4 = 'operations_admin' AND o.employee_id IS NOT NULL)
+            OR ($4 = 'employee' AND r.role IS NULL AND o.employee_id IS NULL))
       ), page_info AS (
         SELECT COUNT(*)::int AS total,
           LEAST($5::bigint, GREATEST(1, (COUNT(*) + $6::int - 1) / $6::int))::int AS page
@@ -879,6 +905,17 @@ export class PgAdminStore {
           ORDER BY BTRIM(status)) AS statuses
       FROM page_info CROSS JOIN directory_summary
     `, [search, department, status, role, page, EMPLOYEE_PAGE_SIZE]);
+    if (!includeRoles) {
+      const { superAdmins, summary, employees, ...directory } = result;
+      return {
+        ...directory, pageSize: EMPLOYEE_PAGE_SIZE,
+        summary: { activeAccounts: summary.activeAccounts, totalDepartments: summary.totalDepartments },
+        employees: employees.map(({ isSuperAdmin, isOperationsAdmin, ...employee }) => employee),
+      };
+    }
+    // Keep the existing response shape for ordinary employees and Super Admins.
+    result.employees = result.employees.map(({ isOperationsAdmin, ...employee }) =>
+      isOperationsAdmin ? { ...employee, isOperationsAdmin } : employee);
     return { ...result, pageSize: EMPLOYEE_PAGE_SIZE };
   }
 
@@ -913,6 +950,7 @@ export class PgAdminStore {
           ? unchanged() : denied(409, 'bootstrap_complete', 'Super Admin pertama sudah ditetapkan.');
       }
       const account = await accountForUpdate(client, targetId);
+      if (account?.is_operations_admin) return denied(409, 'operations_admin_conflict', 'Cabut peran Admin Operasional terlebih dahulu.');
       if (account?.status !== 'active' || !account.activated) {
         return denied(409, 'account_not_activated', 'Gunakan akun karyawan aktif yang sudah diaktivasi.');
       }
@@ -926,6 +964,7 @@ export class PgAdminStore {
     return this.mutate({ actorId, targetId, action, newValue: granted ? 'super_admin' : 'none' }, async client => {
       const account = await accountForUpdate(client, targetId);
       if (!account) return denied(404, 'account_not_found', 'Akun karyawan tidak ditemukan.');
+      if (granted && account.is_operations_admin) return denied(409, 'operations_admin_conflict', 'Cabut peran Admin Operasional terlebih dahulu.');
       if (account.is_admin === granted) return unchanged();
       if (granted && (account.status !== 'active' || !account.activated)) {
         return denied(409, 'account_not_activated', 'Gunakan akun karyawan aktif yang sudah diaktivasi.');
@@ -936,6 +975,24 @@ export class PgAdminStore {
       if (granted) await grantRole(client, targetId);
       else await client.query('DELETE FROM balicall_admin_roles WHERE employee_id=$1', [targetId]);
       return { ...changed(), previousValue: granted ? 'none' : 'super_admin' };
+    });
+  }
+
+  setOperationsAdmin(actorId, targetId, granted) {
+    const action = granted ? 'operations_admin.grant' : 'operations_admin.revoke';
+    return this.mutate({ actorId, targetId, action, newValue: granted ? 'operations_admin' : 'none' }, async client => {
+      const account = await accountForUpdate(client, targetId);
+      if (!account) return denied(404, 'account_not_found', 'Akun karyawan tidak ditemukan.');
+      if (account.is_admin && granted) return denied(409, 'super_admin_conflict', 'Cabut peran Super Admin terlebih dahulu.');
+      if (account.is_operations_admin === granted) return unchanged();
+      if (granted && (account.status !== 'active' || !account.activated)) {
+        return denied(409, 'account_not_activated', 'Gunakan akun karyawan aktif yang sudah diaktivasi.');
+      }
+      if (granted) await client.query('INSERT INTO balicall_operations_admins(employee_id) VALUES ($1)', [targetId]);
+      else await client.query('DELETE FROM balicall_operations_admins WHERE employee_id=$1', [targetId]);
+      // Revoke existing sessions so privileges and navigation are refreshed on the next login.
+      await client.query('DELETE FROM balicall_auth_sessions WHERE employee_id=$1', [targetId]);
+      return { ...changed(), previousValue: granted ? 'none' : 'operations_admin' };
     });
   }
 

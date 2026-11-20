@@ -36,6 +36,12 @@ fi
 cleanup() {
     echo ""
     echo "[*] Stopping all BaliCall processes..."
+    for pidfile in "$PROJECT_ROOT"/logs/qwen-live-build/*.pid "$PROJECT_ROOT"/logs/qwen-batch/*.pid; do
+        if [ -f "$pidfile" ]; then
+            kill $(cat "$pidfile") 2>/dev/null || true
+            rm -f "$pidfile"
+        fi
+    done
     kill $(jobs -p) 2>/dev/null || true
     wait $(jobs -p) 2>/dev/null || true
     echo "✅ All services stopped."
@@ -75,8 +81,20 @@ if [ "$MODE" = "prod" ] || [ "$MODE" = "production" ] || [ "$MODE" = "deploy" ];
     fi
 
     # Launch Node Backend (serves API + client static assets)
-    echo "[3/3] Starting Backend Server on Port 3001..."
-    (cd "$PROJECT_ROOT/server" && NODE_ENV=production node index.js) &
+    if (echo > /dev/tcp/127.0.0.1/3001) 2>/dev/null; then
+        if curl -sf -m 2 http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+            echo "[3/3] Port 3001 is already active and healthy [Backend Server]."
+        else
+            echo "[3/3] Port 3001 is busy but unresponsive. Freeing port..."
+            fuser -k 3001/tcp 2>/dev/null || true
+            sleep 1
+            echo "[3/3] Starting Backend Server on Port 3001..."
+            (cd "$PROJECT_ROOT/server" && NODE_ENV=production node index.js) &
+        fi
+    else
+        echo "[3/3] Starting Backend Server on Port 3001..."
+        (cd "$PROJECT_ROOT/server" && NODE_ENV=production node index.js) &
+    fi
 
     echo ""
     echo "========================================================"
@@ -117,7 +135,13 @@ else
             sleep 3
         done
     else
-        echo "[2/4] ⚠️  Docker tidak berjalan; worker STT dilewati."
+        echo "[2/4] ⚠️  Docker tidak berjalan; menjalankan worker lokal jika tersedia..."
+        if [ -f "$PROJECT_ROOT/scripts/start-qwen-batch.sh" ] && grep -E -q '^\s*QWEN_BATCH_ENABLED\s*=\s*true' "$PROJECT_ROOT/server/.env" 2>/dev/null; then
+            bash "$PROJECT_ROOT/scripts/start-qwen-batch.sh" || true
+        fi
+        if [ -f "$PROJECT_ROOT/scripts/start-qwen-live.sh" ] && grep -E -q '^\s*QWEN_LIVE_STT_URL\s*=' "$PROJECT_ROOT/server/.env" 2>/dev/null; then
+            bash "$PROJECT_ROOT/scripts/start-qwen-live.sh" || true
+        fi
     fi
 
     # [3/5] SEA Live STT Worker (Port 8010)
@@ -142,13 +166,38 @@ else
     fi
 
     # [4/5] Backend
-    echo "[4/5] Starting Backend API on Port 3001..."
-    (cd "$PROJECT_ROOT/server" && npm run dev) &
-    sleep 2
+    if (echo > /dev/tcp/127.0.0.1/3001) 2>/dev/null; then
+        if curl -sf -m 2 http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+            echo "[4/5] Port 3001 is already active and healthy [Backend Server]."
+        else
+            echo "[4/5] Port 3001 is busy but unresponsive. Freeing port..."
+            fuser -k 3001/tcp 2>/dev/null || true
+            sleep 1
+            echo "[4/5] Starting Backend API on Port 3001..."
+            (cd "$PROJECT_ROOT/server" && npm run dev) &
+            sleep 2
+        fi
+    else
+        echo "[4/5] Starting Backend API on Port 3001..."
+        (cd "$PROJECT_ROOT/server" && npm run dev) &
+        sleep 2
+    fi
 
     # [5/5] Vite client
-    echo "[5/5] Starting Vite Dev Client on Port 5187..."
-    (cd "$PROJECT_ROOT/client" && npm run dev) &
+    if (echo > /dev/tcp/127.0.0.1/5187) 2>/dev/null; then
+        if curl -sf -m 2 -I http://127.0.0.1:5187/ >/dev/null 2>&1; then
+            echo "[5/5] Port 5187 is already active [Vite Dev Client]."
+        else
+            echo "[5/5] Port 5187 is busy but unresponsive. Freeing port..."
+            fuser -k 5187/tcp 2>/dev/null || true
+            sleep 1
+            echo "[5/5] Starting Vite Dev Client on Port 5187..."
+            (cd "$PROJECT_ROOT/client" && npm run dev) &
+        fi
+    else
+        echo "[5/5] Starting Vite Dev Client on Port 5187..."
+        (cd "$PROJECT_ROOT/client" && npm run dev) &
+    fi
 
     echo ""
     echo "========================================================"

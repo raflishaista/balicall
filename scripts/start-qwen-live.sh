@@ -9,7 +9,9 @@ source "$CONFIG"
 set +a
 : "${QWEN_PYTHON:?}" "${NEMOTRON_PYTHON:?}" "${QWEN_MODEL_PATH:?}" "${NEMOTRON_MODEL_PATH:?}" "${QWEN_LIVE_STT_SECRET:?}" "${QWEN_DIAR_STREAM_SECRET:?}"
 test -x "$QWEN_PYTHON" && test -x "$NEMOTRON_PYTHON"
-mkdir -p "$ROOT/logs/qwen-live-build"
+mkdir -p "$ROOT/logs/qwen-live-build" /tmp/triton_cache
+export TRITON_CACHE_DIR=/tmp/triton_cache
+export VLLM_NO_USAGE_STATS=1
 cd "$ROOT/server/speech"
 start_worker() {
   local name="$1" python="$2" module="$3" port="$4"

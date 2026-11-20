@@ -3,7 +3,7 @@ import { Activity, ArrowLeft, ArrowRight, AudioLines, BookOpen, Calendar, Check,
 import { initials } from './presentation';
 import { UserAvatar } from './ProfileEditor';
 import type { AuthUser } from './AuthGate';
-import { ADMIN_SECTIONS, type AdminSection } from './navigation';
+import { ADMIN_SECTIONS, OPERATIONS_ADMIN_SECTIONS, type AdminSection } from './navigation';
 
 export interface WorkspaceHealth {
   livekitStatus?: string;
@@ -41,13 +41,14 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
   adminSection: AdminSection;
   onAdmin: (section: AdminSection) => void;
 }) {
-  const canAccessAdmin = !isGuest && authUser?.isSuperAdmin;
+  const isOperationsAdmin = Boolean(authUser?.isOperationsAdmin && !authUser.isSuperAdmin);
+  const canAccessAdmin = !isGuest && (authUser?.isSuperAdmin || isOperationsAdmin);
   const inAdmin = view === 'admin' && canAccessAdmin;
   return <aside className="workspace-sidebar">
     <div className="sidebar-brand"><BrandLogo /><span>SENTRA WORKSPACE</span></div>
     <p className="sidebar-label">{inAdmin ? 'ADMIN' : 'WORKSPACE'}</p>
     {inAdmin ? <nav className="sidebar-navigation" aria-label="Menu Admin">
-      {adminSections.map(section => {
+      {(isOperationsAdmin ? OPERATIONS_ADMIN_SECTIONS : adminSections).map(section => {
         const Icon = adminIcons[section];
         const active = adminSection === section;
         return <button key={section} type="button" className={active ? 'sidebar-link active' : 'sidebar-link'}
@@ -76,7 +77,7 @@ export function WorkspaceSidebar({ view, intent, employeeName, hasSummary, onHom
     </nav>}
     <div className="sidebar-bottom">
       {!inAdmin && <div className="sidebar-note"><AudioLines size={20} /><div><strong>Ruang untuk terhubung.</strong><span>Suara, percakapan, keputusan.</span></div></div>}
-      <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>{inAdmin ? 'Super Admin' : 'Internal meeting workspace'}</span></div></div>
+      <div className="sidebar-profile"><span className="user-avatar">{authUser&&!isGuest?<UserAvatar user={authUser}/>:initials(employeeName)}</span><div><strong>{employeeName || 'Bali Tower Sentra'}</strong><span>{inAdmin ? (isOperationsAdmin ? 'Admin Operasional' : 'Super Admin') : 'Internal meeting workspace'}</span></div></div>
     </div>
   </aside>;
 }

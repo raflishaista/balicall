@@ -37,6 +37,7 @@ services:
       QWEN_CPU_THREADS: "4"
       QWEN_DTYPE: float32
       SPEECH_API_KEY: ${QWEN_STT_API_KEY:-}
+      QWEN_BATCH_NEMOTRON_URL: http://nemotron:8007
     volumes:
       - hf-cache:/cache/hf
     healthcheck:
