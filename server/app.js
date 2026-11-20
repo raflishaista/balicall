@@ -237,7 +237,7 @@ async function syncActionItemsToItProject(
   summary,
   { reviewClient = itProject, reviewStore = store } = {}
 ) {
-  const meetingCreateEnabled = false;
+  const meetingCreateProjectEnabled = false;
 
   const requestedActionItems = Array.isArray(summary.actionItems)
     ? summary.actionItems
@@ -249,13 +249,13 @@ async function syncActionItemsToItProject(
     ? summary.sprintOperations
     : [];
 
-  // Mode rapat saat ini hanya mengedit data yang sudah ada.
-  const actionItems = meetingCreateEnabled ? requestedActionItems : [];
-  const projectCreations = meetingCreateEnabled
+  // Boleh membuat task baru di project yang ada, tetapi pembuatan project baru dinonaktifkan
+  const actionItems = requestedActionItems;
+  const projectCreations = meetingCreateProjectEnabled
     ? requestedProjectCreations
     : [];
   const sprintOperations = requestedSprintOperations.filter(
-    operation => meetingCreateEnabled || operation.operation !== 'create'
+    operation => meetingCreateProjectEnabled || operation.operation !== 'create'
   );
 
   const taskUpdates = Array.isArray(summary.taskUpdates)
