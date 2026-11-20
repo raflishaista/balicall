@@ -130,6 +130,20 @@ interface MeetingRoomProps {
     endsAt: string;
     myVote: number | null;
   } | null;
+  pollHistory?: Array<{
+    id: string;
+    active: boolean;
+    title: string;
+    options: string[];
+    counts: number[];
+    totalVotes: number;
+    winners?: string[];
+    durationMinutes: number;
+    createdAt: string;
+    endsAt: string;
+    closedAt?: string | null;
+    myVote: number | null;
+  }>;
   onCreatePoll?: (title: string, options: string[], durationMinutes: number) => Promise<void>;
   onVotePoll?: (optionIndex: number) => Promise<void>;
   onClosePoll?: () => Promise<void>;
@@ -330,6 +344,7 @@ export function MeetingRoom({
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
   pollState = null,
+  pollHistory = [],
   onCreatePoll,
   onVotePoll,
   onClosePoll,
@@ -526,6 +541,7 @@ export function MeetingRoom({
   const [breakoutBusy, setBreakoutBusy] = useState(false);
   const [breakoutError, setBreakoutError] = useState<string | null>(null);
   const [pollOpen, setPollOpen] = useState(false);
+  const [pollModalTab, setPollModalTab] = useState<'create' | 'history'>('create');
   const [pollTitle, setPollTitle] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [pollDuration, setPollDuration] = useState(5);
@@ -2074,6 +2090,7 @@ export function MeetingRoom({
         pollActive={Boolean(pollState?.active && Date.parse(pollState.endsAt) > pollNowMs)}
         onOpenPoll={() => {
           setPollError(null);
+          setPollModalTab('create');
           setPollOpen(true);
         }}
         speechEnabled={speechEnabled}
@@ -2233,6 +2250,81 @@ export function MeetingRoom({
             {pollError && (
               <p className="meeting-chat-file-error" role="alert">{pollError}</p>
             )}
+            <div className="poll-modal-tabs" role="tablist" aria-label="Menu polling">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={pollModalTab === 'create'}
+                className={`poll-modal-tab ${pollModalTab === 'create' ? 'active' : ''}`}
+                onClick={() => setPollModalTab('create')}
+              >
+                Buat Polling
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={pollModalTab === 'history'}
+                className={`poll-modal-tab ${pollModalTab === 'history' ? 'active' : ''}`}
+                onClick={() => setPollModalTab('history')}
+              >
+                Riwayat Polling ({pollHistory.length})
+              </button>
+            </div>
+            {pollModalTab === 'history' ? (
+              <div className="poll-history-list">
+                {pollHistory.length === 0 ? (
+                  <p className="poll-history-empty">Belum ada polling yang dibuat pada rapat ini.</p>
+                ) : (
+                  pollHistory.map(item => {
+                    const maxVotes = item.counts.length ? Math.max(...item.counts) : 0;
+                    const winners = item.winners && item.winners.length
+                      ? item.winners
+                      : maxVotes > 0
+                        ? item.options.filter((_, idx) => item.counts[idx] === maxVotes)
+                        : [];
+                    return (
+                      <article className="poll-history-card" key={item.id}>
+                        <div className="poll-history-card-head">
+                          <strong>{item.title}</strong>
+                          <span className={`poll-history-badge ${item.active ? 'active' : 'ended'}`}>
+                            {item.active ? 'Berjalan' : 'Selesai'}
+                          </span>
+                        </div>
+                        <p className="poll-history-meta">
+                          Total pemilih: <strong>{item.totalVotes}</strong> · {new Date(item.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                        <p className="poll-history-winner">
+                          {winners.length === 0
+                            ? 'Pemenang: Belum ada suara'
+                            : winners.length > 1
+                              ? `Seri (${maxVotes} suara): ${winners.join(' & ')}`
+                              : `Pemenang: ${winners[0]} (${maxVotes} suara)`}
+                        </p>
+                        <div className="poll-history-options">
+                          {item.options.map((opt, idx) => {
+                            const count = item.counts[idx] ?? 0;
+                            const pct = item.totalVotes > 0 ? Math.round((count / item.totalVotes) * 100) : 0;
+                            const isWinner = maxVotes > 0 && count === maxVotes;
+                            return (
+                              <div className={`poll-history-option ${isWinner ? 'is-winner' : ''}`} key={idx}>
+                                <span className="poll-option-bar" style={{ width: `${pct}%` }} aria-hidden="true" />
+                                <span className="poll-option-label">{opt}</span>
+                                <span className="poll-option-stats">{count} suara ({pct}%)</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
+                <div className="breakout-modal-actions">
+                  <button type="button" className="button-secondary" onClick={() => setPollOpen(false)}>
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            ) : (
             <form
               className="breakout-setup-form"
               onSubmit={async event => {
@@ -2376,11 +2468,10 @@ export function MeetingRoom({
                 </button>
               </div>
             </form>
+            )}
           </div>
         </div>
       )}
-
-
       {breakoutOpen && (
         <div className="breakout-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="breakout-modal-title">
           <div className={`breakout-modal ${!breakoutState?.active && breakoutMode === 'manual' ? 'breakout-modal--wide' : ''}`}>

@@ -1387,7 +1387,8 @@ async function syncActionItemsToItProject(
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
       breakout: meeting.breakout || null,
-      poll: serializePoll(meeting, req.speakerId),
+      poll: serializePollItem(meeting.poll, req.speakerId),
+      pollHistory: [...(meeting.pollHistory || [])].reverse().map(p => serializePollItem(p, req.speakerId)),
       sttProvider: config.sttProvider,
     });
   }));
@@ -1836,8 +1837,7 @@ async function syncActionItemsToItProject(
     res.status(201).json({ breakout });
   });
 
-  function serializePoll(meeting, speakerId) {
-    const poll = meeting?.poll;
+  function serializePollItem(poll, speakerId) {
     if (!poll) return null;
     const endsAtMs = Date.parse(poll.endsAt);
     const isRunning = Boolean(poll.active) && Number.isFinite(endsAtMs) && Date.now() < endsAtMs;
@@ -1850,6 +1850,10 @@ async function syncActionItemsToItProject(
         totalVotes += 1;
       }
     }
+    const maxVotes = counts.length ? Math.max(...counts) : 0;
+    const winners = maxVotes > 0
+      ? poll.options.filter((_, idx) => counts[idx] === maxVotes)
+      : [];
     const myVote = speakerId && Number.isInteger(votes[speakerId]) ? votes[speakerId] : null;
     return {
       id: poll.id,
@@ -1858,12 +1862,24 @@ async function syncActionItemsToItProject(
       options: poll.options,
       counts,
       totalVotes,
+      winners,
       durationMinutes: poll.durationMinutes,
       createdAt: poll.createdAt,
       endsAt: poll.endsAt,
+      closedAt: poll.closedAt || null,
       myVote,
     };
   }
+
+  app.get('/api/meetings/:id/polls', asyncRoute(async (req, res) => {
+    if (!(await authorizeMeetingFileRead(req, res))) return;
+    const meeting = store.get(req.params.id);
+    const viewerId = req.speakerId || req.auth?.user?.employeeId || null;
+    const polls = [...(meeting?.pollHistory || [])]
+      .reverse()
+      .map(p => serializePollItem(p, viewerId));
+    res.json({ polls });
+  }));
 
   app.post('/api/meetings/:id/polls', (req, res) => {
     const access = requireMeetingManager(req, res, ['host']);
@@ -1889,19 +1905,30 @@ async function syncActionItemsToItProject(
     }
     const createdAt = new Date().toISOString();
     const endsAt = new Date(Date.now() + durationMinutes * 60_000).toISOString();
+    const newPoll = {
+      id: `poll-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      active: true,
+      title: rawTitle,
+      options,
+      durationMinutes,
+      createdAt,
+      endsAt,
+      closedAt: null,
+      votes: {},
+    };
     store.transact(() => {
-      access.meeting.poll = {
-        id: `poll-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        active: true,
-        title: rawTitle,
-        options,
-        durationMinutes,
-        createdAt,
-        endsAt,
-        votes: {},
-      };
+      if (access.meeting.poll) {
+        access.meeting.poll.active = false;
+        access.meeting.poll.closedAt = createdAt;
+      }
+      if (!Array.isArray(access.meeting.pollHistory)) access.meeting.pollHistory = [];
+      access.meeting.poll = newPoll;
+      access.meeting.pollHistory.push(newPoll);
     });
-    res.status(201).json({ poll: serializePoll(access.meeting, access.speakerId) });
+    res.status(201).json({
+      poll: serializePollItem(access.meeting.poll, access.speakerId),
+      pollHistory: [...access.meeting.pollHistory].reverse().map(p => serializePollItem(p, access.speakerId)),
+    });
   });
 
   app.post('/api/meetings/:id/polls/vote', (req, res) => {
@@ -1925,16 +1952,27 @@ async function syncActionItemsToItProject(
       if (!meeting.poll.votes) meeting.poll.votes = {};
       meeting.poll.votes[req.speakerId] = optionIndex;
     });
-    res.json({ poll: serializePoll(meeting, req.speakerId) });
+    res.json({
+      poll: serializePollItem(meeting.poll, req.speakerId),
+      pollHistory: [...(meeting.pollHistory || [])].reverse().map(p => serializePollItem(p, req.speakerId)),
+    });
   });
 
   app.post('/api/meetings/:id/polls/close', (req, res) => {
     const access = requireMeetingManager(req, res, ['host']);
     if (!access) return;
     store.transact(() => {
+      if (access.meeting.poll) {
+        access.meeting.poll.active = false;
+        access.meeting.poll.closedAt = new Date().toISOString();
+      }
       access.meeting.poll = null;
     });
-    res.json({ success: true, poll: null });
+    res.json({
+      success: true,
+      poll: null,
+      pollHistory: [...(access.meeting.pollHistory || [])].reverse().map(p => serializePollItem(p, access.speakerId)),
+    });
   });
 
   app.post('/api/meetings/:id/breakout-rooms/close', (req, res) => {
@@ -2346,7 +2384,8 @@ async function syncActionItemsToItProject(
       screenSharePolicy: meeting.screenSharePolicy || 'all',
       chatDisabled: Boolean(meeting.chatDisabled),
       breakout: meeting.breakout || null,
-      poll: serializePoll(meeting, req.speakerId),
+      poll: serializePollItem(meeting.poll, req.speakerId),
+      pollHistory: [...(meeting.pollHistory || [])].reverse().map(p => serializePollItem(p, req.speakerId)),
       waitingUsers: (currentRole === 'host' || currentRole === 'co-host')
         ? (meeting.waitingUsers || []).filter(u => u.status === 'waiting')
         : [],

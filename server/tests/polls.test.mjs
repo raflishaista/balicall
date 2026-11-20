@@ -136,5 +136,20 @@ test('host can create/close polls, non-hosts are blocked from creating, and part
     body: JSON.stringify({}),
   });
   assert.equal(closeRes.status, 200);
-  assert.equal((await closeRes.json()).poll, null);
+  const closeBody = await closeRes.json();
+  assert.equal(closeBody.poll, null);
+  assert.equal(closeBody.pollHistory.length, 1);
+  assert.deepEqual(closeBody.pollHistory[0].winners, ['Nasi Goreng', 'Mie Ayam']);
+  assert.equal(closeBody.pollHistory[0].totalVotes, 2);
+
+  // History endpoint returns all polls including tied winners
+  const historyRes = await fetch(`${base}/meetings/${meetingId}/polls`, {
+    headers: headersFor(hostToken, hostLk),
+  });
+  assert.equal(historyRes.status, 200);
+  const historyBody = await historyRes.json();
+  assert.equal(historyBody.polls.length, 1);
+  assert.equal(historyBody.polls[0].title, 'Lunch choice?');
+  assert.deepEqual(historyBody.polls[0].winners, ['Nasi Goreng', 'Mie Ayam']);
+  assert.deepEqual(historyBody.polls[0].counts, [1, 1]);
 });

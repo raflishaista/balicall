@@ -3024,3 +3024,124 @@ input::placeholder { color: #a1b1c6; }
   opacity: 0.72;
   cursor: default;
 }
+
+.poll-modal-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #f1f5f9;
+}
+
+.poll-modal-tab {
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.poll-modal-tab.active {
+  background: #ffffff;
+  color: #0865ed;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.poll-history-list,
+.summary-polls-list {
+  display: grid;
+  gap: 10px;
+}
+
+.poll-history-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.poll-history-empty {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.poll-history-card {
+  border: 1px solid #dfe8f3;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  display: grid;
+  gap: 6px;
+}
+
+.poll-history-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.poll-history-card-head strong {
+  font-size: 13.5px;
+  color: #0f172a;
+}
+
+.poll-history-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.poll-history-badge.active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.poll-history-badge.ended {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.poll-history-meta,
+.poll-history-winner {
+  margin: 0;
+  font-size: 12px;
+  color: #475569;
+}
+
+.poll-history-winner {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.poll-history-options {
+  display: grid;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.poll-history-option {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 12.5px;
+  color: #0f172a;
+}
+
+.poll-history-option.is-winner {
+  border-color: #93c5fd;
+  font-weight: 600;
+}

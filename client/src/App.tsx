@@ -210,11 +210,27 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
     options: string[];
     counts: number[];
     totalVotes: number;
+    winners?: string[];
     durationMinutes: number;
     createdAt: string;
     endsAt: string;
+    closedAt?: string | null;
     myVote: number | null;
   } | null>(null);
+  const [pollHistory, setPollHistory] = useState<Array<{
+    id: string;
+    active: boolean;
+    title: string;
+    options: string[];
+    counts: number[];
+    totalVotes: number;
+    winners?: string[];
+    durationMinutes: number;
+    createdAt: string;
+    endsAt: string;
+    closedAt?: string | null;
+    myVote: number | null;
+  }>>([]);
   const [meetingParticipantNames, setMeetingParticipantNames] = useState<Record<string, string>>({});
   const [microphoneRestricted, setMicrophoneRestricted] = useState(false);
   const [speakRequestAt, setSpeakRequestAt] = useState<string | null>(null);
@@ -284,11 +300,27 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
             options: string[];
             counts: number[];
             totalVotes: number;
+            winners?: string[];
             durationMinutes: number;
             createdAt: string;
             endsAt: string;
+            closedAt?: string | null;
             myVote: number | null;
           } | null;
+          pollHistory?: Array<{
+            id: string;
+            active: boolean;
+            title: string;
+            options: string[];
+            counts: number[];
+            totalVotes: number;
+            winners?: string[];
+            durationMinutes: number;
+            createdAt: string;
+            endsAt: string;
+            closedAt?: string | null;
+            myVote: number | null;
+          }>;
           microphoneRestricted?: boolean;
           speakRequestAt?: string | null;
           pendingSpeakRequests?: Array<{
@@ -333,6 +365,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
         const nextBreakout = data.breakout || null;
         setBreakoutState(nextBreakout);
         setPollState(data.poll || null);
+        if (Array.isArray(data.pollHistory)) setPollHistory(data.pollHistory);
         if (!nextBreakout?.active) {
           setActiveBreakoutRoomId(null);
           setBreakoutToken(null);
@@ -1564,7 +1597,7 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
 
   const createPoll = useCallback(async (title: string, options: string[], durationMinutes: number) => {
     if (!meetingId || !token) return;
-    const res = await apiRequest<{ poll: NonNullable<typeof pollState> }>(
+    const res = await apiRequest<{ poll: NonNullable<typeof pollState>; pollHistory?: typeof pollHistory }>(
       meetingPath(meetingId, 'polls'),
       {
         method: 'POST',
@@ -1576,11 +1609,12 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     );
     setPollState(res.poll);
+    if (Array.isArray(res.pollHistory)) setPollHistory(res.pollHistory);
   }, [meetingId, token]);
 
   const votePoll = useCallback(async (optionIndex: number) => {
     if (!meetingId || !token) return;
-    const res = await apiRequest<{ poll: NonNullable<typeof pollState> }>(
+    const res = await apiRequest<{ poll: NonNullable<typeof pollState>; pollHistory?: typeof pollHistory }>(
       meetingPath(meetingId, 'polls/vote'),
       {
         method: 'POST',
@@ -1592,15 +1626,17 @@ export default function App({ authUser = null, onLogout, logoutPending = false, 
       }
     );
     setPollState(res.poll);
+    if (Array.isArray(res.pollHistory)) setPollHistory(res.pollHistory);
   }, [meetingId, token]);
 
   const closePoll = useCallback(async () => {
     if (!meetingId || !token) return;
-    await apiRequest(meetingPath(meetingId, 'polls/close'), {
+    const res = await apiRequest<{ pollHistory?: typeof pollHistory }>(meetingPath(meetingId, 'polls/close'), {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
     setPollState(null);
+    if (Array.isArray(res?.pollHistory)) setPollHistory(res.pollHistory);
   }, [meetingId, token]);
 
   const handleKickedFromMeeting = useCallback(() => {
@@ -2121,6 +2157,7 @@ ${summary.actionItems?.map((a, idx) => `| ${idx + 1} | ${a.task} | ${a.assignee 
             onLeaveBreakoutRoom={leaveBreakoutRoom}
             onCloseBreakoutRooms={closeBreakoutRooms}
             pollState={pollState}
+            pollHistory={pollHistory}
             onCreatePoll={createPoll}
             onVotePoll={votePoll}
             onClosePoll={closePoll}
@@ -2321,7 +2358,7 @@ function SummaryView({
   onBatchDiarize?: () => void;
   hasRecording?: boolean;
 }) {
-  const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript' | 'files'>('summary');
+  const [tab, setTab] = useState<'summary' | 'decisions' | 'actions' | 'transcript' | 'files' | 'polls'>('summary');
   const tabsId = useId();
   const [query, setQuery] = useState('');
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
@@ -2330,18 +2367,39 @@ function SummaryView({
   const [downloadingRecording, setDownloadingRecording] = useState(false);
   const [recordingDownloadError, setRecordingDownloadError] = useState<string | null>(null);
   const [meetingFiles, setMeetingFiles] = useState<MeetingFile[]>([]);
+  const [meetingPolls, setMeetingPolls] = useState<Array<{
+    id: string;
+    active: boolean;
+    title: string;
+    options: string[];
+    counts: number[];
+    totalVotes: number;
+    winners?: string[];
+    durationMinutes: number;
+    createdAt: string;
+    endsAt: string;
+    closedAt?: string | null;
+  }>>([]);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [fileDownloadError, setFileDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!meetingId) {
       setMeetingFiles([]);
+      setMeetingPolls([]);
       return;
     }
     let active = true;
     fetchMeetingFiles(meetingId, token)
       .then(files => {
         if (active) setMeetingFiles(files);
+      })
+      .catch(() => {});
+    apiRequest<{ polls?: typeof meetingPolls }>(meetingPath(meetingId, 'polls'), {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then(res => {
+        if (active && Array.isArray(res?.polls)) setMeetingPolls(res.polls);
       })
       .catch(() => {});
     return () => {
@@ -2673,6 +2731,7 @@ function SummaryView({
     { id: 'actions', label: `Tindak lanjut (${summary.actionItems?.length || 0})` },
     { id: 'transcript', label: `Transkrip (${transcripts.length})` },
     { id: 'files', label: `Files (${meetingFiles.length})` },
+    { id: 'polls', label: `Polling (${meetingPolls.length})` },
   ] as const;
 
   return (
@@ -2862,6 +2921,58 @@ function SummaryView({
             </div>
           ) : (
             <p className="empty-transcript">Belum ada file yang dibagikan pada rapat ini.</p>
+          )}
+        </section></div>}
+
+        {tab === 'polls' && <div className="summary-panel"><section className="summary-section">
+          <div className="transcript-heading"><div><h2>Hasil polling</h2><p>{meetingPolls.length} polling dijalankan selama rapat</p></div></div>
+          {meetingPolls.length ? (
+            <div className="summary-polls-list">
+              {meetingPolls.map(item => {
+                const maxVotes = item.counts.length ? Math.max(...item.counts) : 0;
+                const winners = item.winners && item.winners.length
+                  ? item.winners
+                  : maxVotes > 0
+                    ? item.options.filter((_, idx) => item.counts[idx] === maxVotes)
+                    : [];
+                return (
+                  <article className="poll-history-card" key={item.id}>
+                    <div className="poll-history-card-head">
+                      <strong>{item.title}</strong>
+                      <span className={`poll-history-badge ${item.active ? 'active' : 'ended'}`}>
+                        {item.active ? 'Berjalan' : 'Selesai'}
+                      </span>
+                    </div>
+                    <p className="poll-history-meta">
+                      Total pemilih: <strong>{item.totalVotes}</strong> · {new Date(item.createdAt).toLocaleString('id-ID')}
+                    </p>
+                    <p className="poll-history-winner">
+                      {winners.length === 0
+                        ? 'Pemenang: Belum ada suara'
+                        : winners.length > 1
+                          ? `Seri (${maxVotes} suara): ${winners.join(' & ')}`
+                          : `Pemenang: ${winners[0]} (${maxVotes} suara)`}
+                    </p>
+                    <div className="poll-history-options">
+                      {item.options.map((opt, idx) => {
+                        const count = item.counts[idx] ?? 0;
+                        const pct = item.totalVotes > 0 ? Math.round((count / item.totalVotes) * 100) : 0;
+                        const isWinner = maxVotes > 0 && count === maxVotes;
+                        return (
+                          <div className={`poll-history-option ${isWinner ? 'is-winner' : ''}`} key={idx}>
+                            <span className="poll-option-bar" style={{ width: `${pct}%` }} aria-hidden="true" />
+                            <span className="poll-option-label">{opt}</span>
+                            <span className="poll-option-stats">{count} suara ({pct}%)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="empty-transcript">Belum ada polling yang dibuat pada rapat ini.</p>
           )}
         </section></div>}
         </div>

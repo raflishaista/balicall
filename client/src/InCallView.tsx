@@ -67,6 +67,7 @@ export function InCallView({ callDuration,
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
   pollState,
+  pollHistory,
   onCreatePoll,
   onVotePoll,
   onClosePoll,
@@ -170,6 +171,7 @@ export function InCallView({ callDuration,
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
         pollState={pollState}
+        pollHistory={pollHistory}
         onCreatePoll={onCreatePoll}
         onVotePoll={onVotePoll}
         onClosePoll={onClosePoll}
@@ -229,6 +231,7 @@ function RoomContent({
   onLeaveBreakoutRoom,
   onCloseBreakoutRooms,
   pollState,
+  pollHistory,
   onCreatePoll,
   onVotePoll,
   onClosePoll,
@@ -425,6 +428,7 @@ function RoomContent({
         onLeaveBreakoutRoom={onLeaveBreakoutRoom}
         onCloseBreakoutRooms={onCloseBreakoutRooms}
         pollState={pollState}
+        pollHistory={pollHistory}
         onCreatePoll={onCreatePoll}
         onVotePoll={onVotePoll}
         onClosePoll={onClosePoll}

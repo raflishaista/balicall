@@ -189,9 +189,10 @@ export function attachAuth(app,config,injectedStore,guestAccess) {
       const fileDownload=req.path.match(/^\/meetings\/([^/]+)\/files\/[^/]+\/download$/);
       const breakoutToken=req.path.match(/^\/meetings\/([^/]+)\/breakout-rooms\/[^/]+\/token$/);
       const pollVote=req.path.match(/^\/meetings\/([^/]+)\/polls\/vote$/);
-      const targetMeetingId=endpoint?.[1]||fileDownload?.[1]||breakoutToken?.[1]||pollVote?.[1];
+      const pollList=req.path.match(/^\/meetings\/([^/]+)\/polls$/);
+      const targetMeetingId=endpoint?.[1]||fileDownload?.[1]||breakoutToken?.[1]||pollVote?.[1]||pollList?.[1];
       const allowed=(req.method==='POST'&&req.path==='/token')||(targetMeetingId===guest.guestMeetingId&&(
-        fileDownload?req.method==='GET':(breakoutToken||pollVote)?req.method==='POST':(
+        (fileDownload||pollList)?req.method==='GET':(breakoutToken||pollVote)?req.method==='POST':(
           req.method==='POST'&&(endpoint[2]!=='waiting-status'&&endpoint[2]!=='waiting-events')
           ||(req.method==='GET'&&['transcript','waiting-status','waiting-events','files'].includes(endpoint[2]))
         )

@@ -158,6 +158,7 @@ export class MeetingStore {
           chatDisabled: false,
           breakout: null,
           poll: null,
+          pollHistory: [],
 
           participants: new Map(),
           transcripts: [],
