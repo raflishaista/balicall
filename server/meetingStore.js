@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -36,9 +36,19 @@ export class MeetingStore {
     try {
       const result = change();
       mkdirSync(dirname(this.filename), { recursive: true });
+      const serialized = this.serialize();
       const temporary = `${this.filename}.tmp`;
-      writeFileSync(temporary, this.serialize(), { mode: 0o600 });
-      renameSync(temporary, this.filename);
+      writeFileSync(temporary, serialized, { mode: 0o600 });
+      try {
+        renameSync(temporary, this.filename);
+      } catch (renameErr) {
+        if (renameErr && (renameErr.code === 'EPERM' || renameErr.code === 'EACCES' || renameErr.code === 'EBUSY')) {
+          writeFileSync(this.filename, serialized, { mode: 0o600 });
+          try { rmSync(temporary, { force: true }); } catch {}
+        } else {
+          throw renameErr;
+        }
+      }
       return result;
     } catch (error) {
       this.restore(before);
