@@ -139,14 +139,28 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
     return `${values.year}-${values.month}-${values.day}`;
   };
   
-  function flattenTaskTree(tasks = []) {
-    return tasks.flatMap(task => [
-      task,
-      ...flattenTaskTree(task.sub_task_recursive || []),
-    ]);
+  function isTaskActive(task) {
+    if (!task) return false;
+    // Cek Soft Delete dari IT Project (Laravel/DB)
+    if (task.deleted_at !== undefined && task.deleted_at !== null && task.deleted_at !== '') return false;
+    if (task.deletedAt !== undefined && task.deletedAt !== null && task.deletedAt !== '') return false;
+    if (task.is_deleted === true || task.is_deleted === 1 || task.is_deleted === '1') return false;
+    if (task.isDeleted === true || task.isDeleted === 1 || task.isDeleted === '1') return false;
+    if (typeof task.status === 'string' && task.status.toLowerCase() === 'deleted') return false;
+    if (task.status?.name && typeof task.status.name === 'string' && task.status.name.toLowerCase() === 'deleted') return false;
+    return true;
   }
 
-    function normalizeTaskReference(value) {
+  function flattenTaskTree(tasks = []) {
+    return tasks
+      .filter(isTaskActive)
+      .flatMap(task => [
+        task,
+        ...flattenTaskTree((task.sub_task_recursive || []).filter(isTaskActive)),
+      ]);
+  }
+
+  function normalizeTaskReference(value) {
     return String(value || '')
       .normalize('NFKC')
       .toLocaleLowerCase('id-ID')
@@ -156,6 +170,7 @@ export function createApp(config, { fetchImpl = fetch, livekitProbe, authStore, 
   }
 
   function taskMatchesReference(candidate, reference) {
+    if (!isTaskActive(candidate)) return false;
     const candidateTitle = normalizeTaskReference(candidate.title);
     const normalizedReference = normalizeTaskReference(reference);
 
@@ -254,9 +269,7 @@ async function syncActionItemsToItProject(
   const projectCreations = meetingCreateProjectEnabled
     ? requestedProjectCreations
     : [];
-  const sprintOperations = requestedSprintOperations.filter(
-    operation => meetingCreateProjectEnabled || operation.operation !== 'create'
-  );
+  const sprintOperations = requestedSprintOperations;
 
   const taskUpdates = Array.isArray(summary.taskUpdates)
     ? summary.taskUpdates
@@ -399,13 +412,26 @@ async function syncActionItemsToItProject(
 
       const resolutions = existingTaskReferences.map(reference => {
         const normalizedReference = normalizeTaskReference(reference);
-        const matches = [];
+        let matches = [];
 
         for (const [projectId, tasks] of projectTasksById) {
           for (const task of tasks) {
             if (taskMatchesReference(task, normalizedReference)) {
               matches.push({ projectId, task });
             }
+          }
+        }
+
+        // Jika ada duplikat dalam project yang sama, ambil task aktif yang paling baru
+        if (matches.length > 1) {
+          const projectIds = new Set(matches.map(m => m.projectId));
+          if (projectIds.size === 1) {
+            matches.sort((a, b) => {
+              const timeA = Date.parse(a.task.updated_at || a.task.created_at || '') || 0;
+              const timeB = Date.parse(b.task.updated_at || b.task.created_at || '') || 0;
+              return timeB - timeA;
+            });
+            matches = [matches[0]];
           }
         }
 

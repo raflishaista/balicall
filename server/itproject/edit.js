@@ -9,9 +9,24 @@ export async function updateExistingTaskStatuses({
   taskMatchesReference,
 }) {
   for (const update of taskUpdates) {
-    const matches = existingTasks.filter(candidate =>
+    let matches = existingTasks.filter(candidate =>
       taskMatchesReference(candidate, update.task)
     );
+
+    // Jika ada lebih dari satu match, pilih task yang paling baru
+    if (matches.length > 1) {
+      matches.sort((a, b) => {
+        const timeA = Date.parse(a.updated_at || a.created_at || '') || 0;
+        const timeB = Date.parse(b.updated_at || b.created_at || '') || 0;
+        return timeB - timeA;
+      });
+      console.info('[ITPROJECT] Task kembar terdeteksi; otomatis memilih task aktif terbaru.', {
+        taskId: matches[0].id,
+        title: matches[0].title,
+        totalMatches: matches.length,
+      });
+      matches = [matches[0]];
+    }
 
     if (matches.length !== 1) {
       console.warn('[ITPROJECT] Update status task lama dilewati: referensi tidak unik.', {
@@ -747,7 +762,27 @@ export async function applySprintOperations({
       }
     }
 
-    return [...matches.values()];
+    let result = [...matches.values()];
+
+    // Jika ada lebih dari satu match, prioritaskan task yang baru saja dibuat di meeting ini
+    if (result.length > 1) {
+      const newlyCreated = result.filter(t =>
+        createdTaskReferences.some(c => c.id === t.id)
+      );
+      if (newlyCreated.length === 1) {
+        return newlyCreated;
+      }
+
+      // Atau pilih task aktif yang paling baru
+      result.sort((a, b) => {
+        const timeA = Date.parse(a.updated_at || a.created_at || '') || 0;
+        const timeB = Date.parse(b.updated_at || b.created_at || '') || 0;
+        return timeB - timeA;
+      });
+      result = [result[0]];
+    }
+
+    return result;
   };
 
   const sprintDate = value => {
@@ -790,15 +825,6 @@ export async function applySprintOperations({
         throw new Error('Tanggal akhir sprint tidak boleh sebelum tanggal mulai.');
       }
       
-      if (operation.operation === 'create') {
-        console.info('[ITPROJECT] Create sprint dilewati.', {
-          meetingId: meeting.id,
-          projectId: targetProjectId,
-          sprint: operation.name || null,
-        });
-        continue;
-      }
-
       if (operation.operation === 'create') {
         await createSprintFromOperation({
           args,
@@ -922,10 +948,17 @@ export async function applySprintOperations({
             );
           }
 
-          if (matches[0].category?.name?.trim().toLowerCase() === 'epic') {
-            throw new Error(
-              `Epic '${reference}' tidak bisa ditambahkan langsung ke sprint.`
-            );
+          const taskCandidate = matches[0];
+          const isEpic = taskCandidate.category?.name?.trim().toLowerCase() === 'epic';
+          const hasChildren = (Array.isArray(taskCandidate.sub_task_recursive) && taskCandidate.sub_task_recursive.length > 0) ||
+            (Array.isArray(taskCandidate.tasks) && taskCandidate.tasks.length > 0);
+
+          if (isEpic) {
+            throw new Error(`Epic '${reference}' tidak bisa ditambahkan langsung ke sprint.`);
+          }
+
+          if (hasChildren) {
+            throw new Error(`Task '${reference}' memiliki subtask sehingga tidak bisa dimasukkan langsung ke sprint. Hanya subtask-nya yang dapat dimasukkan.`);
           }
 
           taskIds.add(matches[0].id);

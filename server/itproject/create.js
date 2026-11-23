@@ -377,14 +377,28 @@ function prepareTaskCreation({
   const numericPriorityId =
     TASK_NUMERIC_ID_BY_ENCODED_ID.get(priority.id) || null;
 
+  // SOLUSI EDGE CASE 2: Smart Name Matching (Bersihkan Sapaan & Partial Match)
   const assigneeName = String(item.assignee || '').trim();
-  const matchingUsers = assigneeName
+  const cleanAssignee = assigneeName
+    .replace(/^(pak|bapak|mas|mbak|bu|ibu)\s+/i, '')
+    .trim()
+    .toLowerCase();
+
+  let matchingUsers = cleanAssignee
     ? options.assignableUsers.filter(
         user =>
-          user.name?.trim().toLowerCase() === assigneeName.toLowerCase() ||
-          user.email?.trim().toLowerCase() === assigneeName.toLowerCase()
+          user.name?.trim().toLowerCase() === cleanAssignee ||
+          user.email?.trim().toLowerCase() === cleanAssignee
       )
     : [];
+
+  // Jika exact match tidak ketemu, cocokkan per kata nama (misal "Budi" cocok ke "Budi Santoso")
+  if (matchingUsers.length === 0 && cleanAssignee) {
+    matchingUsers = options.assignableUsers.filter(user => {
+      const parts = user.name?.trim().toLowerCase().split(/\s+/) || [];
+      return parts.includes(cleanAssignee) || user.name?.trim().toLowerCase().includes(cleanAssignee);
+    });
+  }
 
   const owner = matchingUsers.length === 1 ? matchingUsers[0] : null;
 
@@ -398,10 +412,6 @@ function prepareTaskCreation({
       : '',
   ].filter(Boolean).join('');
 
-  const dueDateMatch = String(item.deadline || '').match(
-    /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
-  );
-
   const mentionedStartDate = String(item.startDate || '').trim();
   const startDate = /^\d{4}-\d{2}-\d{2}$/.test(mentionedStartDate)
     ? mentionedStartDate
@@ -409,14 +419,55 @@ function prepareTaskCreation({
         summary.generatedAt || meeting.createdAt || Date.now()
       );
 
+  // SOLUSI EDGE CASE 3: Hitung Tanggal Relatif Secara Dinamis Berdasarkan Tanggal Rapat
   const deadlineText = String(item.deadline || '').trim();
   const isoDeadlineMatch = deadlineText.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  const dueDateMatch = deadlineText.match(
+    /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})/i
+  );
 
-  const dueDate = isoDeadlineMatch
-    ? isoDeadlineMatch[1]
-    : dueDateMatch
-      ? `${dueDateMatch[3]}-${TASK_MONTH_NUMBERS[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`
-      : '';
+  let dueDate = '';
+  if (isoDeadlineMatch) {
+    dueDate = isoDeadlineMatch[1];
+  } else if (dueDateMatch) {
+    dueDate = `${dueDateMatch[3]}-${TASK_MONTH_NUMBERS[dueDateMatch[2].toLowerCase()]}-${dueDateMatch[1].padStart(2, '0')}`;
+  } else if (deadlineText) {
+    const baseDate = new Date(summary.generatedAt || meeting.createdAt || Date.now());
+    const lower = deadlineText.toLowerCase();
+
+    const daysMatch = lower.match(/(\d+)\s*hari\s*(?:lagi|ke\s*depan)/) || lower.match(/dalam\s*(\d+)\s*hari/);
+    const weeksMatch = lower.match(/(\d+)\s*minggu\s*(?:lagi|ke\s*depan)/);
+
+    if (daysMatch) {
+      baseDate.setDate(baseDate.getDate() + parseInt(daysMatch[1], 10));
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else if (weeksMatch) {
+      baseDate.setDate(baseDate.getDate() + (parseInt(weeksMatch[1], 10) * 7));
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else if (lower.includes('hari ini')) {
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else if (lower.includes('besok')) {
+      baseDate.setDate(baseDate.getDate() + 1);
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else if (lower.includes('lusa')) {
+      baseDate.setDate(baseDate.getDate() + 2);
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else if (lower.includes('seminggu lagi') || lower.includes('minggu depan')) {
+      baseDate.setDate(baseDate.getDate() + 7);
+      dueDate = baseDate.toISOString().slice(0, 10);
+    } else {
+      // Format tanggal tanpa tahun (misal: "24 November")
+      const matchNoYear = deadlineText.match(
+        /(\d{1,2})\s+(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)/i
+      );
+      if (matchNoYear) {
+        const month = TASK_MONTH_NUMBERS[matchNoYear[2].toLowerCase()];
+        const day = matchNoYear[1].padStart(2, '0');
+        const year = baseDate.getFullYear();
+        dueDate = `${year}-${month}-${day}`;
+      }
+    }
+  }
 
   const parentReference = String(item.parent || '').trim();
   let parentId = '';
@@ -660,13 +711,18 @@ export async function createTasksFromSummary({
   flattenTaskTree,
   taskMatchesReference,
 }) {
-  const { activeSprint, status, defaultType } = resolveTaskCreationDefaults({
+  const hasSprintOperations = Array.isArray(summary.sprintOperations) && summary.sprintOperations.length > 0;
+  const { activeSprint: detectedSprint, status, defaultType } = resolveTaskCreationDefaults({
     meeting,
     actionItems,
     options,
     reviewClient,
     targetProjectId,
   });
+
+  // Jika rapat memiliki operasi sprint tersendiri (misal buat Sprint 2),
+  // jangan masukkan task baru ke sprint aktif lama secara otomatis.
+  const activeSprint = hasSprintOperations ? null : detectedSprint;
 
   const createdTaskReferences = [];
   const orderedActionItems = [

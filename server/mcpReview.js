@@ -3,6 +3,9 @@ import {createHash} from 'node:crypto';
 const writes=new Set(['createProject','createTask','updateTask','updateTaskStatus','updateProject','assignSprintTasks','createSprint','updateSprint','startSprint','completeSprint','deleteSprint','removeSprintTask','createComment']);
 const reads=new Set(['taskOptions','projectTasks','projectOptions','userProjects','projectDetail','projectSprints','listQueryableModels','queryData']);
 const editableFields = {
+  createTask: [
+    'title', 'description', 'start_date', 'due_date', 'priority_id', 'type_id', 'assign_users',
+  ],
   updateProject: [
     'title', 'description', 'emoji', 'start_date', 'due_date',
     'status_id', 'priority_id',

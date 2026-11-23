@@ -99,6 +99,9 @@ const fieldLabels: Record<string, string> = {
 };
 
 const editableFields: Record<string, string[]> = {
+  createTask: [
+    'title', 'due_date', 'priority_id', 'type_id', 'assign_users',
+  ],
   updateProject: [
     'title', 'description', 'emoji', 'start_date', 'due_date',
     'status_id', 'priority_id',
