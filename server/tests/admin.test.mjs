@@ -120,7 +120,7 @@ test('admin permissions are enforced and account changes are audited', async t =
   assert.equal((await admin.bootstrap(adminId)).ok, true);
   assert.equal((await admin.bootstrap(employeeId)).status, 409);
   const access = await (await request('/admin/access', 'admin')).json();
-  assert.deepEqual(access.permissions, ['accounts:manage', 'meetings:read', 'system:read', 'audit:read', 'recordings:read']);
+  assert.deepEqual(access.permissions, ['accounts:manage', 'meetings:read', 'system:read', 'audit:read', 'recordings:read', 'recordings:delete']);
   assert.equal((await (await request('/auth/session', 'admin')).json()).user.isSuperAdmin, true);
   const { livekit, databaseConnected, recordingQueue } = await (await request('/admin/system', 'admin')).json();
   assert.equal(livekit, 'reachable');

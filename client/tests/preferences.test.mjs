@@ -35,7 +35,7 @@ test('older saved preferences gain AI defaults without losing existing device ch
   assert.equal(saved.preferences.microphoneId, 'office-mic');
   assert.equal(saved.preferences.cameraEnabled, false);
   assert.equal(saved.preferences.speechLanguage, 'id-ID');
-  assert.equal(saved.preferences.transcriptionProvider, 'auto');
+  assert.equal(saved.preferences.transcriptionProvider, 'browser');
   assert.equal(saved.preferences.transcriptionModel, '');
 });
 
@@ -53,7 +53,7 @@ test('AI defaults respect explicit Browser, automatic provider, and advertised m
   const preferences = { ...DEFAULT_PREFERENCES, transcriptionProvider: 'server', transcriptionModel: 'small-id' };
   assert.deepEqual(resolveTranscriptionPreferences(preferences, true, models, 'small', 'browser'), { provider: 'server', model: 'small-id', notice: null });
   assert.equal(resolveTranscriptionPreferences({ ...preferences, transcriptionProvider: 'browser' }, true, models, 'small', 'server').provider, 'browser');
-  assert.equal(resolveTranscriptionPreferences(DEFAULT_PREFERENCES, true, models, 'small', 'server').provider, 'server');
+  assert.equal(resolveTranscriptionPreferences({ ...DEFAULT_PREFERENCES, transcriptionProvider: 'auto' }, true, models, 'small', 'server').provider, 'server');
   assert.equal(resolveTranscriptionPreferences(DEFAULT_PREFERENCES, true, models, 'small', 'browser').provider, 'browser');
 });
 
