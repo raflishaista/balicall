@@ -246,18 +246,20 @@ function resolveTaskCreationDefaults({
     });
   }
 
-  const status = options.taskStatuses.find(
+  const status = (options.taskStatuses || []).find(
     option =>
       option.name?.trim().toLowerCase() ===
       reviewClient.taskStatusName.trim().toLowerCase()
-  );
+  ) || options.taskStatuses?.[0];
 
-  const defaultType = options.taskTypes.find(
+  const defaultType = (options.taskTypes || []).find(
     option => option.id === reviewClient.taskTypeId
-  );
+  ) || (options.taskTypes || []).find(
+    option => ['feature', 'task'].includes(option.name?.trim().toLowerCase())
+  ) || options.taskTypes?.[0];
 
   if (!status || !defaultType) {
-    throw new Error('ID status atau tipe fallback tidak cocok dengan opsi project.');
+    throw new Error('Opsi status atau tipe task tidak tersedia di project ini.');
   }
 
   const numericStatusId = TASK_NUMERIC_ID_BY_ENCODED_ID.get(status.id);
@@ -497,11 +499,15 @@ function prepareTaskCreation({
       return null;
     }
 
-    const selectedCategory = (options.taskCategories || []).find(
-      category => category.id === reviewClient.taskCategoryId
-    );
+    const categories = options.taskCategories || [];
+    const resolvedCategory =
+      categories.find(c => c.id === reviewClient.taskCategoryId) ||
+      categories.find(c => c.name?.trim().toLowerCase() === 'task') ||
+      categories.find(c => c.name?.trim().toLowerCase() !== 'epic') ||
+      categories[0] ||
+      null;
 
-    if (selectedCategory?.name?.trim().toLowerCase() === 'epic') {
+    if (resolvedCategory?.name?.trim().toLowerCase() === 'epic') {
       console.warn('[ITPROJECT] Subtask dilewati: task berkategori Epic tidak boleh menjadi subtask.', {
         meetingId: meeting.id,
         title,
@@ -512,6 +518,14 @@ function prepareTaskCreation({
 
     parentId = [...parentCandidates.keys()][0];
   }
+
+  const categories = options.taskCategories || [];
+  const fallbackCategory =
+    categories.find(c => c.id === reviewClient.taskCategoryId) ||
+    categories.find(c => c.name?.trim().toLowerCase() === 'task') ||
+    categories.find(c => c.name?.trim().toLowerCase() !== 'epic') ||
+    categories[0] ||
+    null;
 
   return {
     item,
@@ -527,6 +541,7 @@ function prepareTaskCreation({
     startDate,
     dueDate,
     parentId,
+    taskCategoryId: fallbackCategory?.id || reviewClient.taskCategoryId || null,
   };
 }
 
@@ -555,6 +570,7 @@ async function createPreparedTask({
     startDate,
     dueDate,
     parentId,
+    taskCategoryId,
   } = prepared;
 
   reviewStore.transact(() => {
@@ -590,7 +606,7 @@ async function createPreparedTask({
         status_id: TASK_NUMERIC_ID_BY_ENCODED_ID.get(status.id),
         priority_id: numericPriorityId,
         type_id: numericTypeId,
-        task_category_id: reviewClient.taskCategoryId,
+        ...(taskCategoryId ? { task_category_id: taskCategoryId } : {}),
         ...(parentId ? { parent_id: parentId } : {}),
         assign_users: owner ? [owner.id] : [],
         description,
