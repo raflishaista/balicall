@@ -7,6 +7,8 @@ import { BLUR_BACKGROUND, NO_BACKGROUND, shouldMirrorCamera } from './background
 import skyline from './assets/backgrounds/BalitowerSentra-Connected-Skyline.png';
 import navy from './assets/backgrounds/BalitowerSentra-Connected-Navy.png';
 import studio from './assets/backgrounds/BalitowerSentra-Studio-Sentra.png';
+import canopy from './assets/backgrounds/BalitowerSentra-Thamrin-Canopy.png';
+import lounge from './assets/backgrounds/BalitowerSentra-Thamrin-Lounge.png';
 import afterHours from './assets/backgrounds/BalitowerSentra-Thamrin-After-Hours.png';
 import './BackgroundSettingsDialog.css';
 
@@ -14,6 +16,8 @@ const backgrounds = [
   { id: 'skyline', label: 'BalitowerSentra — Connected Skyline', imagePath: skyline },
   { id: 'sentra', label: 'BalitowerSentra — Connected Navy', imagePath: navy },
   { id: 'studio', label: 'BalitowerSentra — Studio Sentra', imagePath: studio },
+  { id: 'thamrin-canopy', label: 'BalitowerSentra — Thamrin Canopy', imagePath: canopy },
+  { id: 'thamrin-lounge', label: 'BalitowerSentra — Thamrin Lounge', imagePath: lounge },
   { id: 'thamrin-after-hours', label: 'BalitowerSentra — Thamrin After Hours', imagePath: afterHours },
 ];
 export function BackgroundSettingsDialog({ control, blocked, mirror = true, onClose }: {
