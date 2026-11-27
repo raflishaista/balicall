@@ -134,11 +134,35 @@ export function AuthGate() {
     onRetry={async()=>{setChecking(true);await check();}} onAuthenticated={accept} />{kickedModal}</>;
 
 }
+function readPendingInviteCode(): string {
+  if (typeof window === 'undefined' || !window.location) return '';
+  try {
+    const hash = window.location.hash || '';
+    const [, hashQuery = ''] = hash.split('?');
+    const hashParams = new URLSearchParams(hashQuery);
+    const searchParams = new URLSearchParams(window.location.search || '');
+    const raw = (
+      hashParams.get('code') ||
+      hashParams.get('roomCode') ||
+      hashParams.get('inviteCode') ||
+      searchParams.get('code') ||
+      searchParams.get('roomCode') ||
+      searchParams.get('inviteCode') ||
+      ''
+    ).trim();
+    if (!raw) return '';
+    return /^[A-Za-z0-9]{5}$/.test(raw) ? raw.toUpperCase() : raw.slice(0, 22);
+  } catch {
+    return '';
+  }
+}
+
 export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthenticated}:{
   checking:boolean;serviceError:string|null;unavailable:boolean;onRetry:()=>Promise<void>;onAuthenticated:(session:Session)=>void;
 }) {
-  const [mode,setMode]=useState<'login'|'activate'|'request'|'guest'>('login');
-  const [guestName,setGuestName]=useState(''),[inviteCode,setInviteCode]=useState(''),[requestName,setRequestName]=useState('');
+  const [pendingInviteCode] = useState(() => readPendingInviteCode());
+  const [mode,setMode]=useState<'login'|'activate'|'request'|'guest'>(() => pendingInviteCode ? 'guest' : 'login');
+  const [guestName,setGuestName]=useState(''),[inviteCode,setInviteCode]=useState(() => pendingInviteCode),[requestName,setRequestName]=useState('');
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [code,setCode]=useState('');
   const [show,setShow]=useState(false), [pending,setPending]=useState(false);
   const [error,setError]=useState<string|null>(null), [notice,setNotice]=useState<string|null>(null);
@@ -151,9 +175,11 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
     lock.current=true;setPending(true);setError(null);setNotice(null);
     try {
       if(mode==='guest') {
-        const next=await apiRequest<Session>('/auth/guest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:guestName.trim(),inviteCode:inviteCode.trim()})});
+        const cleanInvite=inviteCode.trim();
+        const next=await apiRequest<Session>('/auth/guest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:guestName.trim(),inviteCode:cleanInvite})});
+        const targetRoomCode=(next.user?.guestRoomCode || (/^[A-Za-z0-9]{5}$/.test(cleanInvite) ? cleanInvite.toUpperCase() : '')).trim().toUpperCase();
         if (typeof window !== 'undefined' && window.location) {
-          window.location.hash = '#/home';
+          window.location.hash = targetRoomCode ? `#/lobby?intent=join&code=${targetRoomCode}` : '#/lobby?intent=join';
         }
         onAuthenticated(next);
       } else if(mode==='activate') {
@@ -166,7 +192,9 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
         const next=await apiRequest<Session>('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,...(force?{force:true}:{})})});
         setPassword('');setConflictModal(null);
         if (typeof window !== 'undefined' && window.location) {
-          window.location.hash = '#/home';
+          window.location.hash = /^[A-Za-z0-9]{5}$/.test(pendingInviteCode)
+            ? `#/lobby?intent=join&code=${pendingInviteCode.toUpperCase()}`
+            : '#/home';
         }
         onAuthenticated(next);
       }
@@ -188,7 +216,7 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
     </section>
     <section className="login-form-panel">
       <div className="login-form-content"><span className="login-kicker">BaliCall</span><h2>{mode==='guest'?'Gabung sebagai tamu':mode==='login'?'Masuk ke BaliCall':mode==='request'?'Request aktivasi akun':'Aktivasi akun BaliCall'}</h2>
-      <p className="login-description">{mode==='guest'?'Gunakan kode undangan tamu dari peserta rapat. Tidak perlu akun perusahaan.':mode==='login'?'Gunakan akun perusahaan untuk melanjutkan.':mode==='request'?'Isi nama, email, dan kata sandi yang diinginkan. Permintaan akan ditinjau oleh admin sebelum akun diaktifkan untuk masuk.':'Masukkan kode dari admin dan tentukan kata sandi Anda.'}</p>
+      <p className="login-description">{mode==='guest'?(pendingInviteCode?`Anda diundang ke ruang rapat (${pendingInviteCode}). Masukkan nama Anda untuk masuk sebagai tamu, atau masuk dengan akun perusahaan di bawah.`:'Gunakan kode undangan tamu dari peserta rapat. Tidak perlu akun perusahaan.'):mode==='login'?(pendingInviteCode?`Masuk dengan akun perusahaan untuk langsung bergabung ke ruang ${pendingInviteCode}.`:'Gunakan akun perusahaan untuk melanjutkan.'):mode==='request'?'Isi nama, email, dan kata sandi yang diinginkan. Permintaan akan ditinjau oleh admin sebelum akun diaktifkan untuk masuk.':'Masukkan kode dari admin dan tentukan kata sandi Anda.'}</p>
       {checking && <p role="status" className="login-notice"><Loader2 className="ui-spinner" size={17} />Memeriksa sesi…</p>}
       {(error||serviceError) && <p role="alert" className="login-error">{error||serviceError}</p>}
       {notice && <p role="status" className="login-notice">{notice}</p>}
@@ -209,7 +237,7 @@ export function LoginPage({checking,serviceError,unavailable,onRetry,onAuthentic
         </>}
         <button type="submit" className="login-submit" disabled={disabled}>{pending?<><Loader2 size={20} className="ui-spinner"/>Memproses…</>:mode==='guest'?'Lanjut ke pemeriksaan perangkat':mode==='login'?'Masuk':mode==='request'?'Kirim Permintaan':'Simpan kata sandi'}</button>
       </form>
-      {mode!=='activate' && mode!=='request' && <button className="login-guest-button" type="button" disabled={disabled} onClick={()=>switchMode(mode==='guest'?'login':'guest')}>{mode==='guest'?'Masuk dengan akun perusahaan':'Gabung sebagai tamu'}</button>}
+      {mode!=='activate' && mode!=='request' && <button className="login-guest-button" type="button" disabled={disabled} onClick={()=>switchMode(mode==='guest'?'login':'guest')}>{mode==='guest'?'Masuk dengan akun perusahaan (jika punya akun)':pendingInviteCode?`Gabung sebagai tamu (${pendingInviteCode})`:'Gabung sebagai tamu'}</button>}
       <div className="login-assistance"><span>{mode==='login'?'Pertama kali masuk?':'Sudah punya kata sandi?'}</span> {mode==='login'?<><button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('activate')}>Aktivasi akun</button><span>·</span><button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('request')}>Request Aktivasi</button></>:<button className="login-text-button" type="button" disabled={checking||pending} onClick={()=>switchMode('login')}>Kembali masuk</button>}</div>
       <p className="login-admin-help">Butuh bantuan? Hubungi admin IT perusahaan untuk aktivasi akun.</p></div>
       <footer className="login-form-footer">BaliCall · Bali Tower Sentra</footer>

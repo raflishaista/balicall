@@ -143,3 +143,87 @@ test('duplicate login attempt triggers active session popup, allowing cancel or 
     await act(async () => root?.unmount());
   }
 });
+
+
+test('invite link defaults unauthenticated user to guest join with pre-filled code and preserves room after login', async () => {
+  globalThis.window = {
+    location: { hash: '#/lobby?intent=join&code=ab12c', search: '' },
+    addEventListener() {},
+    removeEventListener() {},
+    localStorage: { setItem() {}, removeItem() {} },
+  };
+  const dependencies = {
+    react: React,
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    './App': { __esModule: true, default: () => null },
+    './api': {
+      AUTH_EXPIRED_EVENT: 'expired',
+      setAuthCsrfToken() {},
+      apiRequest: async (path, options) => {
+        if (path === '/auth/session') return { enabled: true, user: null };
+        if (path === '/auth/guest') {
+          const body = JSON.parse(options.body);
+          return {
+            enabled: true,
+            user: { employeeId: 'GUEST-1', name: body.name, isGuest: true, guestRoomCode: 'AB12C' },
+            csrfToken: 'guest-tok',
+          };
+        }
+        if (path === '/auth/login') {
+          return {
+            enabled: true,
+            user: { employeeId: 'BT-10492', name: 'Employee' },
+            csrfToken: 'emp-tok',
+          };
+        }
+        throw new Error('Unknown path ' + path);
+      },
+    },
+    './accountScope': { setAccountScope() {} },
+    './summaryHistory': { clearSummarySession() {} },
+    './usePreferences': { usePreferences: () => ({ preferences: {} }) },
+    './BalitowerLoading': { BalitowerLoading: () => null },
+    './pushNotifications': { disablePush: async () => {} },
+    'lucide-react': { AlertCircle: () => null, Eye: () => null, EyeOff: () => null, Loader2: () => null, LockKeyhole: () => null, Mail: () => null, User: () => null },
+  };
+  const source = readFileSync(new URL('../src/AuthGate.tsx', import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const exports = {};
+  new Function('exports', 'require', code)(exports, name => dependencies[name] || {});
+
+  let root;
+  try {
+    let authedUser = null;
+    await act(async () => {
+      root = create(React.createElement(exports.LoginPage, {
+        checking: false,
+        serviceError: null,
+        unavailable: false,
+        onRetry: async () => {},
+        onAuthenticated: s => { authedUser = s.user; },
+      }));
+    });
+
+    // Defaults to guest mode with pre-filled uppercase code AB12C
+    const inputs = root.root.findAllByType('input');
+    assert.equal(inputs.some(i => i.props.value === 'AB12C'), true);
+
+    // Switch to employee login and submit -> should redirect hash to #/lobby?intent=join&code=AB12C
+    const switchBtn = root.root.findByProps({ className: 'login-guest-button' });
+    await act(async () => {
+      switchBtn.props.onClick();
+    });
+    const loginInputs = root.root.findAllByType('input');
+    await act(async () => {
+      loginInputs.find(i => i.props.type === 'email').props.onChange({ target: { value: 'emp@balitower.co.id' } });
+      loginInputs.find(i => i.props.type === 'password').props.onChange({ target: { value: 'SecretPass123' } });
+    });
+    await act(async () => {
+      await root.root.findByType('form').props.onSubmit({ preventDefault() {} });
+    });
+    assert.equal(authedUser?.employeeId, 'BT-10492');
+    assert.equal(globalThis.window.location.hash, '#/lobby?intent=join&code=AB12C');
+  } finally {
+    await act(async () => root?.unmount());
+  }
+});
