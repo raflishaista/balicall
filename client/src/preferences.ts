@@ -172,18 +172,33 @@ export function transcriptionModelLabel(model: string) {
       : model === 'small' ? 'faster-whisper · Small' : model;
 }
 
+export function transcriptionModelShortTag(model?: string): string | null {
+  if (!model) return null;
+  if (model === 'small-id') return 'Ringan, rapat Indonesia';
+  if (model === 'small') return 'Ringan, ID & Inggris';
+  if (model === 'base') return 'Sangat ringan & cepat';
+  if (model === 'whisperlivekit-small') return 'Teks langsung ID/EN';
+  if (model === SEA_LIVE_MODEL) return 'Akurat logat Indonesia';
+  if (model === 'qwen3-asr-0.6b-live') return 'Langsung + pisah suara';
+  if (model === QWEN_GGUF_LIVE_MODEL) return 'Hemat + pisah suara';
+  if (model === 'qwen3-asr-0.6b') return 'Istilah teknis ID/EN';
+  if (model === 'qwen3-asr-0.6b-gguf-q8') return 'Ringan per kalimat';
+  if (model === MING_LIVE_MODEL) return 'Ringan, rapat Inggris';
+  return null;
+}
+
 export function transcriptionModelDescription(model?: string): string | null {
   if (!model) return null;
-  if (model === 'small-id') return 'Ringan & stabil, untuk rapat Bahasa Indonesia sehari-hari.';
-  if (model === 'small') return 'Ringan & serbaguna, cocok untuk rapat Bahasa Indonesia maupun campuran Inggris.';
-  if (model === 'base') return 'Sangat ringan & cepat untuk percakapan standar.';
-  if (model === 'whisperlivekit-small') return 'Teks muncul langsung saat berbicara (real-time), mendukung Indonesia & Inggris.';
-  if (model === SEA_LIVE_MODEL) return 'Akurasi tinggi khusus logat & percakapan Bahasa Indonesia secara langsung (real-time).';
-  if (model === 'qwen3-asr-0.6b-live') return 'Transkripsi langsung + otomatis memisahkan banyak pembicara di satu mikrofon ruang rapat.';
-  if (model === QWEN_GGUF_LIVE_MODEL) return 'Hemat sumber daya dengan pemisahan suara untuk mikrofon ruang rapat.';
-  if (model === 'qwen3-asr-0.6b') return 'Akurasi tinggi untuk istilah teknis & diskusi multibahasa (Indonesia/Inggris).';
-  if (model === 'qwen3-asr-0.6b-gguf-q8') return 'Versi ringan Qwen untuk transkripsi per kalimat.';
-  if (model === MING_LIVE_MODEL) return 'Ringan & cepat, khusus untuk rapat berbahasa Inggris.';
+  if (model === 'small-id') return 'Ringan, untuk rapat bahasa Indonesia.';
+  if (model === 'small') return 'Ringan, untuk rapat bahasa Indonesia & Inggris.';
+  if (model === 'base') return 'Sangat ringan & cepat untuk rapat biasa.';
+  if (model === 'whisperlivekit-small') return 'Teks tampil langsung saat bicara (ID/EN).';
+  if (model === SEA_LIVE_MODEL) return 'Akurat untuk logat Indonesia secara langsung.';
+  if (model === 'qwen3-asr-0.6b-live') return 'Langsung + pisah pembicara di 1 mikrofon.';
+  if (model === QWEN_GGUF_LIVE_MODEL) return 'Hemat RAM/VRAM + pisah suara ruang rapat.';
+  if (model === 'qwen3-asr-0.6b') return 'Akurat untuk istilah teknis & dwibahasa.';
+  if (model === 'qwen3-asr-0.6b-gguf-q8') return 'Versi ringan Qwen untuk transkrip per kalimat.';
+  if (model === MING_LIVE_MODEL) return 'Ringan & cepat, khusus rapat Inggris.';
   return null;
 }
 

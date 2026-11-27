@@ -3149,8 +3149,14 @@ input::placeholder { color: #a1b1c6; }
 .transcription-model-guide {
   display: block;
   margin: 4px 0 0;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: #475569;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #64748b;
   font-weight: 400;
+}
+
+.prejoin-device-field .transcription-model-guide {
+  color: #9bb7d0;
+  font-size: 10.5px;
+  margin-top: 2px;
 }

@@ -95,8 +95,8 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           >
             <TranscriptionModelOptions models={sttModels} />
           </select>
-          {transcriptionModelDescription?.(transcriptionModel) && (
-            <small className="transcription-model-guide">{transcriptionModelDescription(transcriptionModel)}</small>
+          {transcriptionModelDescription?.(transcriptionModel || sttModels[0]) && (
+            <small className="transcription-model-guide">{transcriptionModelDescription(transcriptionModel || sttModels[0])}</small>
           )}
         </label>
       )}
