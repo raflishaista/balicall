@@ -3145,3 +3145,12 @@ input::placeholder { color: #a1b1c6; }
   border-color: #93c5fd;
   font-weight: 600;
 }
+
+.transcription-model-guide {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #475569;
+  font-weight: 400;
+}

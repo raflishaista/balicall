@@ -172,6 +172,21 @@ export function transcriptionModelLabel(model: string) {
       : model === 'small' ? 'faster-whisper · Small' : model;
 }
 
+export function transcriptionModelDescription(model?: string): string | null {
+  if (!model) return null;
+  if (model === 'small-id') return 'Ringan & stabil, untuk rapat Bahasa Indonesia sehari-hari.';
+  if (model === 'small') return 'Ringan & serbaguna, cocok untuk rapat Bahasa Indonesia maupun campuran Inggris.';
+  if (model === 'base') return 'Sangat ringan & cepat untuk percakapan standar.';
+  if (model === 'whisperlivekit-small') return 'Teks muncul langsung saat berbicara (real-time), mendukung Indonesia & Inggris.';
+  if (model === SEA_LIVE_MODEL) return 'Akurasi tinggi khusus logat & percakapan Bahasa Indonesia secara langsung (real-time).';
+  if (model === 'qwen3-asr-0.6b-live') return 'Transkripsi langsung + otomatis memisahkan banyak pembicara di satu mikrofon ruang rapat.';
+  if (model === QWEN_GGUF_LIVE_MODEL) return 'Hemat sumber daya dengan pemisahan suara untuk mikrofon ruang rapat.';
+  if (model === 'qwen3-asr-0.6b') return 'Akurasi tinggi untuk istilah teknis & diskusi multibahasa (Indonesia/Inggris).';
+  if (model === 'qwen3-asr-0.6b-gguf-q8') return 'Versi ringan Qwen untuk transkripsi per kalimat.';
+  if (model === MING_LIVE_MODEL) return 'Ringan & cepat, khusus untuk rapat berbahasa Inggris.';
+  return null;
+}
+
 export function isChromiumBrowser(): boolean {
   if (typeof window === 'undefined') return true;
   const nav = navigator as any;

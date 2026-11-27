@@ -4,7 +4,7 @@ import { initials } from './presentation';
 import { MicrophoneDiagnostic } from './MicrophoneDiagnostic';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
 import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE } from './modelSelection';
-import { isChromiumBrowser, supportsSharedMicrophone, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE, QWEN_GGUF_NOTICE } from './preferences';
+import { isChromiumBrowser, supportsSharedMicrophone, transcriptionModelDescription, QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE, QWEN_GGUF_NOTICE } from './preferences';
 import type { InputKind, usePreJoinMedia } from './usePreJoinMedia';
 
 export function PreJoinPreview({ media, employeeName, blocked, mirror = true, onToggleSharedMic,
@@ -95,6 +95,9 @@ export function PreJoinPreview({ media, employeeName, blocked, mirror = true, on
           >
             <TranscriptionModelOptions models={sttModels} />
           </select>
+          {transcriptionModelDescription?.(transcriptionModel) && (
+            <small className="transcription-model-guide">{transcriptionModelDescription(transcriptionModel)}</small>
+          )}
         </label>
       )}
     </div>

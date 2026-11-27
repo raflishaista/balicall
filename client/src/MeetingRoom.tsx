@@ -1,7 +1,7 @@
 import { TranscriptionStatus } from './TranscriptionFeedback';
 import { transcriptionStatus } from './transcriptionStatus';
 import { useCallback, useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE } from './preferences';
+import { QWEN_TRANSCRIPTION_NOTICE, QWEN_DIARIZATION_NOTICE, QWEN_LIVE_DIARIZATION_NOTICE, transcriptionModelDescription } from './preferences';
 import type { MeetingPreferences } from './preferences';
 import { TranscriptionModelOptions } from './TranscriptionModelOptions';
 import { SEA_LIVE_MODEL, SEA_LIVE_NOTICE, MING_LIVE_MODEL, MING_LIVE_NOTICE, QWEN_GGUF_LIVE_MODEL, QWEN_GGUF_LIVE_NOTICE } from './modelSelection';
@@ -1533,6 +1533,11 @@ export function MeetingRoom({
                       <TranscriptionModelOptions models={sttModels} />
                     </select>
                   </div>
+                  {sttProvider === 'server' && transcriptionModelDescription(sttModel) && (
+                    <p className="transcription-model-guide" role="note">
+                      {transcriptionModelDescription(sttModel)}
+                    </p>
+                  )}
                   {(sttModel === 'qwen3-asr-0.6b' || sttModel === 'qwen3-asr-0.6b-live' || sttModel === QWEN_GGUF_LIVE_MODEL || sttModel === MING_LIVE_MODEL || sttModel === SEA_LIVE_MODEL) && (
                     <div className="transcription-model-notice" role="status">
                       <Info size={12} className="transcription-notice-icon" aria-hidden="true" />
